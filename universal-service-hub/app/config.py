@@ -31,7 +31,7 @@ class ProviderConfig(BaseModel):
         if self.adapter_type not in ADAPTER_TYPES:
             raise ValueError("Unsupported provider adapter type")
         if self.adapter_type == "none":
-            if self.model or self.base_url or self.api_key_env:
+            if self.model or self.base_url or self.api_key_env or self.supports_idempotency:
                 raise ValueError("Adapter settings require a configured adapter type")
             return self
         if not self.model or not self.base_url or not self.api_key_env:
@@ -40,9 +40,17 @@ class ProviderConfig(BaseModel):
             raise ValueError("api_key_env must be an uppercase environment variable name")
         parsed = urlsplit(self.base_url)
         if (
-            parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1"}
-        ) or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            parsed.scheme not in {"https", "http"}
+            or (parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1"})
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError("base_url must be HTTPS without credentials, query or fragment")
+        if self.adapter_type == "gemini" and self.supports_idempotency:
+            raise ValueError("Gemini adapter does not support idempotent failover")
         return self
 
 
