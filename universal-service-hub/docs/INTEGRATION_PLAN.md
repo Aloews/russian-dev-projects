@@ -51,6 +51,9 @@ Implemented account checks:
 PostgreSQL data-plane connectivity:
 - Self-managed PostgreSQL: adapter type `postgresql`, with a secret reference such as `POSTGRESQL_DATABASE_URL`. The verifier requires a PostgreSQL URL, rejects private/local destinations, forces TLS, opens a single-connection pool, executes `SELECT 1`, then closes the pool. It does not run migrations or modify data.
 
+Redis data-plane connectivity:
+- Railway Redis, Northflank Redis and other Redis-compatible services: adapter type `redis`, with a secret reference such as `REDIS_URL`. The verifier requires a `rediss://` URL, rejects private/local destinations, opens one bounded async connection and sends `PING`. It never writes keys or data.
+
 These are implemented API checks, not active connections. Each provider remains unconnected until credentials are stored in Infisical and live verification succeeds. R2/B2 object transfer, generic S3 operations, Redis and PostgreSQL wire-protocol connectors remain future increments.
 
 ## Architecture decisions
