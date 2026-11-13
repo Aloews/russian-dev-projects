@@ -373,7 +373,7 @@ struct ProviderUpsert {
 fn default_priority() -> i32 { 100 }
 fn default_true() -> bool { true }
 fn default_adapter() -> String { "none".into() }
-fn default_timeout() -> f64 { 3.0 }
+fn default_timeout() -> f64 { 60.0 }
 
 fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
     let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_provider_url"))?;
@@ -426,7 +426,7 @@ async fn ensure_public_destination(url: &url::Url) -> ApiResult<()> {
 async fn upsert_provider(State(state): State<AppState>, headers: HeaderMap, Path(provider_id): Path<String>, Json(body): Json<ProviderUpsert>) -> ApiResult<StatusCode> {
     let principal = require_admin(&state, &headers).await?;
     if provider_id.is_empty() || provider_id.len() > 80 || !provider_id.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
-        || body.name.trim().is_empty() || body.name.len() > 160 || body.timeout_seconds <= 0.0 || body.timeout_seconds > 30.0 {
+        || body.name.trim().is_empty() || body.name.len() > 160 || body.timeout_seconds <= 0.0 || body.timeout_seconds > 120.0 {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_provider"));
     }
     if !["none","openai_compatible","anthropic","gemini"].contains(&body.adapter_type.as_str()) {
@@ -484,7 +484,7 @@ async fn health_check(State(state): State<AppState>, headers: HeaderMap, Json(bo
         let (status, detail) = if let Some(raw_url) = health_url {
             match validate_https_url(&raw_url) {
                 Ok(url) => match ensure_public_destination(&url).await {
-                    Ok(()) => match state.http.get(url).timeout(Duration::from_secs_f64(timeout.clamp(0.1, 30.0))).send().await {
+                    Ok(()) => match state.http.get(url).timeout(Duration::from_secs_f64(timeout.clamp(0.1, 5.0))).send().await {
                         Ok(response) if response.status().is_success() => ("healthy","http_success"),
                         Ok(response) => ("unhealthy", if response.status().is_server_error() { "http_5xx" } else { "http_non_success" }),
                         Err(_) => ("unhealthy","connection_failed"),
