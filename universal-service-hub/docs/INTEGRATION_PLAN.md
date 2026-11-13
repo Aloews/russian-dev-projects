@@ -108,3 +108,52 @@ Create these secrets in Infisical, not in GitHub or source files. The Rust runti
 - `FIRECRAWL_API_KEY`
 
 Do not create duplicate secrets for the same provider/account. The Hub must support multiple credential versions per provider, rotation without downtime, per-project access policies and revocation. Never place the root Infisical identity in project runtime containers.
+
+
+## User-selected infrastructure providers
+
+The default provider pool for new project onboarding is now:
+
+| Layer | Primary candidates | Alternate / self-hosted route | Control-plane integration |
+|---|---|---|---|
+| Hosting / frontend | Northflank, Cloudflare, Netlify, Render | Vercel | Provider-specific management API + GitHub repository connection |
+| Backend / API / workers | Northflank, Railway | Fly.io, DigitalOcean App Platform / Droplets | Deployment, service, environment, logs, metrics and rollback adapters |
+| Database | Supabase | Neon; PostgreSQL on an owner-managed server | Supabase Management API; Neon API; PostgreSQL wire protocol for database operations |
+| File/object storage | Supabase Storage, Cloudflare R2 | Amazon S3-compatible storage, Backblaze B2 | Supabase Storage API; S3 API; B2 S3-compatible API |
+| Queues / background work | Railway Redis, Northflank Redis | Upstash Redis/QStash; self-hosted Redis | Redis protocol or provider control-plane API; durable queue semantics in Hub |
+
+Provider selection is per workload, not a single global winner. Keep production databases, file stores and queues independent from application hosting where practical so a host outage does not take down the data plane.
+
+### GitHub sign-in versus provider authorization
+
+Signing in to a hosting platform with GitHub normally grants that platform permission to see selected repositories and trigger builds/deployments. It does **not** automatically grant the Hub access to the platform's management API, cloud account, billing, database, storage, Redis or secrets.
+
+The Hub must treat these as separate credentials and scopes:
+
+- **GitHub App installation:** repository contents, pull requests, checks and workflow permissions explicitly granted by the user.
+- **Platform GitHub integration:** repository access used by the platform to build/deploy source code.
+- **Platform management API token / OAuth grant:** required for the Hub to create or manage services, environments, deployments, domains and variables.
+- **Data-plane credentials:** database connection string, storage access key, Redis URL/password. These are separate from management API tokens and should be restricted to the individual project/resource.
+
+If a vendor supports GitHub OAuth but does not issue an API token or management OAuth grant with the required scopes, the Hub can still use GitHub-triggered deployments, but it must not claim direct account-management access.
+
+### Credential names for the selected provider pool
+
+Store credentials in Infisical under project-specific paths. These are names only; do not paste secret values into GitHub or chat.
+
+- Northflank: `NORTHFLANK_API_TOKEN`
+- Cloudflare: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`; for R2 also `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
+- Netlify: `NETLIFY_AUTH_TOKEN`
+- Render: `RENDER_API_KEY`
+- Railway: `RAILWAY_TOKEN`
+- Fly.io: `FLY_API_TOKEN`
+- DigitalOcean: `DIGITALOCEAN_ACCESS_TOKEN`
+- Supabase management: `SUPABASE_ACCESS_TOKEN`; per-project database credentials stored separately
+- Neon: `NEON_API_KEY`; per-project PostgreSQL connection string stored separately
+- PostgreSQL self-hosted: `DATABASE_URL` (TLS required; least-privilege role)
+- Supabase Storage: per-project URL and restricted service credentials
+- Amazon S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, bucket name
+- Backblaze B2: `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`; or S3-compatible endpoint/access keys
+- Redis: `REDIS_URL` / provider-specific API token, with distinct credentials per project and environment
+
+A credential is not considered connected merely because its name is documented. Mark it active only after the owner authorizes access, the secret is stored, and a read-only identity/health check plus the relevant API contract test pass.
