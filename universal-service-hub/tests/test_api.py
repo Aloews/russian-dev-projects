@@ -357,3 +357,93 @@ def test_ai_chat_returns_rate_limit_without_cross_provider_retry(monkeypatch, tm
         )
         assert response.status_code == 429
         assert adapter.calls == 1
+
+
+def test_project_scoped_api_key_isolated_and_revocable(monkeypatch, tmp_path):
+    database_path = tmp_path / "project-scope.db"
+    with client_with_providers(monkeypatch, "[]", database_path) as admin:
+        assert admin.post("/v1/projects", json={"id": "alpha", "name": "Alpha"}).status_code == 200
+        assert admin.post("/v1/projects", json={"id": "beta", "name": "Beta"}).status_code == 200
+        key_response = admin.post(
+            "/v1/api-keys",
+            json={
+                "name": "Alpha agent",
+                "role": "project",
+                "project_id": "alpha",
+                "scopes": ["providers:read", "routing:select"],
+            },
+        )
+        assert key_response.status_code == 200
+        key_data = key_response.json()
+        project_token = key_data["token"]
+        assert project_token.startswith("ush_live_")
+        assert "token" not in admin.get("/v1/api-keys").json()[0]
+        assert admin.put(
+            "/v1/providers/global",
+            json=provider_payload(),
+        ).status_code == 200
+        assert admin.put(
+            "/v1/providers/alpha-provider",
+            json={**provider_payload(), "project_id": "alpha"},
+        ).status_code == 200
+        assert admin.put(
+            "/v1/providers/beta-provider",
+            json={**provider_payload(), "project_id": "beta"},
+        ).status_code == 200
+        key_id = key_data["id"]
+
+    with TestClient(app, headers={"Authorization": f"Bearer {project_token}"}) as project_client:
+        visible = {item["id"] for item in project_client.get("/v1/providers").json()}
+        assert visible == {"global", "alpha-provider"}
+        denied_write = project_client.put(
+            "/v1/providers/blocked",
+            json=provider_payload(),
+        )
+        assert denied_write.status_code == 403
+        assert project_client.get("/v1/projects").status_code == 403
+        assert project_client.get("/v1/audit-logs").status_code == 403
+
+    with client_with_providers(monkeypatch, "[]", database_path) as admin:
+        assert admin.delete(f"/v1/api-keys/{key_id}").status_code == 204
+
+    with TestClient(app, headers={"Authorization": f"Bearer {project_token}"}) as revoked_client:
+        assert revoked_client.get("/v1/providers").status_code == 401
+
+
+def test_audit_log_records_control_actions_without_secrets(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "audit.db") as client:
+        project = client.post("/v1/projects", json={"id": "audit-project", "name": "Audit"})
+        assert project.status_code == 200
+        response = client.put(
+            "/v1/providers/audited",
+            json={
+                **ai_provider_payload(priority=100),
+                "project_id": "audit-project",
+            },
+        )
+        assert response.status_code == 200
+        logs = client.get("/v1/audit-logs").json()
+        actions = {entry["action"] for entry in logs}
+        assert "project.create" in actions
+        assert "provider.upsert" in actions
+        assert all("fake-ai-key" not in str(entry) for entry in logs)
+        assert all("TEST_AI_API_KEY" not in str(entry) for entry in logs)
+
+
+def test_api_key_scope_validation(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "key-scope.db") as client:
+        missing_project = client.post(
+            "/v1/api-keys",
+            json={"name": "Agent", "role": "agent", "scopes": ["ai:chat"]},
+        )
+        assert missing_project.status_code == 422
+        forbidden_write = client.post(
+            "/v1/api-keys",
+            json={
+                "name": "Agent",
+                "role": "agent",
+                "project_id": "alpha",
+                "scopes": ["providers:write"],
+            },
+        )
+        assert forbidden_write.status_code == 422
