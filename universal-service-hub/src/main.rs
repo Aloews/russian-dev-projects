@@ -573,12 +573,12 @@ async fn provider_models(State(state): State<AppState>, headers: HeaderMap, Path
     }
     let data: Value = response.json().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "provider_invalid_response"))?;
     let models = match adapter.as_str() {
-        "openai_compatible" | "anthropic" => data["data"].as_array().map(|items| items.iter().map(|item| json!({
+        "openai_compatible" | "anthropic" => data["data"].as_array().map_or_else(Vec::new, |items| items.iter().map(|item| json!({
             "id":item["id"],"name":item.get("name").or_else(||item.get("display_name")).cloned().unwrap_or(Value::Null)
-        })).collect::<Vec<_>>()).unwrap_or_default(),
-        "gemini" => data["models"].as_array().map(|items| items.iter().map(|item| json!({
+        })).collect::<Vec<_>>()),
+        "gemini" => data["models"].as_array().map_or_else(Vec::new, |items| items.iter().map(|item| json!({
             "id":item["name"],"name":item["displayName"],"supported_methods":item["supportedGenerationMethods"]
-        })).collect::<Vec<_>>()).unwrap_or_default(),
+        })).collect::<Vec<_>>()),
         _ => Vec::new(),
     };
     audit(&state,&principal.actor,"provider.models.list","provider",&provider_id,json!({"model_count":models.len()})).await;
@@ -622,7 +622,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
             return Err(ApiError(StatusCode::FORBIDDEN, "capability_not_allowed"));
         }
         let ids: Value = project.get("allowed_provider_ids");
-        let list = ids.as_array().map(|items| items.iter().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>()).unwrap_or_default();
+        let list = ids.as_array().map_or_else(Vec::new, |items| items.iter().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>());
         if list.is_empty() { None } else { Some(list) }
     } else { None };
 
