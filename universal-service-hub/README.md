@@ -35,17 +35,17 @@ Provider management:
 - `PUT /v1/projects/{project_id}` — update project capabilities/provider allowlist
 - `DELETE /v1/projects/{project_id}` — remove a project and revoke its tokens
 - `POST /v1/projects/{project_id}/tokens` — issue a project token (shown once)
-- `GET /v1/projects/{project_id}/tokens` — list token metadata
-- `DELETE /v1/projects/{project_id}/tokens/{token_id}` — revoke a token
+- `GET /v1/projects/{project_id}/tokens` — list token metadata (root administrator or project owner for its own project)
+- `DELETE /v1/projects/{project_id}/tokens/{token_id}` — revoke a token (root administrator or project owner for its own project)
 - `PUT /v1/providers/{provider_id}` — create or replace provider configuration
 - `DELETE /v1/providers/{provider_id}` — remove a provider
-- `POST /v1/providers/health-check` — probe one provider or up to 50 providers by default (maximum 100 per call; 10 probes run concurrently)
-- `POST /v1/providers/select` — choose the highest-priority eligible provider for a capability (admin or project owner/operator token)
+- `POST /v1/providers/health-check` — probe one provider or up to 50 providers by default (maximum 100 per call; probes run sequentially with per-provider timeouts)
+- `POST /v1/providers/select` — choose the highest-priority eligible provider for a capability (admin or any project role; viewer is read-only)
 
 AI:
 - `POST /v1/ai/chat` — route a chat request to a configured AI provider (admin or project owner/operator token)
 
-Project tokens have `owner`, `operator` or `viewer` roles. The current Rust runtime enforces owner/operator execution access, project capability/provider allowlists, random one-time token issuance and SHA-256 token storage. Full token listing, owner-managed token lifecycle and project update/delete parity are still being ported; use the root administrator for token lifecycle operations until that work passes CI.
+Project tokens have `owner`, `operator` or `viewer` roles. The Rust runtime enforces project capability/provider allowlists and role boundaries: owner/operator tokens can invoke AI; all project roles can perform read-only provider selection. Project owners can list, issue and revoke operator/viewer tokens only within their own project; only the root administrator can issue owner tokens or change/delete project policy. Tokens are generated once, stored as SHA-256 hashes and revocable.
 
 ## Secret manager
 
