@@ -14,6 +14,8 @@ The production control-plane runtime is Rust (Axum + Tokio + SQLx + PostgreSQL).
 
 - `USH_DATABASE_URL`: PostgreSQL URL
 - `USH_API_TOKEN`: root administrator token (minimum 32 characters)
+- `USH_ENVIRONMENT=production` and `USH_SECRET_BACKEND=infisical` in production
+- `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID`, `INFISICAL_ENVIRONMENT`
 - `PORT`: optional, defaults to 8000
 - `RUST_LOG`: optional tracing filter
 
