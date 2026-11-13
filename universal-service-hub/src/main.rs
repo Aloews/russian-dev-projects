@@ -1,4 +1,4 @@
-use std::{env, net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr}, sync::Arc, time::{Duration, Instant}};
+use std::{env, net::{IpAddr, SocketAddr}, sync::Arc, time::{Duration, Instant}};
 
 use axum::{
     extract::{Path, Query, State},
@@ -373,6 +373,161 @@ async fn select_provider(State(state): State<AppState>, headers: HeaderMap, Json
 }
 
 #[derive(Deserialize)]
+struct ChatMessage { role: String, content: String }
+
+#[derive(Deserialize)]
+struct AIChatRequest {
+    messages: Vec<ChatMessage>,
+    #[serde(default = "default_temperature")]
+    temperature: f64,
+    #[serde(default = "default_max_tokens")]
+    max_tokens: u32,
+    idempotency_key: Option<String>,
+}
+fn default_temperature() -> f64 { 0.2 }
+fn default_max_tokens() -> u32 { 2048 }
+
+async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<AIChatRequest>) -> ApiResult<Json<Value>> {
+    let principal = require_operator(&state, &headers).await?;
+    if body.messages.is_empty() || body.messages.len() > 100 || body.max_tokens == 0 || body.max_tokens > 32768 || !(0.0..=2.0).contains(&body.temperature)
+        || body.messages.iter().any(|m| !["system","user","assistant"].contains(&m.role.as_str()) || m.content.len() > 200_000) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_ai_request"));
+    }
+    if let Some(key) = body.idempotency_key.as_deref() {
+        if key.len() < 8 || key.len() > 128 || !key.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_idempotency_key"));
+        }
+    }
+    let allowed_ids: Option<Vec<String>> = if let Some(project_id) = principal.project_id.as_deref() {
+        let project = sqlx::query("SELECT allowed_capabilities,allowed_provider_ids FROM projects WHERE id=$1")
+            .bind(project_id).fetch_optional(&state.db).await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_failed"))?
+            .ok_or(ApiError(StatusCode::FORBIDDEN, "project_not_found"))?;
+        let caps: Value = project.get("allowed_capabilities");
+        if !caps.as_array().is_some_and(|a| a.iter().any(|v| v.as_str()==Some("ai.chat"))) {
+            return Err(ApiError(StatusCode::FORBIDDEN, "capability_not_allowed"));
+        }
+        let ids: Value = project.get("allowed_provider_ids");
+        let list = ids.as_array().map(|items| items.iter().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>()).unwrap_or_default();
+        if list.is_empty() { None } else { Some(list) }
+    } else { None };
+
+    let rows = sqlx::query("SELECT id,name,adapter_type,model,base_url,api_key_env,timeout_seconds,supports_idempotency FROM providers WHERE enabled=TRUE AND 'ai.chat'=ANY(SELECT jsonb_array_elements_text(capabilities)) ORDER BY priority DESC,id")
+        .fetch_all(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "provider_query_failed"))?;
+    let candidates: Vec<_> = rows.into_iter().filter(|r| {
+        let id: String = r.get("id");
+        allowed_ids.as_ref().is_none_or(|ids| ids.contains(&id))
+    }).collect();
+    if candidates.is_empty() { return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "no_eligible_ai_provider")); }
+
+    let mut attempts = 0usize;
+    for row in candidates {
+        let provider_id: String = row.get("id");
+        let adapter: String = row.get("adapter_type");
+        let model: Option<String> = row.get("model");
+        let base_url: Option<String> = row.get("base_url");
+        let key_env: Option<String> = row.get("api_key_env");
+        let timeout: f64 = row.get("timeout_seconds");
+        let idempotent: bool = row.get("supports_idempotency");
+        if adapter == "none" { continue; }
+        let (Some(model), Some(base_url), Some(key_env)) = (model, base_url, key_env) else { continue; };
+        let api_key = match env::var(&key_env) {
+            Ok(value) if !value.is_empty() => value,
+            _ => {
+                audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":"credential_unavailable"})).await;
+                continue;
+            }
+        };
+        let base = match validate_https_url(&base_url) {
+            Ok(url) => url,
+            Err(_) => continue,
+        };
+        if ensure_public_destination(&base).await.is_err() { continue; }
+        let mut request = match adapter.as_str() {
+            "openai_compatible" => {
+                let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+                let mut req = state.http.post(url).bearer_auth(&api_key).json(&json!({
+                    "model":model,"messages":body.messages.iter().map(|m| json!({"role":m.role,"content":m.content})).collect::<Vec<_>>(),
+                    "temperature":body.temperature,"max_tokens":body.max_tokens
+                }));
+                if idempotent { if let Some(key) = body.idempotency_key.as_deref() { req=req.header("Idempotency-Key",key); } }
+                req
+            }
+            "anthropic" => {
+                let system = body.messages.iter().filter(|m| m.role=="system").map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n\n");
+                let turns = body.messages.iter().filter(|m| m.role!="system").map(|m| json!({"role":m.role,"content":m.content})).collect::<Vec<_>>();
+                if turns.is_empty() { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "messages_required")); }
+                let mut payload = json!({"model":model,"messages":turns,"temperature":body.temperature,"max_tokens":body.max_tokens});
+                if !system.is_empty() { payload["system"] = json!(system); }
+                let mut req = state.http.post(format!("{}/v1/messages",base_url.trim_end_matches('/')))
+                    .header("x-api-key",&api_key).header("anthropic-version","2023-06-01").json(&payload);
+                if idempotent { if let Some(key) = body.idempotency_key.as_deref() { req=req.header("Idempotency-Key",key); } }
+                req
+            }
+            "gemini" => {
+                let system = body.messages.iter().filter(|m| m.role=="system").map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n\n");
+                let turns = body.messages.iter().filter(|m| m.role!="system").map(|m| json!({
+                    "role":if m.role=="assistant" {"model"} else {"user"},"parts":[{"text":m.content}]
+                })).collect::<Vec<_>>();
+                if turns.is_empty() { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "messages_required")); }
+                let mut payload = json!({"contents":turns,"generationConfig":{"temperature":body.temperature,"maxOutputTokens":body.max_tokens}});
+                if !system.is_empty() { payload["systemInstruction"] = json!({"parts":[{"text":system}]}); }
+                let encoded = url::form_urlencoded::byte_serialize(model.as_bytes()).collect::<String>();
+                state.http.post(format!("{}/v1beta/models/{}:generateContent",base_url.trim_end_matches('/'),encoded))
+                    .header("x-goog-api-key",&api_key).json(&payload)
+            }
+            _ => continue,
+        }.timeout(Duration::from_secs_f64(timeout.clamp(1.0,120.0)));
+        attempts += 1;
+        let started = Instant::now();
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(err) => {
+                audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":if err.is_connect() {"connection_failed"} else {"network_error"}})).await;
+                if err.is_connect() && idempotent && body.idempotency_key.is_some() { continue; }
+                return Err(ApiError(StatusCode::BAD_GATEWAY, "provider_connection_failed"));
+            }
+        };
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":"rate_limited"})).await;
+            if idempotent && body.idempotency_key.is_some() { continue; }
+            return Err(ApiError(StatusCode::BAD_GATEWAY, "provider_rate_limited"));
+        }
+        if !response.status().is_success() {
+            let code = response.status();
+            audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":"upstream_rejected","status":code.as_u16()})).await;
+            return Err(ApiError(StatusCode::BAD_GATEWAY, "provider_request_failed"));
+        }
+        let data: Value = response.json().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "provider_invalid_response"))?;
+        let (content, usage) = match adapter.as_str() {
+            "openai_compatible" => {
+                let text = data["choices"][0]["message"]["content"].as_str().map(str::to_owned)
+                    .or_else(|| data["choices"][0]["message"]["content"].as_array().map(|parts| parts.iter().filter_map(|p| p["text"].as_str()).collect::<String>()))
+                    .ok_or(ApiError(StatusCode::BAD_GATEWAY, "provider_invalid_response"))?;
+                (text,data.get("usage").cloned().unwrap_or_else(||json!({})))
+            }
+            "anthropic" => {
+                let text = data["content"].as_array().map(|parts| parts.iter().filter_map(|p| if p["type"]=="text" {p["text"].as_str()} else {None}).collect::<String>())
+                    .ok_or(ApiError(StatusCode::BAD_GATEWAY, "provider_invalid_response"))?;
+                (text,data.get("usage").cloned().unwrap_or_else(||json!({})))
+            }
+            "gemini" => {
+                let text = data["candidates"][0]["content"]["parts"].as_array().map(|parts| parts.iter().filter_map(|p| p["text"].as_str()).collect::<String>())
+                    .ok_or(ApiError(StatusCode::BAD_GATEWAY, "provider_invalid_response"))?;
+                (text,data.get("usageMetadata").cloned().unwrap_or_else(||json!({})))
+            }
+            _ => return Err(ApiError(StatusCode::BAD_GATEWAY, "unsupported_adapter")),
+        };
+        let latency_ms = started.elapsed().as_secs_f64()*1000.0;
+        audit(&state, &principal.actor, "ai.chat.success", "provider", &provider_id, json!({"model":model,"latency_ms":latency_ms,"attempts":attempts,"usage":usage})).await;
+        return Ok(Json(json!({"provider_id":provider_id,"model":model,"content":content,"usage":usage,"latency_ms":latency_ms,"attempts":attempts})));
+    }
+    Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "no_provider_available"))
+}
+
+
+#[derive(Deserialize)]
 struct AuditQuery { #[serde(default = "default_limit")] limit: i64 }
 fn default_limit() -> i64 { 50 }
 
@@ -410,6 +565,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers/{provider_id}", put(upsert_provider).delete(delete_provider))
         .route("/v1/providers/health-check", post(health_check))
+        .route("/v1/ai/chat", post(ai_chat))
         .route("/v1/providers/select", post(select_provider))
         .route("/v1/audit", get(list_audit))
         .with_state(state)
