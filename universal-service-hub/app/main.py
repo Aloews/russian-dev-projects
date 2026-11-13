@@ -189,6 +189,7 @@ async def create_project(
         raise HTTPException(status_code=409, detail="Project already exists")
     project = ProjectRecord(id=payload.id, name=payload.name, enabled=True)
     session.add(project)
+    await session.flush()
     add_audit_event(
         session,
         actor=actor,
