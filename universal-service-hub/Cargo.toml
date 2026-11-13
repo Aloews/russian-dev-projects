@@ -2,10 +2,12 @@
 name = "universal-service-hub"
 version = "0.6.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [dependencies]
 anyhow = "1"
+aws-credential-types = "1"
+aws-sdk-s3 = "1"
 axum = { version = "0.8", features = ["macros"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
