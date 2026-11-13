@@ -11,7 +11,7 @@ The Hub is a control plane, not a proxy for arbitrary provider traffic. It owns 
 - SQLite is used only for local development/tests; production requires PostgreSQL.
 - Alembic migrations define the PostgreSQL schema and run before the container starts.
 - `USH_PROVIDERS_JSON` seeds missing provider records only; it does not overwrite database-managed records.
-- One service Bearer token protects all `/v1/*` endpoints. Full identity, project tenancy and RBAC are not yet implemented.
+- The bootstrap Bearer token is the root administrator. Additional API keys are stored as hashes, carry explicit scopes, optional project tenancy and expiration, and can be revoked. Project-scoped tokens see global providers plus their own project's providers. Control actions write durable audit records.
 - Selection is based on enabled state, capability, health and priority; ties are deterministic by provider ID.
 
 ## Target architecture
