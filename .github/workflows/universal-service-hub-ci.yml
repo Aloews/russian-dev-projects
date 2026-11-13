@@ -27,7 +27,11 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
       - name: Ruff
-        run: ruff check app tests
+        run: ruff check app tests migrations
+      - name: Migration smoke test
+        env:
+          USH_DATABASE_URL: sqlite+aiosqlite:///./ci-migration.db
+        run: alembic upgrade head
       - name: Tests
         run: pytest -q
       - name: Docker build
