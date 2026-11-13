@@ -32,29 +32,29 @@ Base repository: `Aloews/russian-dev-projects`
 
 ## Implemented capabilities
 
-- Rust Axum/Tokio/SQLx control-plane runtime is under active migration; FastAPI remains a temporary reference implementation.
-- Rust bearer-token authentication for root administrator and scoped project tokens.
-- Durable provider registry on PostgreSQL, Alembic migrations and local SQLite development.
+- Rust Axum/Tokio/SQLx is the production container runtime; FastAPI is retained temporarily as a compatibility/reference implementation.
+- Root administrator bearer authentication and scoped project tokens with owner/operator/viewer roles.
+- Durable PostgreSQL provider, project, token and audit tables; SQLx migrations run at startup.
 - Provider CRUD, capability/priority selection and bounded health checks.
-- OpenAI-compatible, Anthropic Messages and Gemini generateContent adapters.
+- OpenAI-compatible, Anthropic Messages and Gemini generateContent AI adapters.
+- Read-only account verification adapters for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon.
+- Cloudflare R2 bucket inventory and Backblaze B2 credential authorization checks.
 - Normalized chat request/response and usage metadata.
-- Environment-variable credential references; API keys are not stored in provider records.
-- Conservative failover policy.
-- HTTPS/local/private destination validation and DNS resolution checks before outbound requests.
-- Durable audit records for provider mutations and AI inference outcomes.
-- Project registry with scoped, hashed, revocable API tokens and owner/operator/viewer roles.
+- Provider API credentials are resolved through Infisical secret references; raw credentials are not stored in provider records.
+- Conservative AI failover policy with idempotency safeguards.
+- HTTPS destination validation, DNS resolution checks, redirect blocking and bounded outbound requests.
+- Durable audit records exclude prompts, responses and secret values.
 - Project-level capability and provider allowlists for AI inference and provider selection.
-- Rust implementation of project/token management, provider upsert/delete, health probes, model discovery, selection, audit reads and initial AI chat adapters.
-- Infisical Universal Auth machine-identity login, short-lived token cache and project-scoped provider secret lookup (live verification pending).
+- Infisical Universal Auth machine-identity login, short-lived token cache and project-scoped secret lookup; live account verification is pending.
 
 ## Infrastructure API adapter increment
 
-Branch: `feat/ush-infra-api-verification-v2`, based on the latest Rust tenancy head.
-- Add read-only account verification adapters for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon.
-- Store only secret-reference names in provider records; resolve tokens from Infisical shared provider secrets.
-- Add authenticated `POST /v1/integrations/{provider_id}/verify` endpoint with fixed vendor HTTPS endpoints, bounded timeout, no redirects, response normalization and redacted audit events.
-- This increment verifies API access only. It does not provision infrastructure or claim deployment-management parity.
-- Neon, Supabase Management API, Fly.io, S3/R2/B2 and Redis/PostgreSQL data-plane connectors remain next implementation increments.
+Branches: `feat/ush-infra-api-verification-v2` and `feat/ush-database-and-fly-apis`, layered on the Rust tenancy branch.
+- Read-only account verification adapters: Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon.
+- Object-storage management checks: Cloudflare R2 bucket inventory and Backblaze B2 account authorization.
+- Authenticated `POST /v1/integrations/{provider_id}/verify` uses fixed vendor HTTPS endpoints, Infisical secret references, bounded timeouts, redirect blocking, normalized responses and redacted audit events.
+- These endpoints verify access only. They do not yet provision hosting resources or implement general object upload/download, Redis or PostgreSQL data-plane operations.
+- Both increments remain unmerged pending exact-SHA CI and review.
 
 ## Work in progress
 
