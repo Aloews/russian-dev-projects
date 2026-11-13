@@ -29,6 +29,7 @@ Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This ro
 
 Provider management:
 - `GET /v1/providers` — list providers
+- `GET /v1/providers/{provider_id}/models` — discover current model IDs from the provider API
 - `GET /v1/audit?limit=50` — list recent audit events (maximum 100)
 - `POST /v1/projects` — register a project and its allowed capabilities/providers
 - `GET /v1/projects` — list registered projects
