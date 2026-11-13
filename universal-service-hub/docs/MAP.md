@@ -47,6 +47,15 @@ Base repository: `Aloews/russian-dev-projects`
 - Rust implementation of project/token management, provider upsert/delete, health probes, model discovery, selection, audit reads and initial AI chat adapters.
 - Infisical Universal Auth machine-identity login, short-lived token cache and project-scoped provider secret lookup (live verification pending).
 
+## Infrastructure API adapter increment
+
+Branch: `feat/ush-infrastructure-account-apis`, based on the exact Rust tenancy PR head.
+- Add read-only account verification adapters for Northflank, Railway, Cloudflare, Netlify, Render and DigitalOcean.
+- Store only secret-reference names in provider records; resolve tokens from Infisical shared provider secrets.
+- Add authenticated `POST /v1/integrations/{provider_id}/verify` endpoint with fixed vendor HTTPS endpoints, bounded timeout, no redirects, response normalization and redacted audit events.
+- This increment verifies API access only. It does not provision infrastructure or claim deployment-management parity.
+- Neon, Supabase Management API, Fly.io, S3/R2/B2 and Redis/PostgreSQL data-plane connectors remain next implementation increments.
+
 ## Work in progress
 
 Project tenancy increment on branch `feat/ush-project-tenancy`:
