@@ -434,7 +434,7 @@ async fn ensure_public_destination(url: &url::Url) -> ApiResult<()> {
 async fn upsert_provider(State(state): State<AppState>, headers: HeaderMap, Path(provider_id): Path<String>, Json(body): Json<ProviderUpsert>) -> ApiResult<StatusCode> {
     let principal = require_admin(&state, &headers).await?;
     if provider_id.is_empty() || provider_id.len() > 80 || !provider_id.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
-        || body.name.trim().is_empty() || body.name.len() > 160 || body.capabilities.len() > 100 || body.timeout_seconds <= 0.0 || body.timeout_seconds > 120.0 {
+        || body.name.trim().is_empty() || body.name.len() > 160 || body.capabilities.len() > 100 || !(body.timeout_seconds > 0.0 && body.timeout_seconds <= 120.0) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_provider"));
     }
     if !["none","openai_compatible","anthropic","gemini"].contains(&body.adapter_type.as_str()) {
@@ -611,12 +611,12 @@ fn default_max_tokens() -> u32 { 2048 }
 
 async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<AIChatRequest>) -> ApiResult<Json<Value>> {
     let principal = require_operator(&state, &headers).await?;
-    if body.messages.is_empty() || body.messages.len() > 100 || body.max_tokens == 0 || body.max_tokens > 32768 || !(0.0..=2.0).contains(&body.temperature)
+    if body.messages.is_empty() || body.messages.len() > 100 || !(1..=32768).contains(&body.max_tokens) || !(0.0..=2.0).contains(&body.temperature)
         || body.messages.iter().any(|m| !["system","user","assistant"].contains(&m.role.as_str()) || m.content.len() > 200_000) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_ai_request"));
     }
     if let Some(key) = body.idempotency_key.as_deref()
-        && (key.len() < 8 || key.len() > 128 || !key.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)))
+        && (!(8..=128).contains(&key.len()) || !key.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)))
     {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_idempotency_key"));
     }
