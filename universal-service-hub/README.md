@@ -32,6 +32,8 @@ Provider management:
 - `GET /v1/audit?limit=50` — list recent audit events (maximum 100)
 - `POST /v1/projects` — register a project and its allowed capabilities/providers
 - `GET /v1/projects` — list registered projects
+- `PUT /v1/projects/{project_id}` — update project capabilities/provider allowlist
+- `DELETE /v1/projects/{project_id}` — remove a project and revoke its tokens
 - `POST /v1/projects/{project_id}/tokens` — issue a project token (shown once)
 - `GET /v1/projects/{project_id}/tokens` — list token metadata
 - `DELETE /v1/projects/{project_id}/tokens/{token_id}` — revoke a token
@@ -43,7 +45,7 @@ Provider management:
 AI:
 - `POST /v1/ai/chat` — route a chat request to a configured AI provider (admin or project owner/operator token)
 
-Project tokens have `owner`, `operator` or `viewer` roles. Only `owner` and `operator` can invoke AI or provider selection. Project capability and optional provider allowlists are enforced server-side. Tokens are generated randomly, stored only as SHA-256 hashes and returned only at creation; revoked tokens are rejected.
+Project tokens have `owner`, `operator` or `viewer` roles. `owner` and `operator` can invoke AI or provider selection; `owner` can also issue/revoke operator and viewer tokens for its own project. Only the root administrator can issue owner tokens or change/delete projects. `viewer` cannot invoke execution routes. Project capability and optional provider allowlists are enforced server-side. Tokens are generated randomly, stored only as SHA-256 hashes and returned only at creation; revoked tokens are rejected.
 
 ## AI provider configuration
 
