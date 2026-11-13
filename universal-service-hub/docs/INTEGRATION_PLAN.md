@@ -157,3 +157,17 @@ Store credentials in Infisical under project-specific paths. These are names onl
 - Redis: `REDIS_URL` / provider-specific API token, with distinct credentials per project and environment
 
 A credential is not considered connected merely because its name is documented. Mark it active only after the owner authorizes access, the secret is stored, and a read-only identity/health check plus the relevant API contract test pass.
+
+
+## Minimum permission profiles
+
+- **GitHub App:** repository metadata read; contents read/write; pull requests read/write; checks and commit statuses read; Actions read, with write only if the Hub must dispatch workflows; issues read/write only for task intake. Do not grant organization-owner permissions.
+- **Infisical machine identity:** read-only access to the exact provider-secret paths needed by the Hub. No secret write/delete permission for the runtime identity.
+- **Railway:** project-scoped token where possible; deployments, service/environment metadata and logs only. Separate a break-glass workspace token from normal runtime.
+- **Vercel:** team-scoped token; deployments and project/environment metadata required by the connected project only.
+- **Supabase:** Management API PAT only for project administration. Runtime database access uses each project's own database credential or restricted service identity; do not share a Supabase service-role key across unrelated projects.
+- **Cloudflare:** scoped API token for the required zone and R2 bucket. R2 credentials should be bucket-scoped and object-only unless bucket administration is explicitly needed.
+- **Upstash:** per-database Redis token and separate QStash signing/token credentials; do not reuse one token across projects.
+- **Sentry:** project-scoped token for issue/release/alert operations. Read-only access is the default unless automated release creation is required.
+
+A provider connector must declare its requested permission profile in code and refuse to run if its credential scope is broader than the configured policy where the vendor exposes scope introspection.
