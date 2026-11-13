@@ -473,6 +473,23 @@ fn parse_redis_url(raw: &str) -> Result<url::Url, ApiError> {
     Ok(parsed)
 }
 
+fn is_private_network_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            octets[0] == 10
+                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                || (octets[0] == 192 && octets[1] == 168)
+        }
+        IpAddr::V6(ip) => (ip.segments()[0] & 0xfe00) == 0xfc00,
+    }
+}
+
+fn is_allowed_private_host(host: &str, allowlist: &str) -> bool {
+    if host.parse::<IpAddr>().is_ok() { return false; }
+    allowlist.split(',').any(|entry| entry.trim().eq_ignore_ascii_case(host))
+}
+
 fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -500,7 +517,13 @@ async fn ensure_public_destination(url: &url::Url) -> ApiResult<()> {
     let resolved = tokio::net::lookup_host((host, port)).await
         .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "provider_dns_failed"))?;
     let addresses: Vec<SocketAddr> = resolved.collect();
-    if addresses.is_empty() || addresses.iter().any(|addr| !is_public_ip(addr.ip())) {
+    if addresses.is_empty() {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsafe_provider_dns_result"));
+    }
+    let all_public = addresses.iter().all(|addr| is_public_ip(addr.ip()));
+    let all_private = addresses.iter().all(|addr| is_private_network_ip(addr.ip()));
+    let allowlist = env::var("USH_ALLOWED_PRIVATE_HOSTS").unwrap_or_default();
+    if !all_public && !(all_private && is_allowed_private_host(host, &allowlist)) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsafe_provider_dns_result"));
     }
     Ok(())
@@ -1266,6 +1289,19 @@ mod tests {
 #[cfg(test)]
 mod outbound_tests {
     use super::*;
+
+    #[test]
+    fn private_network_allowlist_requires_exact_hostnames() {
+        assert!(is_allowed_private_host("redis.railway.internal", "redis.railway.internal,db.internal"));
+        assert!(!is_allowed_private_host("evil.redis.railway.internal", "redis.railway.internal"));
+        assert!(!is_allowed_private_host("10.0.0.5", "10.0.0.5"));
+        assert!(is_private_network_ip("10.0.0.5".parse().unwrap()));
+        assert!(is_private_network_ip("172.20.0.2".parse().unwrap()));
+        assert!(is_private_network_ip("192.168.1.4".parse().unwrap()));
+        assert!(is_private_network_ip("fd00::1".parse().unwrap()));
+        assert!(!is_private_network_ip("169.254.169.254".parse().unwrap()));
+        assert!(!is_private_network_ip("127.0.0.1".parse().unwrap()));
+    }
 
     #[test]
     fn public_address_filter_rejects_private_and_metadata_ranges() {
