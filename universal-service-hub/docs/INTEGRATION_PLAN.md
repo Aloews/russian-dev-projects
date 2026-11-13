@@ -48,6 +48,9 @@ Implemented account checks:
 - Cloudflare R2: list buckets endpoint; requires Workers R2 Storage Read permission. Store a JSON secret referenced by `CLOUDFLARE_R2_CREDENTIALS_JSON` with `account_id` and `api_token`.
 - Backblaze B2: Native API account authorization endpoint. Store a JSON secret referenced by `BACKBLAZE_B2_CREDENTIALS_JSON` with `key_id` and `application_key`; prefer a restricted application key.
 
+PostgreSQL data-plane connectivity:
+- Self-managed PostgreSQL: adapter type `postgresql`, with a secret reference such as `POSTGRESQL_DATABASE_URL`. The verifier requires a PostgreSQL URL, rejects private/local destinations, forces TLS, opens a single-connection pool, executes `SELECT 1`, then closes the pool. It does not run migrations or modify data.
+
 These are implemented API checks, not active connections. Each provider remains unconnected until credentials are stored in Infisical and live verification succeeds. R2/B2 object transfer, generic S3 operations, Redis and PostgreSQL wire-protocol connectors remain future increments.
 
 ## Architecture decisions
