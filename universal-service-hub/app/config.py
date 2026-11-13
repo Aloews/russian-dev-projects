@@ -4,7 +4,7 @@ import json
 from functools import lru_cache
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="USH_", env_file=".env", extra="ignore")
     app_name: str = "Universal Service Hub"
     environment: str = "development"
+    api_token: SecretStr | None = Field(default=None, min_length=32)
     providers_json: str = "[]"
 
     def providers(self) -> list[ProviderConfig]:
