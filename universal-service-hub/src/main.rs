@@ -412,7 +412,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
         if list.is_empty() { None } else { Some(list) }
     } else { None };
 
-    let rows = sqlx::query("SELECT id,name,adapter_type,model,base_url,api_key_env,timeout_seconds,supports_idempotency FROM providers WHERE enabled=TRUE AND capabilities ? 'ai.chat' ORDER BY priority DESC,id")
+    let rows = sqlx::query("SELECT id,name,adapter_type,model,base_url,api_key_env,timeout_seconds,supports_idempotency FROM providers WHERE enabled=TRUE AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(capabilities::jsonb) AS cap WHERE cap='ai.chat') ORDER BY priority DESC,id")
         .fetch_all(&state.db).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "provider_query_failed"))?;
     let candidates: Vec<_> = rows.into_iter().filter(|r| {
