@@ -16,7 +16,7 @@ The Hub is a control plane, not a proxy for arbitrary provider traffic. It owns 
 
 ## Infrastructure account verification
 
-The Rust runtime supports read-only identity/connection checks for Northflank, Railway, Cloudflare, Netlify, Render and DigitalOcean. These use fixed official HTTPS API endpoints rather than caller-supplied URLs, resolve API tokens through Infisical, apply bounded request timeouts, reject redirects, normalize the response and audit only provider ID/type, latency and non-secret counts. This is a connection-verification layer, not yet a resource provisioning/deployment adapter.
+The Rust runtime supports read-only identity/connection checks for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon. These use fixed official HTTPS API endpoints rather than caller-supplied URLs, resolve API tokens through Infisical, apply bounded request timeouts, reject redirects, normalize the response and audit only provider ID/type, latency and non-secret counts. This is a connection-verification layer, not yet a resource provisioning/deployment adapter.
 
 ## Target architecture
 
