@@ -87,7 +87,7 @@ class ChatMessage(BaseModel):
 class AIChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=100)
     capability: str = Field(default="ai.chat", min_length=1, max_length=100)
-    temperature: float = Field(default=0.2, ge=0, le=2)
+    temperature: float = Field(default=0.2, ge=0, le=1)
     max_tokens: int = Field(default=1024, ge=1, le=8192)
     exclude: list[str] = Field(default_factory=list, max_length=100)
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
