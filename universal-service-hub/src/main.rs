@@ -576,38 +576,58 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     }
 
     if adapter == "s3_compatible" {
-        let credentials = parse_s3_compatible_credentials(&token)?;
-        let endpoint = validate_https_url(&credentials.endpoint_url)?;
-        ensure_public_destination(&endpoint).await?;
-        let sdk_credentials = aws_credential_types::Credentials::new(
-            credentials.access_key_id,
-            credentials.secret_access_key,
-            None,
-            None,
-            "universal-service-hub",
-        );
-        let sdk_config = aws_sdk_s3::Config::builder()
-            .region(aws_sdk_s3::config::Region::new(credentials.region))
-            .endpoint_url(endpoint.as_str())
-            .credentials_provider(sdk_credentials)
-            .force_path_style(true)
-            .build();
-        let s3_client = aws_sdk_s3::Client::from_conf(sdk_config);
-        let bucket_count = if let Some(bucket) = credentials.bucket.as_deref() {
-            tokio::time::timeout(
-                Duration::from_secs(15),
-                s3_client.head_bucket().bucket(bucket).send(),
-            )
-            .await
-            .map_err(|_| ApiError(StatusCode::GATEWAY_TIMEOUT, "s3_head_bucket_timeout"))?
-            .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "s3_authentication_or_request_failed"))?;
-            1
-        } else {
-            let output = tokio::time::timeout(Duration::from_secs(15), s3_client.list_buckets().send())
+        let verification: ApiResult<usize> = async {
+            let credentials = parse_s3_compatible_credentials(&token)?;
+            let endpoint = validate_https_url(&credentials.endpoint_url)?;
+            ensure_public_destination(&endpoint).await?;
+            let sdk_credentials = aws_credential_types::Credentials::new(
+                credentials.access_key_id,
+                credentials.secret_access_key,
+                None,
+                None,
+                "universal-service-hub",
+            );
+            let sdk_config = aws_sdk_s3::Config::builder()
+                .region(aws_sdk_s3::config::Region::new(credentials.region))
+                .endpoint_url(endpoint.as_str())
+                .credentials_provider(sdk_credentials)
+                .force_path_style(true)
+                .build();
+            let s3_client = aws_sdk_s3::Client::from_conf(sdk_config);
+            let bucket_count = if let Some(bucket) = credentials.bucket.as_deref() {
+                tokio::time::timeout(
+                    Duration::from_secs(15),
+                    s3_client.head_bucket().bucket(bucket).send(),
+                )
                 .await
-                .map_err(|_| ApiError(StatusCode::GATEWAY_TIMEOUT, "s3_list_buckets_timeout"))?
+                .map_err(|_| ApiError(StatusCode::GATEWAY_TIMEOUT, "s3_head_bucket_timeout"))?
                 .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "s3_authentication_or_request_failed"))?;
-            output.buckets().len()
+                1
+            } else {
+                let output = tokio::time::timeout(Duration::from_secs(15), s3_client.list_buckets().send())
+                    .await
+                    .map_err(|_| ApiError(StatusCode::GATEWAY_TIMEOUT, "s3_list_buckets_timeout"))?
+                    .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "s3_authentication_or_request_failed"))?;
+                output.buckets().len()
+            };
+            Ok(bucket_count)
+        }
+        .await;
+
+        let bucket_count = match verification {
+            Ok(count) => count,
+            Err(error) => {
+                audit(
+                    &state,
+                    &principal.actor,
+                    "integration.verify.failure",
+                    "provider",
+                    &provider_id,
+                    json!({"adapter":"s3_compatible","failure":error.1}),
+                )
+                .await;
+                return Err(error);
+            }
         };
         let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
         audit(
