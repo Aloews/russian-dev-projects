@@ -100,7 +100,7 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 - Health probes do not follow redirects and do not return raw provider response bodies.
 - No credentials are returned by API responses or logs.
 - A provider is not a verified fallback until its integration and failure modes have been exercised.
-- Keep the bootstrap token private; distribute only short-lived, least-privilege project/operator keys to agents and services.
+- Keep the bootstrap token private; distribute only short-lived, least-privilege project/operator keys to agents and services. Audit logs are durable but are not yet tamper-evident or exported to an immutable external store; per-project quotas, spend ceilings and rate limits are not implemented.
 - Database failover is not automatic; this Hub does not replicate or move project data between providers.
 
 ## Roadmap
