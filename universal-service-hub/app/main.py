@@ -3,8 +3,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 
+from app.auth import require_api_token
 from app.config import get_settings
 from app.registry import ProviderRegistry
 from app.schemas import (
@@ -31,11 +32,13 @@ def view(state) -> ProviderView:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    if settings.environment.lower() == "production" and settings.api_token is None:
+        raise RuntimeError("USH_API_TOKEN must be configured in production")
     app.state.registry = ProviderRegistry(settings.providers())
     yield
 
 
-app = FastAPI(title="Universal Service Hub", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Universal Service Hub", version="0.2.0", lifespan=lifespan)
 
 
 @app.get("/healthz")
@@ -49,13 +52,21 @@ async def readyz(request: Request):
     return {"status": "ready", "providers_configured": len(registry.list())}
 
 
-@app.get("/v1/providers", response_model=list[ProviderView])
+@app.get(
+    "/v1/providers",
+    response_model=list[ProviderView],
+    dependencies=[Depends(require_api_token)],
+)
 async def list_providers(request: Request):
     registry: ProviderRegistry = request.app.state.registry
     return [view(state) for state in registry.list()]
 
 
-@app.post("/v1/providers/health-check", response_model=list[HealthCheckResult])
+@app.post(
+    "/v1/providers/health-check",
+    response_model=list[HealthCheckResult],
+    dependencies=[Depends(require_api_token)],
+)
 async def health_check(payload: ProviderHealthProbeRequest, request: Request):
     registry: ProviderRegistry = request.app.state.registry
     states = registry.list()
@@ -77,7 +88,11 @@ async def health_check(payload: ProviderHealthProbeRequest, request: Request):
     ]
 
 
-@app.post("/v1/providers/select", response_model=ProviderSelectionResponse)
+@app.post(
+    "/v1/providers/select",
+    response_model=ProviderSelectionResponse,
+    dependencies=[Depends(require_api_token)],
+)
 async def select_provider(payload: ProviderSelectionRequest, request: Request):
     registry: ProviderRegistry = request.app.state.registry
     selected = registry.select(payload.capability, set(payload.exclude))
