@@ -133,10 +133,10 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 3. Durable PostgreSQL provider registry and migrations. (Completed)
 4. AI provider adapters and normalized chat routing. (This increment)
 5. Project tenancy, scoped tokens, roles and audit event table/read API. (Completed)
-6. Managed secret-store integration and non-AI adapters for compute, databases, storage, queues and observability.
-7. Policy engine: cost/latency/region constraints, circuit breakers, quotas and fallback chains.
-8. GitHub-driven project onboarding, isolated build/test workers and independent QA gates.
-9. Deployment controllers, staged rollout, synthetic monitoring and automated rollback.
-10. Multi-project dashboard, budget controls and operator notifications.
+6. Managed secret-store integration and read-only infrastructure account verification. (Implemented; live credential checks pending.)
+7. Provider resource-management adapters for compute, deployments, databases, storage lifecycle, queues and observability.
+8. Policy engine: per-project budgets, quotas, cost/latency/region constraints, circuit breakers and fallback chains.
+9. GitHub-driven project onboarding, isolated build/test workers and independent QA gates.
+10. Deployment controllers, staged rollout, synthetic monitoring, rollback and operator dashboard.
 
 See [ARCHITECTURE.md](./docs/ARCHITECTURE.md), [SECURITY.md](./docs/SECURITY.md), [OPERATIONS.md](./docs/OPERATIONS.md), and [INTEGRATION_PLAN.md](./docs/INTEGRATION_PLAN.md).
