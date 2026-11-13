@@ -47,6 +47,7 @@ Implemented account checks:
 - Neon: list-projects endpoint; bearer API key.
 - Cloudflare R2: list buckets endpoint; requires Workers R2 Storage Read permission. Store a JSON secret referenced by `CLOUDFLARE_R2_CREDENTIALS_JSON` with `account_id` and `api_token`.
 - Backblaze B2: Native API account authorization endpoint. Store a JSON secret referenced by `BACKBLAZE_B2_CREDENTIALS_JSON` with `key_id` and `application_key`; prefer a restricted application key.
+- S3-compatible data plane (AWS S3, Cloudflare R2, Supabase Storage S3 protocol, Backblaze B2 S3 API): store `S3_COMPATIBLE_CREDENTIALS_JSON` as a JSON secret containing `endpoint_url`, `region`, `access_key_id`, and `secret_access_key`. The Hub performs AWS Signature Version 4 `ListBuckets` only. Use endpoint URLs from the provider dashboard; for Supabase, enable S3 protocol and generate dedicated S3 credentials.
 
 PostgreSQL data-plane connectivity:
 - Self-managed PostgreSQL: adapter type `postgresql`, with a secret reference such as `POSTGRESQL_DATABASE_URL`. The verifier requires a PostgreSQL URL, rejects private/local destinations, forces TLS, opens a single-connection pool, executes `SELECT 1`, then closes the pool. It does not run migrations or modify data.
@@ -54,7 +55,7 @@ PostgreSQL data-plane connectivity:
 Redis data-plane connectivity:
 - Railway Redis, Northflank Redis and other Redis-compatible services: adapter type `redis`, with a secret reference such as `REDIS_URL`. The verifier requires a `rediss://` URL, rejects private/local destinations, opens one bounded async connection and sends `PING`. It never writes keys or data.
 
-These are implemented API checks, not active connections. Each provider remains unconnected until credentials are stored in Infisical and live verification succeeds. R2/B2 object transfer, generic S3 operations, Redis and PostgreSQL wire-protocol connectors remain future increments.
+These are implemented API checks, not active connections. Each provider remains unconnected until credentials are stored in Infisical and live verification succeeds. S3-compatible read-only bucket verification now covers AWS S3, Cloudflare R2, Supabase Storage S3 protocol and Backblaze B2 when each endpoint and SigV4 credentials are supplied. Object upload/download lifecycle operations remain a separate increment; Redis and PostgreSQL are currently verified only through PING and SELECT 1.
 
 ## Architecture decisions
 
@@ -177,7 +178,7 @@ Store credentials in Infisical under project-specific paths. These are names onl
 - Neon: `NEON_API_KEY`; per-project PostgreSQL connection string stored separately
 - PostgreSQL self-hosted: `DATABASE_URL` (TLS required; least-privilege role)
 - Supabase Storage: per-project URL and restricted service credentials
-- Amazon S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, bucket name
+- Amazon S3 / S3-compatible (R2, Supabase Storage, B2): `S3_COMPATIBLE_CREDENTIALS_JSON` (endpoint URL, region, access key ID and secret access key)
 - Backblaze B2: `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`; or S3-compatible endpoint/access keys
 - Redis: `REDIS_URL` / provider-specific API token, with distinct credentials per project and environment
 
