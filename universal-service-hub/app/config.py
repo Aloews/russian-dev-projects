@@ -4,7 +4,7 @@ import json
 import re
 from functools import lru_cache
 from typing import Any
-from urllib.parse import urlsplit
+from app.outbound import parse_public_https_url
 
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,13 +18,20 @@ class ProviderConfig(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     priority: int = 100
     enabled: bool = True
-    health_url: str | None = None
+    health_url: str | None = Field(default=None, max_length=2048)
     timeout_seconds: float = Field(default=3.0, gt=0, le=30)
     adapter_type: str = "none"
     model: str | None = Field(default=None, max_length=160)
     base_url: str | None = Field(default=None, max_length=2048)
     api_key_env: str | None = Field(default=None, max_length=120)
     supports_idempotency: bool = False
+
+    @field_validator("health_url", "base_url")
+    @classmethod
+    def validate_external_urls(cls, value: str | None) -> str | None:
+        if value is not None:
+            parse_public_https_url(value)
+        return value
 
     @model_validator(mode="after")
     def validate_adapter_configuration(self):
@@ -38,17 +45,6 @@ class ProviderConfig(BaseModel):
             raise ValueError("AI adapters require model, base_url and api_key_env")
         if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,119}", self.api_key_env):
             raise ValueError("api_key_env must be an uppercase environment variable name")
-        parsed = urlsplit(self.base_url)
-        if (
-            parsed.scheme not in {"https", "http"}
-            or (parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1"})
-            or not parsed.netloc
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("base_url must be HTTPS without credentials, query or fragment")
         if self.adapter_type == "gemini" and self.supports_idempotency:
             raise ValueError("Gemini adapter does not support idempotent failover")
         return self
