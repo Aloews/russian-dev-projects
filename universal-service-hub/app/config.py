@@ -4,10 +4,11 @@ import json
 import re
 from functools import lru_cache
 from typing import Any
-from app.outbound import parse_public_https_url
 
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.outbound import parse_public_https_url
 
 ADAPTER_TYPES = {"none", "openai_compatible", "anthropic", "gemini"}
 
