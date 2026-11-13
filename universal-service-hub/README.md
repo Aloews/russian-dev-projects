@@ -25,7 +25,16 @@ Public:
 - `GET /healthz`
 - `GET /readyz`
 
-All `/v1/*` endpoints require `Authorization: Bearer $USH_API_TOKEN`. The token must be at least 32 characters. Production startup fails if the token is missing or the database URL is not PostgreSQL.
+All `/v1/*` endpoints require a Bearer token. The bootstrap `USH_API_TOKEN` is the root administrator credential (minimum 32 characters); additional scoped keys are created through the admin API. Production startup fails if the bootstrap token is missing or the database URL is not PostgreSQL.
+
+Administration:
+- `POST /v1/projects` and `GET /v1/projects` — create/list projects (bootstrap admin only)
+- `POST /v1/api-keys` — issue an operator, agent or project key (bootstrap admin only; plaintext shown once)
+- `GET /v1/api-keys` — list key metadata without token values
+- `DELETE /v1/api-keys/{key_id}` — revoke a key
+- `GET /v1/audit-logs` — inspect durable control-action audit events (bootstrap admin only)
+
+Project and agent keys require a project ID, expire within at most 365 days and carry explicit scopes. Project-scoped keys can access global providers plus providers assigned to their project; they cannot modify provider configuration or administer projects/keys. Operator keys are global and receive only the scopes granted when created.
 
 Provider management:
 - `GET /v1/providers` — list providers
@@ -91,7 +100,7 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 - Health probes do not follow redirects and do not return raw provider response bodies.
 - No credentials are returned by API responses or logs.
 - A provider is not a verified fallback until its integration and failure modes have been exercised.
-- This release uses one service token; do not expose it as a multi-user or multi-project authorization model.
+- Keep the bootstrap token private; distribute only short-lived, least-privilege project/operator keys to agents and services.
 - Database failover is not automatic; this Hub does not replicate or move project data between providers.
 
 ## Roadmap
@@ -100,7 +109,7 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 2. Control API authentication. (Completed)
 3. Durable PostgreSQL provider registry and migrations. (Completed)
 4. AI provider adapters and normalized chat routing. (This increment)
-5. Audit log, project tenancy and RBAC.
+5. Audit log, project tenancy and RBAC. (Completed)
 6. Managed secret-store integration and non-AI adapters for compute, databases, storage, queues and observability.
 7. Policy engine: cost/latency/region constraints, circuit breakers, quotas and fallback chains.
 8. GitHub-driven project onboarding, isolated build/test workers and independent QA gates.
