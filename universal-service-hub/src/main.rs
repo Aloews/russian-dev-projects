@@ -443,15 +443,15 @@ fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
     if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") || host.ends_with(".internal") || host == "metadata.google.internal" {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsafe_provider_host"));
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if !is_public_ip(ip) { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "non_public_provider_ip")); }
+    if let Ok(ip) = host.parse::<IpAddr>() && !is_public_ip(ip) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "non_public_provider_ip"));
     }
     Ok(parsed)
 }
 
 fn validate_fixed_integration_url(raw: &str) -> Result<url::Url, ApiError> {
     let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_internal_integration_url"))?;
-    if parsed.scheme() != "https" || parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some() || parsed.fragment().is_some() {
+    if parsed.scheme() != "https" || parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some() {
         return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_internal_integration_url"));
     }
     Ok(parsed)
@@ -459,15 +459,25 @@ fn validate_fixed_integration_url(raw: &str) -> Result<url::Url, ApiError> {
 
 fn parse_postgres_url(raw: &str) -> Result<url::Url, ApiError> {
     let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"))?;
-    if !["postgres", "postgresql"].contains(&parsed.scheme()) || parsed.host_str().is_none() {
+    if !["postgres", "postgresql"].contains(&parsed.scheme()) || parsed.host_str().is_none() || parsed.fragment().is_some() {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"));
     }
+    Ok(parsed)
+}
+
+fn postgres_connection_url(raw: &str) -> Result<url::Url, ApiError> {
+    let mut parsed = parse_postgres_url(raw)?;
+    parsed.set_query(None);
+    parsed.set_fragment(None);
     Ok(parsed)
 }
 
 fn parse_redis_url(raw: &str, private_host_allowlist: &str) -> Result<url::Url, ApiError> {
     let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"))?;
     let host = parsed.host_str().ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"))?;
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"));
+    }
     let secure = parsed.scheme() == "rediss";
     let allowlisted_private = parsed.scheme() == "redis" && is_allowed_private_host(host, private_host_allowlist);
     if !secure && !allowlisted_private {
@@ -591,6 +601,9 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
         let service_role_key = config["service_role_key"].as_str().filter(|v| !v.is_empty())
             .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "supabase_storage_key_required"))?;
         let base = validate_https_url(project_url)?;
+        if base.path() != "/" {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_supabase_project_url"));
+        }
         ensure_public_destination(&base).await?;
         let endpoint = format!("{}/storage/v1/bucket", project_url.trim_end_matches('/'));
         let response = state.http.get(endpoint).header("apikey", service_role_key).bearer_auth(service_role_key)
@@ -598,9 +611,9 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
             .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "supabase_storage_request_failed"))?;
         let status = response.status();
         if !status.is_success() {
-            let code = if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN { StatusCode::UNAUTHORIZED } else if status == StatusCode::TOO_MANY_REQUESTS { StatusCode::TOO_MANY_REQUESTS } else { StatusCode::BAD_GATEWAY };
+            let code = if status == StatusCode::UNAUTHORIZED { StatusCode::UNAUTHORIZED } else if status == StatusCode::FORBIDDEN { StatusCode::FORBIDDEN } else if status == StatusCode::TOO_MANY_REQUESTS { StatusCode::TOO_MANY_REQUESTS } else { StatusCode::BAD_GATEWAY };
             audit(&state, &principal.actor, "integration.verify.failure", "provider", &provider_id, json!({"adapter":"supabase_storage","upstream_status":status.as_u16()})).await;
-            return Err(ApiError(code, if code == StatusCode::UNAUTHORIZED { "integration_authentication_failed" } else if code == StatusCode::TOO_MANY_REQUESTS { "integration_rate_limited" } else { "integration_upstream_failed" }));
+            return Err(ApiError(code, if code == StatusCode::UNAUTHORIZED { "integration_authentication_failed" } else if code == StatusCode::FORBIDDEN { "integration_permission_denied" } else if code == StatusCode::TOO_MANY_REQUESTS { "integration_rate_limited" } else { "integration_upstream_failed" }));
         }
         let buckets: Value = response.json().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
         let buckets = buckets.as_array().ok_or(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
@@ -613,11 +626,14 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
         let verification: ApiResult<usize> = async {
             let credentials = parse_s3_compatible_credentials(&token)?;
             let endpoint = validate_https_url(&credentials.endpoint_url)?;
+            if endpoint.path() != "/" {
+                return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_s3_endpoint"));
+            }
             ensure_public_destination(&endpoint).await?;
             let sdk_credentials = aws_credential_types::Credentials::new(
                 credentials.access_key_id,
                 credentials.secret_access_key,
-                None,
+                credentials.session_token,
                 None,
                 "universal-service-hub",
             );
@@ -704,7 +720,8 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     if adapter == "postgresql" {
         let database_url = parse_postgres_url(&token)?;
         ensure_public_destination(&database_url).await?;
-        let options = PgConnectOptions::from_str(&token)
+        let connection_url = postgres_connection_url(&token)?;
+        let options = PgConnectOptions::from_str(connection_url.as_str())
             .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"))?
             .ssl_mode(PgSslMode::VerifyFull);
         let pool = PgPoolOptions::new().max_connections(1).acquire_timeout(Duration::from_secs(8))
@@ -760,7 +777,7 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     if !status.is_success() {
         let code = if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN { StatusCode::UNAUTHORIZED } else if status == StatusCode::TOO_MANY_REQUESTS { StatusCode::TOO_MANY_REQUESTS } else { StatusCode::BAD_GATEWAY };
         audit(&state, &principal.actor, "integration.verify.failure", "provider", &provider_id, json!({"adapter":adapter,"upstream_status":status.as_u16()})).await;
-        return Err(ApiError(code, if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN { "integration_authentication_failed" } else if status == StatusCode::TOO_MANY_REQUESTS { "integration_rate_limited" } else { "integration_upstream_failed" }));
+        return Err(ApiError(code, if status == StatusCode::UNAUTHORIZED { "integration_authentication_failed" } else if status == StatusCode::FORBIDDEN { "integration_permission_denied" } else if status == StatusCode::TOO_MANY_REQUESTS { "integration_rate_limited" } else { "integration_upstream_failed" }));
     }
     let data: Value = response.json().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
     let (verified, resource_count, account_label) = match adapter.as_str() {
@@ -769,7 +786,7 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
             (true, Some(teams.len()), teams.first().and_then(|v| v["name"].as_str()).map(str::to_owned))
         }
         "railway" => {
-            if data["errors"].as_array().is_some_and(|v| !v.is_empty()) || data["data"]["me"].is_null() { return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed")); }
+            if data["errors"].as_array().is_some_and(|v| !v.is_empty()) || data["data"]["me"].is_null() { return Err(ApiError(StatusCode::BAD_GATEWAY, "integration_query_failed")); }
             (true, None, data["data"]["me"]["name"].as_str().map(str::to_owned))
         }
         "cloudflare" => {
@@ -783,7 +800,7 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
         }
         "digitalocean" => (data["account"]["uuid"].is_string(), None, Some("DigitalOcean account authorized".into())),
         "flyio" => {
-            if data["errors"].as_array().is_some_and(|v| !v.is_empty()) || data["data"]["viewer"]["email"].as_str().is_none() { return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed")); }
+            if data["errors"].as_array().is_some_and(|v| !v.is_empty()) || data["data"]["viewer"]["email"].as_str().is_none() { return Err(ApiError(StatusCode::BAD_GATEWAY, "integration_query_failed")); }
             (true, None, Some("Fly.io account authorized".into()))
         }
         "supabase" => {
@@ -806,7 +823,7 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
         }
         _ => (false, None, None),
     };
-    if !verified { return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed")); }
+    if !verified { return Err(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response")); }
     let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
     audit(&state, &principal.actor, "integration.verify.success", "provider", &provider_id, json!({"adapter":adapter,"latency_ms":latency_ms,"resource_count":resource_count})).await;
     Ok(Json(json!({"provider_id":provider_id,"adapter":adapter,"connected":true,"verified":true,"resource_count":resource_count,"account_label":account_label,"latency_ms":latency_ms})))
@@ -1379,5 +1396,65 @@ mod project_permission_tests {
         assert!(!can_manage_project_tokens(&owner_beta, "alpha"));
         assert!(!can_manage_project_tokens(&operator_alpha, "alpha"));
         assert!(!can_manage_project_tokens(&viewer_alpha, "alpha"));
+    }
+}
+
+
+#[cfg(test)]
+mod integration_security_tests {
+    use super::*;
+
+    #[test]
+    fn postgres_connection_url_discards_untrusted_query_options() {
+        let parsed = postgres_connection_url(
+            "postgresql://user:pass@db.example:5432/app?host=127.0.0.1&sslmode=disable",
+        )
+        .expect("valid PostgreSQL URL");
+        assert_eq!(parsed.host_str(), Some("db.example"));
+        assert!(parsed.query().is_none());
+        assert_eq!(parsed.scheme(), "postgresql");
+    }
+
+    #[test]
+    fn postgres_url_rejects_fragments_and_invalid_schemes() {
+        assert!(parse_postgres_url("postgres://user:pass@db.example/app#fragment").is_err());
+        assert!(parse_postgres_url("http://db.example/app").is_err());
+    }
+
+    #[test]
+    fn redis_requires_tls_or_an_exact_private_hostname_and_rejects_query_options() {
+        assert!(parse_redis_url("redis://cache.example:6379", "").is_err());
+        assert!(parse_redis_url("redis://cache.internal:6379", "cache.internal").is_ok());
+        assert!(parse_redis_url("redis://cache.internal:6379", "*.internal").is_err());
+        assert!(parse_redis_url("rediss://cache.example:6380?insecure=true", "").is_err());
+    }
+
+    #[test]
+    fn private_network_allowlist_is_exact_and_excludes_loopback_and_link_local() {
+        assert!(is_private_network_ip("10.0.0.2".parse().unwrap()));
+        assert!(is_private_network_ip("172.16.0.2".parse().unwrap()));
+        assert!(is_private_network_ip("192.168.1.2".parse().unwrap()));
+        assert!(is_private_network_ip("fd00::2".parse().unwrap()));
+        assert!(!is_private_network_ip("127.0.0.1".parse().unwrap()));
+        assert!(!is_private_network_ip("169.254.169.254".parse().unwrap()));
+        assert!(!is_allowed_private_host("cache.internal", "*.internal"));
+        assert!(is_allowed_private_host("cache.internal", "cache.internal"));
+    }
+
+    #[test]
+    fn s3_credentials_preserve_optional_session_token_and_validate_bucket() {
+        let raw = r#"{
+            "endpoint_url":"https://s3.example.com",
+            "region":"us-east-1",
+            "access_key_id":"access",
+            "secret_access_key":"secret",
+            "session_token":"temporary-session",
+            "bucket":"project-assets"
+        }"#;
+        let credentials = parse_s3_compatible_credentials(raw).expect("valid S3 credentials");
+        assert_eq!(credentials.session_token.as_deref(), Some("temporary-session"));
+        assert!(valid_s3_bucket_name("project-assets"));
+        assert!(!valid_s3_bucket_name("Project-Assets"));
+        assert!(!valid_s3_bucket_name("192.168.1.1"));
     }
 }
