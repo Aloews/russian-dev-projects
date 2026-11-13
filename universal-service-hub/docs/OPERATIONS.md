@@ -47,3 +47,13 @@ A deployment is blocked until all are true:
 ## Deployment policy
 
 No production deployment is enabled by this increment. First deploy to an isolated development environment. Promote only after an independent review and verified staging checks. Do not modify existing project deployments or production databases as part of Hub bootstrap.
+
+## Project access and API keys
+
+- Keep `USH_API_TOKEN` as a bootstrap administrator secret; do not distribute it to project agents.
+- Create a project with `POST /v1/projects`, then issue a scoped key with `POST /v1/api-keys`.
+- Copy the returned token at creation time; it is never returned again. Store it in the target project's secret manager.
+- Set the narrowest scopes required: `providers:read`, `health:probe`, `routing:select`, `ai:chat`; reserve `providers:write` for operator keys.
+- Revoke compromised or retired keys with `DELETE /v1/api-keys/{key_id}`.
+- Review control actions through `GET /v1/audit-logs`.
+- Keys expire automatically; current maximum lifetime is 365 days. Automated rotation and external immutable audit export are not yet implemented.
