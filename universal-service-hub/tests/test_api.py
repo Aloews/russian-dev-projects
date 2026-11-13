@@ -570,3 +570,57 @@ def test_project_update_changes_access_and_delete_revokes_all_tokens(monkeypatch
             json={"messages": [{"role": "user", "content": "Hello"}]},
         )
         assert revoked.status_code == 401
+
+
+def test_project_owner_can_manage_runtime_tokens_but_operator_cannot(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "owner-rbac.db") as client:
+        client.post(
+            "/v1/projects",
+            json={
+                "id": "owned",
+                "name": "Owned Project",
+                "allowed_capabilities": ["ai.chat"],
+            },
+        )
+        owner_response = client.post(
+            "/v1/projects/owned/tokens",
+            json={"name": "owner", "role": "owner"},
+        )
+        owner_headers = {
+            "Authorization": f"Bearer {owner_response.json()['token']}"
+        }
+
+        operator_response = client.post(
+            "/v1/projects/owned/tokens",
+            headers=owner_headers,
+            json={"name": "worker", "role": "operator"},
+        )
+        assert operator_response.status_code == 200
+        operator_id = operator_response.json()["id"]
+
+        denied_owner_escalation = client.post(
+            "/v1/projects/owned/tokens",
+            headers=owner_headers,
+            json={"name": "second-owner", "role": "owner"},
+        )
+        assert denied_owner_escalation.status_code == 403
+
+        operator_headers = {
+            "Authorization": f"Bearer {operator_response.json()['token']}"
+        }
+        denied_delegation = client.post(
+            "/v1/projects/owned/tokens",
+            headers=operator_headers,
+            json={"name": "extra", "role": "viewer"},
+        )
+        assert denied_delegation.status_code == 403
+
+        listed = client.get("/v1/projects/owned/tokens", headers=owner_headers)
+        assert listed.status_code == 200
+        assert len(listed.json()) == 2
+
+        revoked = client.delete(
+            f"/v1/projects/owned/tokens/{operator_id}",
+            headers=owner_headers,
+        )
+        assert revoked.status_code == 204
