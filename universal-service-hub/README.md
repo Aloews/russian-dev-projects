@@ -4,7 +4,7 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Current status
 
-**Development control plane / not production-ready.** The Hub has authenticated provider management, PostgreSQL persistence, health checks, deterministic capability selection and real HTTP adapters for OpenAI-compatible, Anthropic-compatible and Gemini chat APIs. Full user identity, project tenancy/RBAC, a managed secret-store connector, non-AI vendor adapters and production deployment are still outstanding. Provider changes and AI usage metadata are recorded in a durable audit trail.
+**Development control plane / not production-ready.** The Hub has authenticated provider management, PostgreSQL persistence, health checks, deterministic capability selection and real HTTP adapters for OpenAI-compatible, Anthropic-compatible and Gemini chat APIs. Managed secret-store integration, non-AI vendor adapters and production deployment are still outstanding. Project-scoped API tokens and role-based invocation access are implemented. Provider changes and AI usage metadata are recorded in a durable audit trail.
 
 ## Run locally
 
@@ -25,18 +25,25 @@ Public:
 - `GET /healthz`
 - `GET /readyz`
 
-All `/v1/*` endpoints require `Authorization: Bearer $USH_API_TOKEN`. The token must be at least 32 characters. Production startup fails if the token is missing or the database URL is not PostgreSQL.
+Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This root token must be at least 32 characters. Project runtime endpoints accept project tokens issued by the administrator. Production startup fails if the root token is missing or the database URL is not PostgreSQL.
 
 Provider management:
 - `GET /v1/providers` — list providers
 - `GET /v1/audit?limit=50` — list recent audit events (maximum 100)
+- `POST /v1/projects` — register a project and its allowed capabilities/providers
+- `GET /v1/projects` — list registered projects
+- `POST /v1/projects/{project_id}/tokens` — issue a project token (shown once)
+- `GET /v1/projects/{project_id}/tokens` — list token metadata
+- `DELETE /v1/projects/{project_id}/tokens/{token_id}` — revoke a token
 - `PUT /v1/providers/{provider_id}` — create or replace provider configuration
 - `DELETE /v1/providers/{provider_id}` — remove a provider
 - `POST /v1/providers/health-check` — probe one provider or up to 50 providers by default (maximum 100 per call; 10 probes run concurrently)
-- `POST /v1/providers/select` — choose the highest-priority eligible provider for a capability
+- `POST /v1/providers/select` — choose the highest-priority eligible provider for a capability (admin or project owner/operator token)
 
 AI:
-- `POST /v1/ai/chat` — route a chat request to a configured AI provider
+- `POST /v1/ai/chat` — route a chat request to a configured AI provider (admin or project owner/operator token)
+
+Project tokens have `owner`, `operator` or `viewer` roles. Only `owner` and `operator` can invoke AI or provider selection. Project capability and optional provider allowlists are enforced server-side. Tokens are generated randomly, stored only as SHA-256 hashes and returned only at creation; revoked tokens are rejected.
 
 ## AI provider configuration
 
@@ -93,7 +100,7 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 - Provider mutations and AI usage metadata are recorded without storing prompts, responses or credential values.
 - No credentials are returned by API responses or logs.
 - A provider is not a verified fallback until its integration and failure modes have been exercised.
-- This release uses one service token; do not expose it as a multi-user or multi-project authorization model.
+- The root service token is administrator-only. Runtime projects use scoped tokens with `owner`, `operator` or `viewer` roles; provider configuration, audit reads and project/token administration remain root-only.
 - Database failover is not automatic; this Hub does not replicate or move project data between providers.
 
 ## Roadmap
@@ -102,7 +109,7 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 2. Control API authentication. (Completed)
 3. Durable PostgreSQL provider registry and migrations. (Completed)
 4. AI provider adapters and normalized chat routing. (This increment)
-5. Project tenancy and RBAC; the initial append-only audit event table and read API are implemented.
+5. Project tenancy, scoped tokens, roles and audit event table/read API. (Completed)
 6. Managed secret-store integration and non-AI adapters for compute, databases, storage, queues and observability.
 7. Policy engine: cost/latency/region constraints, circuit breakers, quotas and fallback chains.
 8. GitHub-driven project onboarding, isolated build/test workers and independent QA gates.
