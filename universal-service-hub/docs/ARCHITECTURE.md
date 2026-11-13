@@ -6,13 +6,15 @@ The Hub is a control plane, not a proxy for arbitrary provider traffic. It owns 
 
 ## Current runtime
 
-- FastAPI exposes health, provider inventory, provider CRUD, health probing and provider selection.
-- SQLAlchemy async sessions persist provider configuration and health state.
-- SQLite is used only for local development/tests; production requires PostgreSQL.
-- Alembic migrations define the PostgreSQL schema and run before the container starts.
-- `USH_PROVIDERS_JSON` seeds missing provider records only; it does not overwrite database-managed records.
-- One service Bearer token protects all `/v1/*` endpoints. Full identity, project tenancy and RBAC are not yet implemented.
-- Selection is based on enabled state, capability, health and priority; ties are deterministic by provider ID.
+- Rust Axum/Tokio exposes the production HTTP API; the Docker image starts the Rust binary.
+- SQLx persists provider, project, token and audit state in PostgreSQL; SQLx migrations run during startup.
+- FastAPI and SQLAlchemy remain temporary compatibility/reference implementations, not the production container entrypoint.
+- Root bearer authentication and project-scoped hashed tokens enforce owner/operator/viewer roles and project capability/provider allowlists.
+- Provider selection is based on enabled state, capability, health and priority; ties are deterministic by provider ID.
+
+## Infrastructure account verification
+
+The Rust runtime includes read-only account/API checks for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API, Neon, Supabase Storage, Cloudflare R2 and Backblaze B2. It resolves credentials through Infisical, uses fixed HTTPS endpoints, bounded timeouts, no redirects, normalized responses and redacted audit events. Supabase Storage bucket inventory, R2 bucket inventory, B2 account authorization and S3-compatible SigV4 bucket verification are supported for AWS S3, Cloudflare R2, Supabase Storage S3 protocol and Backblaze B2. Object upload/download lifecycle operations are not yet implemented. A self-managed PostgreSQL connection probe uses a secret URL, forces TLS, rejects private destinations and runs a read-only SELECT 1. Redis connectivity requires rediss://, rejects private destinations and sends a read-only PING.
 
 ## Target architecture
 
