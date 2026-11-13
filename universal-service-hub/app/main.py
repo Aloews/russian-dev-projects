@@ -7,7 +7,7 @@ from time import perf_counter
 from typing import Annotated
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Path, Request
+from fastapi import Depends, FastAPI, HTTPException, Path
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -139,7 +139,7 @@ async def readyz(session: Annotated[AsyncSession, Depends(get_session)]):
     response_model=list[ProviderView],
     dependencies=[Depends(require_api_token)],
 )
-async def list_providers(session: AsyncSession = Depends(get_session)):
+async def list_providers(session: Annotated[AsyncSession, Depends(get_session)]):
     result = await session.scalars(
         select(ProviderRecord).order_by(ProviderRecord.priority.desc(), ProviderRecord.id.asc())
     )
@@ -220,7 +220,7 @@ async def health_check(
 )
 async def select_provider(
     payload: ProviderSelectionRequest,
-    session: AsyncSession = Depends(get_session),
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     result = await session.scalars(
         select(ProviderRecord).where(ProviderRecord.enabled.is_(True))
