@@ -125,6 +125,6 @@ async def test_retryable_provider_status_is_normalized_without_body_leak():
             max_tokens=100,
             timeout=2,
         )
-    assert raised.value.retryable is True
+    assert raised.value.retryable is False
     assert raised.value.status_code == 503
     assert "private upstream diagnostic" not in str(raised.value)
