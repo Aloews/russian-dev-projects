@@ -706,7 +706,7 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
         ensure_public_destination(&database_url).await?;
         let options = PgConnectOptions::from_str(&token)
             .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"))?
-            .ssl_mode(PgSslMode::Require);
+            .ssl_mode(PgSslMode::VerifyFull);
         let pool = PgPoolOptions::new().max_connections(1).acquire_timeout(Duration::from_secs(8))
             .connect_with(options).await
             .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "database_connection_failed"))?;
