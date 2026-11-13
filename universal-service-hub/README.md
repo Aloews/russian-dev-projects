@@ -25,7 +25,7 @@ Public:
 - `GET /healthz`
 - `GET /readyz`
 
-Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This root token must be at least 32 characters. Project runtime endpoints accept project tokens issued by the administrator. Production startup fails if the root token is missing or the database URL is not PostgreSQL. Set `USH_ENVIRONMENT=production`; production requires `USH_SECRET_BACKEND=infisical` and a complete Infisical machine identity configuration.
+Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This root token must be at least 32 characters. Project runtime endpoints accept project tokens issued by the root administrator or, within their own project, an owner token. Production startup fails if the root token is missing or the database URL is not PostgreSQL. Set `USH_ENVIRONMENT=production`; startup then requires PostgreSQL and a complete Infisical machine identity configuration. Environment-variable secret fallback is development-only.
 
 Provider management:
 - `GET /v1/providers` — list providers
@@ -83,7 +83,7 @@ Example for a standard Anthropic Messages API endpoint:
 }
 ```
 
-Send this object to `PUT /v1/providers/anthropic`. Set `ANTHROPIC_API_KEY` in the runtime environment. For Starimg, use this adapter only after its current account documentation confirms the Anthropic Messages endpoint and use the model identifier returned by that provider. The API response reveals only whether the referenced credential is configured; it never returns the environment-variable name or secret.
+Send this object to `PUT /v1/providers/anthropic`. In production, store `ANTHROPIC_API_KEY` in Infisical at the project's `/providers` path; environment variables are development-only. For Starimg, use this adapter only after its current account documentation confirms the Anthropic Messages endpoint and use the model identifier returned by that provider. The API response reveals only whether the referenced credential is configured; it never returns the environment-variable name or secret.
 
 Supported adapter types:
 - `openai_compatible` — OpenAI-compatible `/chat/completions` endpoints
