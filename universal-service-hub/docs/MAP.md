@@ -25,6 +25,7 @@ Base repository: `Aloews/russian-dev-projects`
 - PR #2: foundation — merged earlier.
 - PR #4: durable PostgreSQL provider registry and bounded health probes — merged earlier; CI and PostgreSQL migration smoke test passed.
 - PR #5: AI adapters and normalized chat routing — merged 2026-11-13; exact final head `f8a2b7de53647aeaf3aa134868935eaf62a6536e`; GitHub Actions run #107 passed Ruff, PostgreSQL 16 migration smoke test, pytest, Docker build and container smoke test.
+- PR #8: outbound destination checks and durable audit trail — merged 2026-11-13; final head `482e4f4542f8db4900024d12350cf92cb280d0d9`; GitHub Actions run #143 passed Ruff, PostgreSQL migration, pytest, Docker build and container smoke test.
 - Current production deployment: none.
 - Live provider inference: not yet verified.
 - No paid cloud resources were provisioned by these changes.
@@ -40,19 +41,22 @@ Base repository: `Aloews/russian-dev-projects`
 - Conservative failover policy.
 - HTTPS/local/private destination validation and DNS resolution checks before outbound requests.
 - Durable audit records for provider mutations and AI inference outcomes.
+- Project registry with scoped, hashed, revocable API tokens and owner/operator/viewer roles.
+- Project-level capability and provider allowlists for AI inference and provider selection.
 
 ## Work in progress
 
-Security/audit increment on branch `feat/ush-security-audit`:
-- Outbound destination policy and DNS checks.
-- Audit event schema/migration/read API.
-- Audit provider mutations and inference metadata without prompt/response/key values.
-- Add regression tests for SSRF protections and audit behavior.
+Project tenancy increment on branch `feat/ush-project-tenancy`:
+- Add project and project-token tables with PostgreSQL migration.
+- Issue one-time raw tokens; store SHA-256 hashes only; support revocation and last-used timestamps.
+- Separate root-only administration from project-scoped AI/provider selection.
+- Enforce owner/operator/viewer roles and per-project capability/provider allowlists.
+- Add isolation, authorization and revocation regression tests.
 - Require passing CI, review exact head SHA, then merge.
 
 ## Production readiness gates
 
-1. Security: tenant identity, scoped RBAC, audit retention/access, rate limits, egress firewall, managed secret storage, dependency/image scanning.
+1. Security: SSO/per-user identity, fine-grained scoped RBAC, audit retention/access, rate limits, egress firewall, managed secret storage, dependency/image scanning.
 2. Persistence: managed PostgreSQL, backups, restore rehearsal, migration/rollback runbook.
 3. Provider reliability: live protocol verification for each vendor, provider-specific limits, health probes, circuit breakers, quota and spend controls.
 4. Routing: compute/storage/database/queue/observability adapters, deterministic policies, safe fallback semantics.
