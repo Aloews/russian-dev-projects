@@ -51,7 +51,8 @@ Project tenancy increment on branch `feat/ush-project-tenancy`:
 - Issue one-time raw tokens; store SHA-256 hashes only; support revocation and last-used timestamps.
 - Separate root-only administration from project-scoped AI/provider selection.
 - Enforce owner/operator/viewer roles and per-project capability/provider allowlists.
-- Add isolation, authorization and revocation regression tests.
+- Allow project owners to manage operator/viewer tokens without granting root administration.
+- Add project update/delete and lifecycle tests.
 - Require passing CI, review exact head SHA, then merge.
 
 ## Production readiness gates
