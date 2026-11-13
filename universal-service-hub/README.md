@@ -4,7 +4,7 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Current status
 
-**Rust runtime migration in progress / not production-ready.** The production container has been switched to an Axum/Tokio/SQLx Rust binary. Rust currently implements health/readiness, PostgreSQL-backed project and token management, provider registry/selection, safe health probes, audit reads and initial OpenAI-compatible/Anthropic/Gemini chat routing. The legacy FastAPI implementation remains only as a compatibility/reference test target; it is not deployed. Project lifecycle, role-based access, token revocation and audit are implemented. Token expiry, fine-grained token scopes, production deployment, non-AI adapters, quota/queue controls and live provider verification remain outstanding. Infisical machine-identity secret retrieval is implemented but has not yet been live-tested.
+**Rust control plane implemented; production activation remains incomplete.** The production container uses an Axum/Tokio/SQLx Rust binary. It includes PostgreSQL-backed project/token management, provider registry/selection, health probes, audit, AI chat routing and read-only verification adapters for hosting, database, storage, PostgreSQL and Redis services. Provider credentials resolve through Infisical references. The legacy FastAPI implementation remains a compatibility/reference target. The provider checks are not live connections until credentials are added and verified. Deployment/resource mutation, object upload/download, queue orchestration, budgets/quotas, production rollout and live Infisical/provider smoke tests remain outstanding.
 
 ## Run locally
 
