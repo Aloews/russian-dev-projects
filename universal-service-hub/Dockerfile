@@ -1,17 +1,16 @@
-FROM python:3.12-slim
+FROM rust:1.88-bookworm AS builder
+WORKDIR /build
+ENV CARGO_NET_RETRY=2 CARGO_HTTP_TIMEOUT=60 CARGO_PROFILE_RELEASE_OPT_LEVEL=1
+COPY Cargo.toml ./
+COPY src ./src
+COPY rust-migrations ./rust-migrations
+RUN cargo build --release
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
-
+FROM debian:bookworm-slim AS runtime
 WORKDIR /app
-COPY pyproject.toml README.md alembic.ini ./
-COPY app ./app
-COPY migrations ./migrations
-COPY entrypoint.sh ./entrypoint.sh
-RUN pip install --no-cache-dir .
-USER 10001:10001
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /build/target/release/universal-service-hub /app/universal-service-hub
+USER 65532:65532
+ENV PORT=8000
 EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"
-CMD ["sh", "./entrypoint.sh"]
+ENTRYPOINT ["/app/universal-service-hub"]

@@ -25,13 +25,15 @@ Base repository: `Aloews/russian-dev-projects`
 - PR #2: foundation — merged earlier.
 - PR #4: durable PostgreSQL provider registry and bounded health probes — merged earlier; CI and PostgreSQL migration smoke test passed.
 - PR #5: AI adapters and normalized chat routing — merged 2026-11-13; exact final head `f8a2b7de53647aeaf3aa134868935eaf62a6536e`; GitHub Actions run #107 passed Ruff, PostgreSQL 16 migration smoke test, pytest, Docker build and container smoke test.
+- PR #8: outbound destination checks and durable audit trail — merged 2026-11-13; final head `482e4f4542f8db4900024d12350cf92cb280d0d9`; GitHub Actions run #143 passed Ruff, PostgreSQL migration, pytest, Docker build and container smoke test.
 - Current production deployment: none.
 - Live provider inference: not yet verified.
 - No paid cloud resources were provisioned by these changes.
 
 ## Implemented capabilities
 
-- FastAPI control plane with bearer-token protection.
+- Rust Axum/Tokio/SQLx control-plane runtime is under active migration; FastAPI remains a temporary reference implementation.
+- Rust bearer-token authentication for root administrator and scoped project tokens.
 - Durable provider registry on PostgreSQL, Alembic migrations and local SQLite development.
 - Provider CRUD, capability/priority selection and bounded health checks.
 - OpenAI-compatible, Anthropic Messages and Gemini generateContent adapters.
@@ -40,19 +42,39 @@ Base repository: `Aloews/russian-dev-projects`
 - Conservative failover policy.
 - HTTPS/local/private destination validation and DNS resolution checks before outbound requests.
 - Durable audit records for provider mutations and AI inference outcomes.
+- Project registry with scoped, hashed, revocable API tokens and owner/operator/viewer roles.
+- Project-level capability and provider allowlists for AI inference and provider selection.
+- Rust implementation of project/token management, provider upsert/delete, health probes, model discovery, selection, audit reads and initial AI chat adapters.
+- Infisical Universal Auth machine-identity login, short-lived token cache and project-scoped provider secret lookup (live verification pending).
 
 ## Work in progress
 
-Security/audit increment on branch `feat/ush-security-audit`:
-- Outbound destination policy and DNS checks.
-- Audit event schema/migration/read API.
-- Audit provider mutations and inference metadata without prompt/response/key values.
-- Add regression tests for SSRF protections and audit behavior.
+Project tenancy increment on branch `feat/ush-project-tenancy`:
+- Add project and project-token tables with PostgreSQL migration.
+- Issue one-time raw tokens; store SHA-256 hashes only; support revocation and last-used timestamps.
+- Separate root-only administration from project-scoped AI/provider selection.
+- Enforce owner/operator/viewer roles and per-project capability/provider allowlists.
+- Permit viewer tokens read-only provider selection; restrict AI inference to owner/operator.
+- Allow project owners to manage operator/viewer tokens without granting root administration.
+- Add project update/delete and lifecycle tests.
 - Require passing CI, review exact head SHA, then merge.
+
+## Owner-selected provider pool
+
+Preferred infrastructure categories recorded in `docs/INTEGRATION_PLAN.md`:
+- Hosting/frontend: Northflank, Cloudflare, Netlify, Render.
+- Backend/API/workers: Northflank, Railway, Fly.io, DigitalOcean.
+- Databases: Supabase, Neon, self-managed PostgreSQL.
+- Object storage: Supabase Storage, Cloudflare R2, S3, Backblaze B2.
+- Queues/background work: Railway Redis, Northflank Redis, with Redis-compatible alternatives.
+
+Current ChatGPT-connected management integrations available to the agent: GitHub, Railway, Supabase and Vercel. Direct connector tools for Northflank, Cloudflare, Netlify, Render, Fly.io, DigitalOcean, Neon and Backblaze are not available in this workspace at present. These vendors are included in the Hub's provider catalog and require their own API credentials/adapter implementation for direct account management.
+
+GitHub OAuth sign-in to a hosting vendor is not equivalent to granting the Hub that vendor's management API access. Repository linking can enable GitHub-triggered deploys; direct service creation, configuration, database/storage administration and rollback require separately scoped vendor API credentials. Never mark a vendor connected until a live API identity check succeeds.
 
 ## Production readiness gates
 
-1. Security: tenant identity, scoped RBAC, audit retention/access, rate limits, egress firewall, managed secret storage, dependency/image scanning.
+1. Security: token expiry and fine-grained scopes, SSO/per-user identity, audit retention/access, rate limits, egress firewall, managed secret storage, dependency/image scanning.
 2. Persistence: managed PostgreSQL, backups, restore rehearsal, migration/rollback runbook.
 3. Provider reliability: live protocol verification for each vendor, provider-specific limits, health probes, circuit breakers, quota and spend controls.
 4. Routing: compute/storage/database/queue/observability adapters, deterministic policies, safe fallback semantics.

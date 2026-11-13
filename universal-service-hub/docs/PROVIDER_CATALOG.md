@@ -4,13 +4,14 @@ This catalog defines categories to evaluate. Listing a vendor is not evidence of
 
 ## Compute and application hosting
 
-- Northflank
-- Railway
-- Fly.io
-- Render
-- DigitalOcean App Platform
-- Vercel
-- Cloudflare Workers / Pages
+- Northflank (containers, jobs, managed add-ons)
+- Railway (services, workers, cron, volumes and Redis add-on)
+- Fly.io (Machines, Apps, volumes and private networking)
+- DigitalOcean App Platform and Droplets
+- Render (web services, workers, cron jobs and managed PostgreSQL)
+- Netlify (frontend hosting, functions and deploy previews)
+- Cloudflare Workers / Pages (edge runtime and static hosting)
+- Vercel (frontend and serverless hosting)
 - AWS (ECS, App Runner, Lambda)
 - Google Cloud Run
 - Azure Container Apps
@@ -19,8 +20,8 @@ This catalog defines categories to evaluate. Listing a vendor is not evidence of
 
 ## Databases and state
 
-- Supabase
-- Neon
+- Supabase (PostgreSQL and managed platform APIs)
+- Neon (serverless PostgreSQL and branching)
 - Crunchy Bridge
 - AWS RDS / Aurora
 - Google Cloud SQL
@@ -28,17 +29,26 @@ This catalog defines categories to evaluate. Listing a vendor is not evidence of
 - DigitalOcean Managed Databases
 - PlanetScale (where workload and engine fit)
 - Redis Cloud / Upstash
+- PostgreSQL on a self-managed server (direct PostgreSQL protocol; owner-operated backups, patching and HA)
 - Managed or self-hosted PostgreSQL and Redis
 
 ## Object and file storage
 
-- Cloudflare R2
-- Amazon S3
-- Backblaze B2
+- Supabase Storage
+- Cloudflare R2 (S3-compatible API)
+- Amazon S3 and S3-compatible object stores
+- Backblaze B2 (S3-compatible API)
 - Google Cloud Storage
 - Azure Blob Storage
 - Supabase Storage
 - DigitalOcean Spaces
+
+## Queues, background jobs and cache
+
+- Railway Redis
+- Northflank Redis / managed Redis add-ons
+- Upstash Redis / QStash
+- Self-hosted Redis (only with managed backups, monitoring and failover)
 
 ## AI model gateways and inference
 

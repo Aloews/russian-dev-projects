@@ -394,3 +394,240 @@ def test_provider_mutations_are_audited_without_secret_values(monkeypatch, tmp_p
         assert "provider.delete" in actions
         assert all(item["actor"] == "service-token" for item in events)
         assert "TEST_AI_API_KEY" not in str(events)
+
+
+def test_project_tokens_are_hashed_scoped_and_revocable(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "projects.db") as client:
+        created = client.post(
+            "/v1/projects",
+            json={
+                "id": "alpha",
+                "name": "Alpha Project",
+                "allowed_capabilities": ["ai.chat"],
+                "allowed_provider_ids": ["primary"],
+            },
+        )
+        assert created.status_code == 200
+        token_response = client.post(
+            "/v1/projects/alpha/tokens",
+            json={"name": "production", "role": "operator"},
+        )
+        assert token_response.status_code == 200
+        raw_token = token_response.json()["token"]
+        assert len(raw_token) >= 40
+
+        listed = client.get("/v1/projects/alpha/tokens").json()
+        assert len(listed) == 1
+        assert "token" not in listed[0]
+        assert "token_hash" not in listed[0]
+        assert raw_token not in str(listed)
+
+        denied_admin = client.get(
+            "/v1/providers",
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        assert denied_admin.status_code == 403
+
+        revoked = client.delete(
+            f"/v1/projects/alpha/tokens/{token_response.json()['id']}"
+        )
+        assert revoked.status_code == 204
+        denied_after_revoke = client.post(
+            "/v1/ai/chat",
+            headers={"Authorization": f"Bearer {raw_token}"},
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert denied_after_revoke.status_code == 401
+
+
+def test_project_token_can_only_route_allowed_provider_and_capability(monkeypatch, tmp_path):
+    from app.adapters import AdapterResult
+
+    class FakeAdapter:
+        async def chat(self, **kwargs):
+            return AdapterResult(content="scoped response", usage={"total_tokens": 2})
+
+    monkeypatch.setenv("TEST_AI_API_KEY", "fake-ai-key")
+    monkeypatch.setattr("app.main.create_ai_adapter", lambda adapter_type: FakeAdapter())
+    with client_with_providers(monkeypatch, "[]", tmp_path / "scoped.db") as client:
+        client.put("/v1/providers/primary", json=ai_provider_payload(priority=100))
+        client.put("/v1/providers/backup", json=provider_payload(priority=200))
+        client.post(
+            "/v1/projects",
+            json={
+                "id": "alpha",
+                "name": "Alpha Project",
+                "allowed_capabilities": ["ai.chat"],
+                "allowed_provider_ids": ["primary", "backup"],
+            },
+        )
+        token_response = client.post(
+            "/v1/projects/alpha/tokens",
+            json={"name": "runtime", "role": "operator"},
+        )
+        token = token_response.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        selection = client.post(
+            "/v1/providers/select",
+            headers=headers,
+            json={"capability": "ai.chat"},
+        )
+        assert selection.status_code == 200
+        assert selection.json()["provider"]["id"] == "primary"
+
+        response = client.post(
+            "/v1/ai/chat",
+            headers=headers,
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert response.status_code == 200
+        assert response.json()["provider_id"] == "primary"
+
+        denied = client.post(
+            "/v1/providers/select",
+            headers=headers,
+            json={"capability": "compute"},
+        )
+        assert denied.status_code == 403
+
+
+def test_project_viewer_cannot_invoke_ai(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "viewer.db") as client:
+        client.post(
+            "/v1/projects",
+            json={
+                "id": "read-only",
+                "name": "Read Only",
+                "allowed_capabilities": ["ai.chat"],
+            },
+        )
+        token_response = client.post(
+            "/v1/projects/read-only/tokens",
+            json={"name": "viewer", "role": "viewer"},
+        )
+        viewer_headers = {"Authorization": f"Bearer {token_response.json()['token']}"}
+        selected = client.post(
+            "/v1/providers/select",
+            headers=viewer_headers,
+            json={"capability": "ai.chat"},
+        )
+        assert selected.status_code == 200
+        response = client.post(
+            "/v1/ai/chat",
+            headers=viewer_headers,
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert response.status_code == 403
+
+
+def test_provider_selection_requires_matching_provider_capability(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "capability-match.db") as client:
+        client.put(
+            "/v1/providers/high-priority",
+            json={"name": "High", "capabilities": ["ai.chat"], "priority": 100},
+        )
+        client.put(
+            "/v1/providers/compute-only",
+            json={"name": "Compute", "capabilities": ["compute"], "priority": 10},
+        )
+        response = client.post("/v1/providers/select", json={"capability": "compute"})
+        assert response.status_code == 200
+        assert response.json()["provider"]["id"] == "compute-only"
+
+
+def test_project_update_changes_access_and_delete_revokes_all_tokens(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "project-lifecycle.db") as client:
+        client.post(
+            "/v1/projects",
+            json={
+                "id": "lifecycle",
+                "name": "Lifecycle",
+                "allowed_capabilities": ["ai.chat"],
+            },
+        )
+        token_response = client.post(
+            "/v1/projects/lifecycle/tokens",
+            json={"name": "runtime", "role": "operator"},
+        )
+        token = token_response.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        updated = client.put(
+            "/v1/projects/lifecycle",
+            json={
+                "name": "Lifecycle Updated",
+                "allowed_capabilities": ["compute"],
+                "allowed_provider_ids": [],
+            },
+        )
+        assert updated.status_code == 200
+        denied = client.post(
+            "/v1/ai/chat",
+            headers=headers,
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert denied.status_code == 403
+
+        deleted = client.delete("/v1/projects/lifecycle")
+        assert deleted.status_code == 204
+        revoked = client.post(
+            "/v1/ai/chat",
+            headers=headers,
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert revoked.status_code == 401
+
+
+def test_project_owner_can_manage_runtime_tokens_but_operator_cannot(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "owner-rbac.db") as client:
+        client.post(
+            "/v1/projects",
+            json={
+                "id": "owned",
+                "name": "Owned Project",
+                "allowed_capabilities": ["ai.chat"],
+            },
+        )
+        owner_response = client.post(
+            "/v1/projects/owned/tokens",
+            json={"name": "owner", "role": "owner"},
+        )
+        owner_headers = {
+            "Authorization": f"Bearer {owner_response.json()['token']}"
+        }
+
+        operator_response = client.post(
+            "/v1/projects/owned/tokens",
+            headers=owner_headers,
+            json={"name": "worker", "role": "operator"},
+        )
+        assert operator_response.status_code == 200
+        operator_id = operator_response.json()["id"]
+
+        denied_owner_escalation = client.post(
+            "/v1/projects/owned/tokens",
+            headers=owner_headers,
+            json={"name": "second-owner", "role": "owner"},
+        )
+        assert denied_owner_escalation.status_code == 403
+
+        operator_headers = {
+            "Authorization": f"Bearer {operator_response.json()['token']}"
+        }
+        denied_delegation = client.post(
+            "/v1/projects/owned/tokens",
+            headers=operator_headers,
+            json={"name": "extra", "role": "viewer"},
+        )
+        assert denied_delegation.status_code == 403
+
+        listed = client.get("/v1/projects/owned/tokens", headers=owner_headers)
+        assert listed.status_code == 200
+        assert len(listed.json()) == 2
+
+        revoked = client.delete(
+            f"/v1/projects/owned/tokens/{operator_id}",
+            headers=owner_headers,
+        )
+        assert revoked.status_code == 204
