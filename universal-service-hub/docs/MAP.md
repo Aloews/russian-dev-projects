@@ -44,7 +44,7 @@ Base repository: `Aloews/russian-dev-projects`
 - Durable audit records for provider mutations and AI inference outcomes.
 - Project registry with scoped, hashed, revocable API tokens and owner/operator/viewer roles.
 - Project-level capability and provider allowlists for AI inference and provider selection.
-- Rust implementation of project/token management, provider upsert/delete, health probes, selection, audit reads and initial AI chat adapters.
+- Rust implementation of project/token management, provider upsert/delete, health probes, model discovery, selection, audit reads and initial AI chat adapters.
 - Infisical Universal Auth machine-identity login, short-lived token cache and project-scoped provider secret lookup (live verification pending).
 
 ## Work in progress
