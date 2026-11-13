@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from time import perf_counter
 
 import httpx
@@ -35,7 +35,7 @@ class ProviderRegistry:
         state = self._states.get(provider_id)
         if state is None:
             raise KeyError(provider_id)
-        checked_at = datetime.now(timezone.utc)
+        checked_at = datetime.now(UTC)
         if not state.config.enabled:
             state.health_status = "unhealthy"
             state.detail = "Provider is disabled"
@@ -77,6 +77,5 @@ class ProviderRegistry:
         ]
         if not candidates:
             return None
-        # Unknown providers remain eligible only before a health endpoint has been configured.
-        # Once a probe is possible, unhealthy providers are excluded.
-        return sorted(candidates, key=lambda state: (-state.config.priority, state.config.id))[0]
+        # Unknown providers remain eligible until their first configured health probe.
+        return min(candidates, key=lambda state: (-state.config.priority, state.config.id))
