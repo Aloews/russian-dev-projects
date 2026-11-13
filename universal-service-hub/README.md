@@ -30,6 +30,7 @@ Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This ro
 Provider management:
 - `GET /v1/providers` — list providers
 - `GET /v1/providers/{provider_id}/models` — discover current model IDs from the provider API
+- `POST /v1/integrations/{provider_id}/verify` — perform a read-only account/API-token verification for supported infrastructure providers (Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean); returns normalized metadata only
 - `GET /v1/audit?limit=50` — list recent audit events (maximum 100)
 - `POST /v1/projects` — register a project and its allowed capabilities/providers
 - `GET /v1/projects` — list registered projects
@@ -86,6 +87,7 @@ Example for a standard Anthropic Messages API endpoint:
 Send this object to `PUT /v1/providers/anthropic`. In production, store `ANTHROPIC_API_KEY` in Infisical at the project's `/providers` path; environment variables are development-only. For Starimg, use this adapter only after its current account documentation confirms the Anthropic Messages endpoint and use the model identifier returned by that provider. The API response reveals only whether the referenced credential is configured; it never returns the environment-variable name or secret.
 
 Supported adapter types:
+- Infrastructure account verification: `northflank`, `railway`, `cloudflare`, `netlify`, `render`, `digitalocean` (read-only identity/resource checks; not deployment controllers)
 - `openai_compatible` — OpenAI-compatible `/chat/completions` endpoints
 - `anthropic` — Anthropic Messages API
 - `gemini` — Gemini `generateContent` API
