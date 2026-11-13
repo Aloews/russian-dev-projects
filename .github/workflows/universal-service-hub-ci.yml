@@ -62,7 +62,7 @@ jobs:
       - name: Tests
         run: pytest -q
       - name: Docker build
-        run: docker build -t universal-service-hub:test .
+        run: docker build --network=host --progress=plain -t universal-service-hub:test .
       - name: Container smoke test
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
