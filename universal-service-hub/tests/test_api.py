@@ -264,7 +264,7 @@ def test_ai_chat_fails_over_only_with_idempotency_key(monkeypatch, tmp_path):
         assert response.json()["provider_id"] == "backup"
         assert response.json()["attempts"] == 2
         providers = {item["id"]: item for item in client.get("/v1/providers").json()}
-        assert providers["primary"]["health_detail"] == "provider_rate_limited"
+        assert providers["primary"]["health_status"] == "unknown"
 
 
 def test_ai_chat_does_not_retry_billable_request_without_idempotency(monkeypatch, tmp_path):
@@ -287,7 +287,7 @@ def test_ai_chat_does_not_retry_billable_request_without_idempotency(monkeypatch
             "/v1/ai/chat",
             json={"messages": [{"role": "user", "content": "Hello"}]},
         )
-        assert response.status_code == 429
+        assert response.status_code == 502
 
 
 def test_ai_provider_rejects_insecure_or_secret_bearing_base_url(monkeypatch, tmp_path):
@@ -328,3 +328,32 @@ def test_gemini_cannot_be_marked_idempotent(monkeypatch, tmp_path):
         }
         response = client.put("/v1/providers/gemini", json=payload)
         assert response.status_code == 422
+
+
+def test_ai_chat_returns_rate_limit_without_cross_provider_retry(monkeypatch, tmp_path):
+    from app.adapters import ProviderAdapterError
+
+    class RateLimitedAdapter:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, **kwargs):
+            self.calls += 1
+            raise ProviderAdapterError(
+                "provider_http_429",
+                status_code=429,
+                retryable=True,
+            )
+
+    adapter = RateLimitedAdapter()
+    monkeypatch.setenv("TEST_AI_API_KEY", "fake-ai-key")
+    monkeypatch.setattr("app.main.create_ai_adapter", lambda adapter_type: adapter)
+    with client_with_providers(monkeypatch, "[]", tmp_path / "rate-limit.db") as client:
+        client.put("/v1/providers/primary", json=ai_provider_payload(priority=100))
+        client.put("/v1/providers/backup", json=ai_provider_payload(priority=50))
+        response = client.post(
+            "/v1/ai/chat",
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert response.status_code == 429
+        assert adapter.calls == 1
