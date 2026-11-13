@@ -770,23 +770,36 @@ async fn main() -> anyhow::Result<()> {
     let db = PgPoolOptions::new().max_connections(20).acquire_timeout(Duration::from_secs(10)).connect(&database_url).await?;
     sqlx::migrate!("./rust-migrations").run(&db).await?;
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
-    let infisical = match (
+    let runtime_environment = env::var("USH_ENVIRONMENT").unwrap_or_else(|_| "development".into());
+    let secret_backend = env::var("USH_SECRET_BACKEND").unwrap_or_else(|_| {
+        if runtime_environment == "production" { "infisical".into() } else { "env".into() }
+    });
+    if runtime_environment == "production" && secret_backend != "infisical" {
+        anyhow::bail!("Production requires USH_SECRET_BACKEND=infisical");
+    }
+    let infisical_credentials = (
         env::var("INFISICAL_CLIENT_ID").ok(),
         env::var("INFISICAL_CLIENT_SECRET").ok(),
         env::var("INFISICAL_PROJECT_ID").ok(),
         env::var("INFISICAL_ENVIRONMENT").ok(),
-    ) {
-        (Some(client_id), Some(client_secret), Some(project_id), Some(environment)) => Some(InfisicalClient {
-            http: http.clone(),
-            base_url: env::var("INFISICAL_URL").unwrap_or_else(|_| "https://app.infisical.com".into()),
-            client_id,
-            client_secret,
-            project_id,
-            environment,
-            path_prefix: env::var("USH_INFISICAL_SECRET_PATH_PREFIX").unwrap_or_else(|_| "/projects".into()),
-            token_cache: Arc::new(RwLock::new(None)),
-        }),
-        (None, None, None, None) if env::var("USH_SECRET_BACKEND").unwrap_or_else(|_| "env".into()) != "infisical" => None,
+    );
+    let infisical = match (infisical_credentials, secret_backend.as_str()) {
+        ((Some(client_id), Some(client_secret), Some(project_id), Some(environment)), _) => {
+            let base_url = env::var("INFISICAL_URL").unwrap_or_else(|_| "https://app.infisical.com".into());
+            let infisical_url = validate_https_url(&base_url)?;
+            ensure_public_destination(&infisical_url).await?;
+            Some(InfisicalClient {
+                http: http.clone(),
+                base_url,
+                client_id,
+                client_secret,
+                project_id,
+                environment,
+                path_prefix: env::var("USH_INFISICAL_SECRET_PATH_PREFIX").unwrap_or_else(|_| "/projects".into()),
+                token_cache: Arc::new(RwLock::new(None)),
+            })
+        }
+        ((None, None, None, None), "env") if runtime_environment != "production" => None,
         _ => anyhow::bail!("Infisical backend requires client ID, client secret, project ID and environment"),
     };
     let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical };
