@@ -50,3 +50,31 @@ jobs:
         run: pytest -q
       - name: Docker build
         run: docker build -t universal-service-hub:test .
+      - name: Container smoke test
+        env:
+          USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
+        run: |
+          set -eu
+          docker run -d --rm --name ush-smoke -p 127.0.0.1:8000:8000 \
+            -e USH_API_TOKEN="$USH_API_TOKEN" \
+            -e USH_DATABASE_URL="sqlite+aiosqlite:////tmp/ush-smoke.db" \
+            universal-service-hub:test
+          trap 'docker stop ush-smoke >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/readyz >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker logs ush-smoke
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:8000/healthz >/dev/null
+          curl -fsS -H "Authorization: Bearer $USH_API_TOKEN" \
+            http://127.0.0.1:8000/v1/providers >/dev/null
+          status=$(curl -sS -o /dev/null -w "%{http_code}" \
+            http://127.0.0.1:8000/v1/providers)
+          test "$status" = "401"
