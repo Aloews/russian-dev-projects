@@ -507,7 +507,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
                 if !system.is_empty() { payload["system"] = json!(system); }
                 let mut req = state.http.post(format!("{}/v1/messages",base_url.trim_end_matches('/')))
                     .header("x-api-key",&api_key).header("anthropic-version","2023-06-01").json(&payload);
-                if idempotent { if let Some(key) = body.idempotency_key.as_deref() { req=req.header("Idempotency-Key",key); } }
+                if idempotent && let Some(key) = body.idempotency_key.as_deref() { req=req.header("Idempotency-Key",key); }
                 req
             }
             "gemini" => {
