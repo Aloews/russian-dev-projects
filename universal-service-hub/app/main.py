@@ -308,13 +308,19 @@ async def delete_project(
 @app.post(
     "/v1/projects/{project_id}/tokens",
     response_model=ProjectTokenCreated,
-    dependencies=[Depends(require_admin)],
 )
 async def create_project_token(
     project_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
     payload: ProjectTokenCreateRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
+    principal: Annotated[Principal, Depends(require_project_operator)],
 ):
+    if not principal.is_admin and (
+        principal.role != "owner" or principal.project_id != project_id
+    ):
+        raise HTTPException(status_code=403, detail="Project owner or administrator required")
+    if not principal.is_admin and payload.role == "owner":
+        raise HTTPException(status_code=403, detail="Only the administrator can issue owner tokens")
     project = await session.get(ProjectRecord, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -332,6 +338,7 @@ async def create_project_token(
         resource_type="project",
         resource_id=project_id,
         details={"token_name": payload.name, "role": payload.role},
+        actor=principal.actor,
     )
     await session.commit()
     await session.refresh(token_record)
@@ -347,12 +354,16 @@ async def create_project_token(
 @app.get(
     "/v1/projects/{project_id}/tokens",
     response_model=list[ProjectTokenView],
-    dependencies=[Depends(require_admin)],
 )
 async def list_project_tokens(
     project_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    principal: Annotated[Principal, Depends(require_project_operator)],
 ):
+    if not principal.is_admin and (
+        principal.role != "owner" or principal.project_id != project_id
+    ):
+        raise HTTPException(status_code=403, detail="Project owner or administrator required")
     if await session.get(ProjectRecord, project_id) is None:
         raise HTTPException(status_code=404, detail="Project not found")
     result = await session.scalars(
@@ -369,13 +380,17 @@ async def list_project_tokens(
 @app.delete(
     "/v1/projects/{project_id}/tokens/{token_id}",
     status_code=204,
-    dependencies=[Depends(require_admin)],
 )
 async def revoke_project_token(
     project_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
     token_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    principal: Annotated[Principal, Depends(require_project_operator)],
 ):
+    if not principal.is_admin and (
+        principal.role != "owner" or principal.project_id != project_id
+    ):
+        raise HTTPException(status_code=403, detail="Project owner or administrator required")
     token = await session.scalar(
         select(ProjectTokenRecord).where(
             ProjectTokenRecord.id == token_id,
@@ -392,6 +407,7 @@ async def revoke_project_token(
             resource_type="project",
             resource_id=project_id,
             details={"token_id": token_id, "token_name": token.name},
+            actor=principal.actor,
         )
         await session.commit()
 
