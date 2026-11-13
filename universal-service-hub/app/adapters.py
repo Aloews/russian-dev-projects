@@ -6,6 +6,8 @@ from urllib.parse import quote
 
 import httpx
 
+from app.outbound import UnsafeDestinationError, ensure_public_destination
+
 
 class ProviderAdapterError(Exception):
     def __init__(
@@ -39,6 +41,11 @@ class BaseAIAdapter:
         payload: dict[str, Any],
         timeout: float,
     ) -> dict[str, Any]:
+        if self.transport is None:
+            try:
+                await ensure_public_destination(url)
+            except UnsafeDestinationError as exc:
+                raise ProviderAdapterError("provider_destination_blocked") from exc
         try:
             async with httpx.AsyncClient(
                 timeout=timeout,

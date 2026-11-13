@@ -222,6 +222,12 @@ def test_ai_chat_routes_to_configured_adapter(monkeypatch, tmp_path):
         assert response.json()["provider_id"] == "starimg"
         assert response.json()["content"] == "generated"
         assert "fake-ai-key" not in response.text
+        events = client.get("/v1/audit").json()
+        ai_event = next(item for item in events if item["action"] == "ai.chat.success")
+        assert ai_event["resource_id"] == "starimg"
+        assert ai_event["details"]["usage"]["total_tokens"] == 4
+        assert "Hello" not in str(ai_event)
+        assert "fake-ai-key" not in str(ai_event)
 
 
 def test_ai_chat_fails_over_only_with_idempotency_key(monkeypatch, tmp_path):
@@ -357,3 +363,34 @@ def test_ai_chat_returns_rate_limit_without_cross_provider_retry(monkeypatch, tm
         )
         assert response.status_code == 429
         assert adapter.calls == 1
+
+
+def test_provider_endpoints_reject_private_and_non_https_destinations(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "outbound-policy.db") as client:
+        payload = ai_provider_payload(priority=100)
+        payload["base_url"] = "https://127.0.0.1/v1"
+        response = client.put("/v1/providers/private-ip", json=payload)
+        assert response.status_code == 422
+
+        payload = ai_provider_payload(priority=100)
+        payload["base_url"] = "http://api.example/v1"
+        response = client.put("/v1/providers/plain-http", json=payload)
+        assert response.status_code == 422
+
+        payload = provider_payload()
+        payload["health_url"] = "https://169.254.169.254/latest/meta-data/"
+        response = client.put("/v1/providers/metadata", json=payload)
+        assert response.status_code == 422
+
+
+def test_provider_mutations_are_audited_without_secret_values(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "audit.db") as client:
+        payload = ai_provider_payload(priority=100)
+        client.put("/v1/providers/audited", json=payload)
+        client.delete("/v1/providers/audited")
+        events = client.get("/v1/audit").json()
+        actions = [item["action"] for item in events]
+        assert "provider.upsert" in actions
+        assert "provider.delete" in actions
+        assert all(item["actor"] == "service-token" for item in events)
+        assert "TEST_AI_API_KEY" not in str(events)
