@@ -46,17 +46,17 @@ class BaseAIAdapter:
                 follow_redirects=False,
             ) as client:
                 response = await client.post(url, headers=headers, json=payload)
-        except httpx.TimeoutException as exc:
-            raise ProviderAdapterError("provider_timeout", retryable=True) from exc
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+            raise ProviderAdapterError("provider_connection_failed", retryable=True) from exc
         except httpx.HTTPError as exc:
-            raise ProviderAdapterError("provider_network_error", retryable=True) from exc
+            raise ProviderAdapterError("provider_network_error") from exc
 
         if response.is_error:
             status_code = response.status_code
             raise ProviderAdapterError(
                 f"provider_http_{status_code}",
                 status_code=status_code,
-                retryable=status_code == 429 or status_code >= 500,
+                retryable=status_code == 429,
             )
         try:
             data = response.json()
