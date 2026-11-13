@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     app_name: str = "Universal Service Hub"
     environment: str = "development"
     api_token: SecretStr | None = Field(default=None, min_length=32)
+    database_url: str = "sqlite+aiosqlite:///./ush.db"
     providers_json: str = "[]"
 
     def providers(self) -> list[ProviderConfig]:
