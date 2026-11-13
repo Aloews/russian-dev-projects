@@ -32,7 +32,7 @@ Base repository: `Aloews/russian-dev-projects`
 
 ## Implemented capabilities
 
-- Rust Axum/Tokio/SQLx control-plane runtime is under active migration; FastAPI remains a temporary reference implementation.
+- Rust Axum/Tokio/SQLx is the production container runtime; FastAPI remains a temporary compatibility/reference implementation.
 - Rust bearer-token authentication for root administrator and scoped project tokens.
 - Durable provider registry on PostgreSQL, Alembic migrations and local SQLite development.
 - Provider CRUD, capability/priority selection and bounded health checks.
@@ -44,8 +44,17 @@ Base repository: `Aloews/russian-dev-projects`
 - Durable audit records for provider mutations and AI inference outcomes.
 - Project registry with scoped, hashed, revocable API tokens and owner/operator/viewer roles.
 - Project-level capability and provider allowlists for AI inference and provider selection.
-- Rust implementation of project/token management, provider upsert/delete, health probes, model discovery, selection, audit reads and initial AI chat adapters.
+- Rust implements project/token management, provider CRUD, health probes, model discovery, selection, audit reads, AI chat routing and read-only infrastructure account verification.
 - Infisical Universal Auth machine-identity login, short-lived token cache and project-scoped provider secret lookup (live verification pending).
+
+## Infrastructure API adapter increment
+
+Branch: `feat/ush-provider-api-adapters-final`, layered on the latest observed Rust tenancy head.
+- Read-only account checks: Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon.
+- Storage management checks: Cloudflare R2 bucket inventory and Backblaze B2 account authorization.
+- Authenticated `POST /v1/integrations/{provider_id}/verify` resolves credentials through Infisical and uses fixed HTTPS endpoints, bounded timeouts, no redirects, normalized responses and redacted audit events.
+- These checks do not provision hosting resources or perform object upload/download. Generic S3, Redis and PostgreSQL wire-protocol adapters remain outstanding.
+- PR and exact-SHA CI validation are required before merge.
 
 ## Work in progress
 
