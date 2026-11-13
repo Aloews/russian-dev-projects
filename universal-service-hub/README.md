@@ -4,7 +4,7 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Current status
 
-**Rust runtime migration in progress / not production-ready.** The production container has been switched to an Axum/Tokio/SQLx Rust binary. Rust currently implements health/readiness, PostgreSQL-backed project and token management, provider registry/selection, safe health probes, audit reads and initial OpenAI-compatible/Anthropic/Gemini chat routing. The legacy FastAPI implementation remains only as a compatibility/reference test target; it is not deployed. Project lifecycle, role-based access, token revocation and audit are implemented. Token expiry, fine-grained token scopes, production deployment, non-AI adapters, quota/queue controls and live provider verification remain outstanding. Infisical machine-identity secret retrieval is implemented but has not yet been live-tested.
+**Rust control plane implemented; production activation remains incomplete.** The production container uses an Axum/Tokio/SQLx Rust binary. It includes PostgreSQL-backed project/token management, provider registry/selection, health probes, audit, AI chat routing and read-only verification adapters for hosting, database, storage, PostgreSQL and Redis services. Provider credentials resolve through Infisical references. The legacy FastAPI implementation remains a compatibility/reference target. The provider checks are not live connections until credentials are added and verified. Deployment/resource mutation, object upload/download, queue orchestration, budgets/quotas, production rollout and live Infisical/provider smoke tests remain outstanding.
 
 ## Run locally
 
@@ -30,6 +30,7 @@ Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This ro
 Provider management:
 - `GET /v1/providers` — list providers
 - `GET /v1/providers/{provider_id}/models` — discover current model IDs from the provider API
+- `POST /v1/integrations/{provider_id}/verify` — verify read-only account/API access for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Storage, Neon, Cloudflare R2, Backblaze B2 and generic S3-compatible storage
 - `GET /v1/audit?limit=50` — list recent audit events (maximum 100)
 - `POST /v1/projects` — register a project and its allowed capabilities/providers
 - `GET /v1/projects` — list registered projects
@@ -86,6 +87,7 @@ Example for a standard Anthropic Messages API endpoint:
 Send this object to `PUT /v1/providers/anthropic`. In production, store `ANTHROPIC_API_KEY` in Infisical at the project's `/providers` path; environment variables are development-only. For Starimg, use this adapter only after its current account documentation confirms the Anthropic Messages endpoint and use the model identifier returned by that provider. The API response reveals only whether the referenced credential is configured; it never returns the environment-variable name or secret.
 
 Supported adapter types:
+- Infrastructure verification adapters: `northflank`, `railway`, `cloudflare`, `netlify`, `render`, `digitalocean`, `flyio`, `supabase`, `supabase_storage`, `neon`, `cloudflare_r2`, `backblaze_b2`, `s3_compatible`, `postgresql`, `redis` (read-only checks only; PostgreSQL and Redis require TLS)
 - `openai_compatible` — OpenAI-compatible `/chat/completions` endpoints
 - `anthropic` — Anthropic Messages API
 - `gemini` — Gemini `generateContent` API
