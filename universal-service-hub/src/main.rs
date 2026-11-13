@@ -534,6 +534,58 @@ async fn select_provider(State(state): State<AppState>, headers: HeaderMap, Json
     Ok(Json(json!({"provider":{"id":row.get::<String,_>("id"),"name":row.get::<String,_>("name"),"priority":row.get::<i32,_>("priority")},"fallbacks":[]})))
 }
 
+async fn resolve_provider_secret(state: &AppState, key_name: &str, project_id: Option<&str>) -> ApiResult<Option<String>> {
+    if let Some(secrets) = state.infisical.as_ref() {
+        let path = secrets.provider_path(project_id);
+        secrets.get_secret(key_name, &path).await
+    } else {
+        Ok(env::var(key_name).ok().filter(|value| !value.is_empty()))
+    }
+}
+
+async fn provider_models(State(state): State<AppState>, headers: HeaderMap, Path(provider_id): Path<String>) -> ApiResult<Json<Value>> {
+    let principal = require_admin(&state, &headers).await?;
+    let row = sqlx::query("SELECT adapter_type,base_url,api_key_env FROM providers WHERE id=$1 AND enabled=TRUE")
+        .bind(&provider_id).fetch_optional(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "provider_lookup_failed"))?
+        .ok_or(ApiError(StatusCode::NOT_FOUND, "provider_not_found"))?;
+    let adapter: String = row.get("adapter_type");
+    let base_url: Option<String> = row.get("base_url");
+    let key_name: Option<String> = row.get("api_key_env");
+    let (Some(base_url),Some(key_name)) = (base_url,key_name) else {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "provider_model_discovery_not_supported"));
+    };
+    let api_key = resolve_provider_secret(&state,&key_name,None).await?
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "provider_credential_unavailable"))?;
+    let base = validate_https_url(&base_url)?;
+    ensure_public_destination(&base).await?;
+    let request = match adapter.as_str() {
+        "openai_compatible" => state.http.get(format!("{}/models",base_url.trim_end_matches('/'))).bearer_auth(&api_key),
+        "anthropic" => state.http.get(format!("{}/v1/models",base_url.trim_end_matches('/')))
+            .header("x-api-key",&api_key).header("anthropic-version","2023-06-01"),
+        "gemini" => state.http.get(format!("{}/v1beta/models",base_url.trim_end_matches('/')))
+            .header("x-goog-api-key",&api_key),
+        _ => return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "provider_model_discovery_not_supported")),
+    };
+    let response = request.send().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "provider_model_list_failed"))?;
+    if !response.status().is_success() {
+        return Err(ApiError(StatusCode::BAD_GATEWAY, "provider_model_list_failed"));
+    }
+    let data: Value = response.json().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "provider_invalid_response"))?;
+    let models = match adapter.as_str() {
+        "openai_compatible" | "anthropic" => data["data"].as_array().map(|items| items.iter().map(|item| json!({
+            "id":item["id"],"name":item.get("name").or_else(||item.get("display_name")).cloned().unwrap_or(Value::Null)
+        })).collect::<Vec<_>>()).unwrap_or_default(),
+        "gemini" => data["models"].as_array().map(|items| items.iter().map(|item| json!({
+            "id":item["name"],"name":item["displayName"],"supported_methods":item["supportedGenerationMethods"]
+        })).collect::<Vec<_>>()).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    audit(&state,&principal.actor,"provider.models.list","provider",&provider_id,json!({"model_count":models.len()})).await;
+    Ok(Json(json!({"provider_id":provider_id,"models":models})))
+}
+
+
 #[derive(Deserialize)]
 struct ChatMessage { role: String, content: String }
 
@@ -594,12 +646,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
         let idempotent: bool = row.get("supports_idempotency");
         if adapter == "none" { continue; }
         let (Some(model), Some(base_url), Some(key_env)) = (model, base_url, key_env) else { continue; };
-        let api_key_result = if let Some(secrets) = state.infisical.as_ref() {
-            let path = secrets.provider_path(principal.project_id.as_deref());
-            secrets.get_secret(&key_env, &path).await
-        } else {
-            Ok(env::var(&key_env).ok().filter(|value| !value.is_empty()))
-        };
+        let api_key_result = resolve_provider_secret(&state, &key_env, principal.project_id.as_deref()).await;
         let api_key = match api_key_result {
             Ok(Some(value)) => value,
             _ => {
@@ -752,6 +799,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/projects/{project_id}/tokens/{token_id}", delete(revoke_project_token))
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers/{provider_id}", put(upsert_provider).delete(delete_provider))
+        .route("/v1/providers/{provider_id}/models", get(provider_models))
         .route("/v1/providers/health-check", post(health_check))
         .route("/v1/ai/chat", post(ai_chat))
         .route("/v1/providers/select", post(select_provider))
