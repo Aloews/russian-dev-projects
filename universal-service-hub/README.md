@@ -8,16 +8,16 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Run locally
 
+The Rust runtime requires PostgreSQL.
+
 ```bash
 cd universal-service-hub
-python -m venv .venv
-. .venv/bin/activate
-pip install -e ".[dev]"
-export USH_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-uvicorn app.main:app --reload
+export USH_DATABASE_URL="postgres://ush:password@localhost:5432/ush"
+export USH_API_TOKEN="$(openssl rand -hex 32)"
+cargo run --release
 ```
 
-SQLite is used by default for local development and the provider table is initialized automatically. Set `USH_DATABASE_URL` to a PostgreSQL URL to use PostgreSQL. Container startup runs Alembic migrations before starting the API.
+The Rust binary applies its SQLx migrations on startup. The production Docker image runs the Rust binary. Python/FastAPI files and tests are retained temporarily as a reference while route parity is verified; they are not the production container entrypoint.
 
 ## API
 
