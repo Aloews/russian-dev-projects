@@ -60,7 +60,7 @@ def test_invalid_provider_configuration_fails_fast(monkeypatch):
     try:
         with TestClient(app):
             raise AssertionError("invalid configuration should fail during startup")
-    except ValueError as exc:
+    except TypeError as exc:
         assert "JSON array" in str(exc)
     finally:
         get_settings.cache_clear()
