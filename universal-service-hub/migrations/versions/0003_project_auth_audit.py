@@ -53,7 +53,6 @@ def upgrade() -> None:
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
-        sa.UniqueConstraint("token_hash", name="uq_api_keys_token_hash"),
     )
     op.create_index("ix_api_keys_token_hash", "api_keys", ["token_hash"], unique=True)
     op.create_table(
