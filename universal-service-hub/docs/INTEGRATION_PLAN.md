@@ -31,6 +31,25 @@ This is a capability catalog, not a claim that integrations are already connecte
 | Website crawling/extraction | Firecrawl | Browserless or a self-hosted browser worker |
 | Long-running coding agents | Claude API/Managed Agents where enabled | OpenAI Responses API tools + isolated code workers |
 
+## Rust read-only account verification (implemented; live credentials pending)
+
+The Rust control plane exposes `POST /v1/integrations/{provider_id}/verify`. Provider records use the vendor name as `adapter_type` and `api_key_env` as an Infisical secret reference. The endpoint uses fixed HTTPS API destinations, bounded requests, no redirects, normalized non-secret output and redacted audit events. It never creates or modifies vendor resources.
+
+Implemented account checks:
+- Northflank: `GET /v1/teams?per_page=1` (organization-scoped token with Team Read permission).
+- Railway: GraphQL `query { me { id name email } }`.
+- Cloudflare: token verification endpoint; requires an active token.
+- Netlify: current-user endpoint.
+- Render: list workspaces endpoint.
+- DigitalOcean: account-read endpoint.
+- Fly.io: GraphQL viewer identity query.
+- Supabase: Management API list-projects endpoint; requires project-read scope.
+- Neon: list-projects endpoint; bearer API key.
+- Cloudflare R2: list buckets endpoint; requires Workers R2 Storage Read permission. Store a JSON secret referenced by `CLOUDFLARE_R2_CREDENTIALS_JSON` with `account_id` and `api_token`.
+- Backblaze B2: Native API account authorization endpoint. Store a JSON secret referenced by `BACKBLAZE_B2_CREDENTIALS_JSON` with `key_id` and `application_key`; prefer a restricted application key.
+
+These are implemented API checks, not active connections. Each provider remains unconnected until credentials are stored in Infisical and live verification succeeds. R2/B2 object transfer, generic S3 operations, Redis and PostgreSQL wire-protocol connectors remain future increments.
+
 ## Architecture decisions
 
 1. **Do not hardwire projects to one vendor.** Every connector implements a Rust trait with capability metadata, timeouts, typed errors, health state, quotas and contract tests.
