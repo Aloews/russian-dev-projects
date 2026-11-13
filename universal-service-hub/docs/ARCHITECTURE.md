@@ -6,17 +6,15 @@ The Hub is a control plane, not a proxy for arbitrary provider traffic. It owns 
 
 ## Current runtime
 
-- FastAPI exposes health, provider inventory, provider CRUD, health probing and provider selection.
-- SQLAlchemy async sessions persist provider configuration and health state.
-- SQLite is used only for local development/tests; production requires PostgreSQL.
-- Alembic migrations define the PostgreSQL schema and run before the container starts.
-- `USH_PROVIDERS_JSON` seeds missing provider records only; it does not overwrite database-managed records.
-- One service Bearer token protects all `/v1/*` endpoints. Full identity, project tenancy and RBAC are not yet implemented.
-- Selection is based on enabled state, capability, health and priority; ties are deterministic by provider ID.
+- Rust Axum/Tokio exposes the production HTTP API; the Docker image starts the Rust binary.
+- SQLx persists provider, project, token and audit state in PostgreSQL; SQLx migrations run during startup.
+- FastAPI and SQLAlchemy files remain as a temporary compatibility/reference implementation, not the production container entrypoint.
+- Root bearer authentication and project-scoped hashed tokens enforce owner/operator/viewer roles and project capability/provider allowlists.
+- Provider selection is based on enabled state, capability, health and priority; ties are deterministic by provider ID.
 
 ## Infrastructure account verification
 
-The Rust runtime supports read-only identity/connection checks for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon. These use fixed official HTTPS API endpoints rather than caller-supplied URLs, resolve API tokens through Infisical, apply bounded request timeouts, reject redirects, normalize the response and audit only provider ID/type, latency and non-secret counts. This is a connection-verification layer, not yet a resource provisioning/deployment adapter.
+The Rust runtime supports read-only identity/connection checks for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon. Cloudflare R2 bucket inventory and Backblaze B2 account authorization are also checked through their management/native APIs. These use fixed official HTTPS API endpoints rather than caller-supplied URLs, resolve credentials through Infisical, apply bounded request timeouts, reject redirects, normalize the response and audit only provider ID/type, latency and non-secret counts. This is a connection-verification layer, not yet a resource provisioning/deployment adapter or general S3 object client.
 
 ## Target architecture
 
