@@ -1200,7 +1200,7 @@ mod tests {
 
     #[test]
     fn s3_compatible_credentials_require_all_fields() {
-        let valid = r#"{"endpoint_url":"https://s3.us-east-1.amazonaws.com","region":"us-east-1","access_key_id":"access","secret_access_key":"secret"}"#;
+        let valid = r#"{"endpoint_url":"https://s3.us-east-1.amazonaws.com","region":"us-east-1","access_key_id":"access","secret_access_key":"secret","bucket":"project-assets"}"#;
         let credentials = parse_s3_compatible_credentials(valid).unwrap();
         assert_eq!(credentials.region, "us-east-1");
         assert_eq!(credentials.bucket.as_deref(), Some("project-assets"));
