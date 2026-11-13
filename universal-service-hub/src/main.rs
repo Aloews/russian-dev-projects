@@ -1,4 +1,4 @@
-use std::{env, net::{IpAddr, SocketAddr}, sync::Arc, time::{Duration, Instant}};
+use std::{env, net::IpAddr, sync::Arc, time::{Duration, Instant}};
 
 use axum::{
     extract::{Path, Query, State},
@@ -576,7 +576,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
             Err(_) => continue,
         };
         if ensure_public_destination(&base).await.is_err() { continue; }
-        let mut request = match adapter.as_str() {
+        let request = match adapter.as_str() {
             "openai_compatible" => {
                 let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
                 let mut req = state.http.post(url).bearer_auth(&api_key).json(&json!({
