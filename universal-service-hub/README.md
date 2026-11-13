@@ -34,7 +34,7 @@ Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This ro
 Provider management:
 - `GET /v1/providers` — list providers
 - `GET /v1/providers/{provider_id}/models` — discover current model IDs from the provider API
-- `POST /v1/integrations/{provider_id}/verify` — verify read-only account/API access for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Storage, Neon, Cloudflare R2, Backblaze B2 and generic S3-compatible storage
+- `POST /v1/integrations/{provider_id}/verify` — verify read-only account/API access for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Storage, Neon, Cloudflare R2, Backblaze B2, generic S3-compatible storage, PostgreSQL and Redis
 - `GET /v1/audit?limit=50` — list recent audit events (maximum 100)
 - `POST /v1/projects` — register a project and its allowed capabilities/providers
 - `GET /v1/projects` — list registered projects
@@ -65,7 +65,7 @@ Infisical Universal Auth is supported for provider credentials. Configure:
 - `INFISICAL_ENVIRONMENT`
 - `USH_INFISICAL_SECRET_PATH_PREFIX` (optional; defaults to `/projects`)
 
-Store each provider key in Infisical under `/projects/{project_id}/providers` with the same name as the provider's `api_key_env` reference (for example `OPENAI_API_KEY`). Root-administrator model-discovery requests use `/projects/shared/providers`. The Hub exchanges the machine identity credentials for a short-lived token, caches it until shortly before expiry, and retrieves the key only when dispatching a request. Secret values are not written to the provider table, audit events or logs. In development only, when Infisical is not configured and `USH_SECRET_BACKEND` is not set to `infisical`, provider credentials can be read from environment variables.
+Store each project-scoped provider key in Infisical under `/projects/{project_id}/providers` with the same name as the provider's `api_key_env` reference (for example `OPENAI_API_KEY`). Root-administrator integrations and shared infrastructure accounts use `/projects/shared/providers`; the integration verification endpoint resolves its credential reference from this shared path. The Hub exchanges the machine identity credentials for a short-lived token, caches it until shortly before expiry, and retrieves the key only when dispatching a request. Secret values are not written to the provider table, audit events or logs. In development only, when Infisical is not configured and `USH_SECRET_BACKEND` is not set to `infisical`, provider credentials can be read from environment variables.
 
 ## AI provider configuration
 
