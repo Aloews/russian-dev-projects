@@ -375,6 +375,14 @@ fn default_true() -> bool { true }
 fn default_adapter() -> String { "none".into() }
 fn default_timeout() -> f64 { 60.0 }
 
+fn is_ai_adapter(adapter: &str) -> bool {
+    ["openai_compatible", "anthropic", "gemini"].contains(&adapter)
+}
+
+fn is_control_api_adapter(adapter: &str) -> bool {
+    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean"].contains(&adapter)
+}
+
 fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
     let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_provider_url"))?;
     if parsed.scheme() != "https" || parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some() {
@@ -429,17 +437,24 @@ async fn upsert_provider(State(state): State<AppState>, headers: HeaderMap, Path
         || body.name.trim().is_empty() || body.name.len() > 160 || body.timeout_seconds <= 0.0 || body.timeout_seconds > 120.0 {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_provider"));
     }
-    if !["none","openai_compatible","anthropic","gemini"].contains(&body.adapter_type.as_str()) {
+    if body.adapter_type != "none" && !is_ai_adapter(&body.adapter_type) && !is_control_api_adapter(&body.adapter_type) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_adapter_type"));
     }
     if let Some(url) = body.base_url.as_deref() { validate_https_url(url)?; }
     if let Some(url) = body.health_url.as_deref() { validate_https_url(url)?; }
-    if body.adapter_type != "none" {
+    if is_ai_adapter(&body.adapter_type) {
         if body.model.as_deref().is_none_or(str::is_empty) || body.base_url.is_none() || body.api_key_env.as_deref().is_none_or(|v| v.len() < 2 || v.len() > 120 || !v.chars().next().is_some_and(|c| c.is_ascii_uppercase()) || !v.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')) {
             return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "incomplete_ai_provider"));
         }
         if body.adapter_type == "gemini" && body.supports_idempotency {
             return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "gemini_idempotency_not_supported"));
+        }
+    } else if is_control_api_adapter(&body.adapter_type) {
+        if body.api_key_env.as_deref().is_none_or(|v| v.len() < 2 || v.len() > 120 || !v.chars().next().is_some_and(|c| c.is_ascii_uppercase()) || !v.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')) {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "integration_credential_reference_required"));
+        }
+        if body.supports_idempotency {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "control_api_idempotency_not_applicable"));
         }
     }
     sqlx::query("INSERT INTO providers (id,name,capabilities,priority,enabled,health_url,adapter_type,model,base_url,api_key_env,supports_idempotency,timeout_seconds,health_status,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'unknown',NOW(),NOW()) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,capabilities=EXCLUDED.capabilities,priority=EXCLUDED.priority,enabled=EXCLUDED.enabled,health_url=EXCLUDED.health_url,adapter_type=EXCLUDED.adapter_type,model=EXCLUDED.model,base_url=EXCLUDED.base_url,api_key_env=EXCLUDED.api_key_env,supports_idempotency=EXCLUDED.supports_idempotency,timeout_seconds=EXCLUDED.timeout_seconds,updated_at=NOW()")
@@ -448,6 +463,75 @@ async fn upsert_provider(State(state): State<AppState>, headers: HeaderMap, Path
         .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "provider_upsert_failed"))?;
     audit(&state, &principal.actor, "provider.upsert", "provider", &provider_id, json!({"adapter_type":body.adapter_type,"capabilities":body.capabilities})).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, Path(provider_id): Path<String>) -> ApiResult<Json<Value>> {
+    let principal = require_admin(&state, &headers).await?;
+    let row = sqlx::query("SELECT adapter_type,api_key_env,enabled FROM providers WHERE id=$1")
+        .bind(&provider_id).fetch_optional(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "integration_lookup_failed"))?
+        .ok_or(ApiError(StatusCode::NOT_FOUND, "provider_not_found"))?;
+    let adapter: String = row.get("adapter_type");
+    let enabled: bool = row.get("enabled");
+    let key_name: Option<String> = row.get("api_key_env");
+    if !enabled || !is_control_api_adapter(&adapter) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "control_api_integration_not_configured"));
+    }
+    let key_name = key_name.ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "integration_credential_reference_missing"))?;
+    let token = resolve_provider_secret(&state, &key_name, None).await?
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "integration_credential_unavailable"))?;
+
+    let (url, method, payload) = match adapter.as_str() {
+        "northflank" => ("https://api.northflank.com/v1/teams?per_page=1", reqwest::Method::GET, None),
+        "railway" => ("https://backboard.railway.com/graphql/v2", reqwest::Method::POST, Some(json!({"query":"query { me { id name email } }"}))),
+        "cloudflare" => ("https://api.cloudflare.com/client/v4/user/tokens/verify", reqwest::Method::GET, None),
+        "netlify" => ("https://api.netlify.com/api/v1/user", reqwest::Method::GET, None),
+        "render" => ("https://api.render.com/v1/owners?limit=1", reqwest::Method::GET, None),
+        "digitalocean" => ("https://api.digitalocean.com/v2/account", reqwest::Method::GET, None),
+        _ => return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_control_api_adapter")),
+    };
+    let parsed = validate_https_url(url)?;
+    ensure_public_destination(&parsed).await?;
+    let mut request = state.http.request(method, parsed).bearer_auth(&token).timeout(Duration::from_secs(10));
+    if let Some(body) = payload { request = request.json(&body); }
+    let started = Instant::now();
+    let response = request.send().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "integration_request_failed"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let code = if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN { StatusCode::UNAUTHORIZED } else if status == StatusCode::TOO_MANY_REQUESTS { StatusCode::TOO_MANY_REQUESTS } else { StatusCode::BAD_GATEWAY };
+        audit(&state, &principal.actor, "integration.verify.failure", "provider", &provider_id, json!({"adapter":adapter,"upstream_status":status.as_u16()})).await;
+        return Err(ApiError(code, if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN { "integration_authentication_failed" } else if status == StatusCode::TOO_MANY_REQUESTS { "integration_rate_limited" } else { "integration_upstream_failed" }));
+    }
+    let data: Value = response.json().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
+    let (verified, resource_count, account_label) = match adapter.as_str() {
+        "northflank" => {
+            let teams = data["data"]["teams"].as_array().ok_or(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
+            (true, Some(teams.len()), teams.first().and_then(|v| v["name"].as_str()).map(str::to_owned))
+        }
+        "railway" => {
+            if data["errors"].as_array().is_some_and(|v| !v.is_empty()) || data["data"]["me"].is_null() {
+                return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed"));
+            }
+            (true, None, data["data"]["me"]["name"].as_str().map(str::to_owned))
+        }
+        "cloudflare" => {
+            if data["success"].as_bool() != Some(true) || data["result"]["status"].as_str() != Some("active") {
+                return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed"));
+            }
+            (true, None, Some("Cloudflare API token active".into()))
+        }
+        "netlify" => (data["id"].is_string(), data["site_count"].as_u64().map(|v| v as usize), data["full_name"].as_str().or(data["email"].as_str()).map(str::to_owned)),
+        "render" => {
+            let owners = data.as_array().ok_or(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
+            (true, Some(owners.len()), owners.first().and_then(|v| v["owner"]["name"].as_str()).map(str::to_owned))
+        }
+        "digitalocean" => (data["account"]["uuid"].is_string(), None, data["account"]["email"].as_str().map(str::to_owned)),
+        _ => (false, None, None),
+    };
+    if !verified { return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed")); }
+    let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+    audit(&state, &principal.actor, "integration.verify.success", "provider", &provider_id, json!({"adapter":adapter,"latency_ms":latency_ms,"resource_count":resource_count})).await;
+    Ok(Json(json!({"provider_id":provider_id,"adapter":adapter,"connected":true,"verified":true,"resource_count":resource_count,"account_label":account_label,"latency_ms":latency_ms})))
 }
 
 async fn delete_provider(State(state): State<AppState>, headers: HeaderMap, Path(provider_id): Path<String>) -> ApiResult<StatusCode> {
@@ -829,6 +913,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers/{provider_id}", put(upsert_provider).delete(delete_provider))
         .route("/v1/providers/{provider_id}/models", get(provider_models))
+        .route("/v1/integrations/{provider_id}/verify", post(verify_integration))
         .route("/v1/providers/health-check", post(health_check))
         .route("/v1/ai/chat", post(ai_chat))
         .route("/v1/providers/select", post(select_provider))
@@ -878,6 +963,17 @@ mod tests {
         let digest = hex::encode(Sha256::digest(raw.as_bytes()));
         assert_eq!(digest.len(), 64);
         assert_ne!(digest, raw);
+    }
+
+    #[test]
+    fn integration_adapter_catalog_is_explicit_and_bounded() {
+        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean"] {
+            assert!(is_control_api_adapter(adapter));
+            assert!(!is_ai_adapter(adapter));
+        }
+        for adapter in ["flyio", "supabase", "neon", "unknown"] {
+            assert!(!is_control_api_adapter(adapter));
+        }
     }
 
     #[test]
