@@ -380,7 +380,7 @@ fn is_ai_adapter(adapter: &str) -> bool {
 }
 
 fn is_control_api_adapter(adapter: &str) -> bool {
-    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean"].contains(&adapter)
+    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon"].contains(&adapter)
 }
 
 fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
@@ -488,6 +488,9 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
         "netlify" => ("https://api.netlify.com/api/v1/user", reqwest::Method::GET, None),
         "render" => ("https://api.render.com/v1/owners?limit=1", reqwest::Method::GET, None),
         "digitalocean" => ("https://api.digitalocean.com/v2/account", reqwest::Method::GET, None),
+        "flyio" => ("https://api.fly.io/graphql", reqwest::Method::POST, Some(json!({"query":"query { viewer { email } }"}))),
+        "supabase" => ("https://api.supabase.com/v1/projects?limit=1", reqwest::Method::GET, None),
+        "neon" => ("https://console.neon.tech/api/v2/projects?limit=1", reqwest::Method::GET, None),
         _ => return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_control_api_adapter")),
     };
     let parsed = validate_https_url(url)?;
@@ -526,6 +529,20 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
             (true, Some(owners.len()), owners.first().and_then(|v| v["owner"]["name"].as_str()).map(str::to_owned))
         }
         "digitalocean" => (data["account"]["uuid"].is_string(), None, data["account"]["email"].as_str().map(str::to_owned)),
+        "flyio" => {
+            if data["errors"].as_array().is_some_and(|v| !v.is_empty()) || data["data"]["viewer"]["email"].as_str().is_none() {
+                return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed"));
+            }
+            (true, None, data["data"]["viewer"]["email"].as_str().map(str::to_owned))
+        }
+        "supabase" => {
+            let projects = data.as_array().ok_or(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
+            (true, Some(projects.len()), projects.first().and_then(|v| v["name"].as_str()).map(str::to_owned))
+        }
+        "neon" => {
+            let projects = data["projects"].as_array().ok_or(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
+            (true, Some(projects.len()), projects.first().and_then(|v| v["name"].as_str()).map(str::to_owned))
+        }
         _ => (false, None, None),
     };
     if !verified { return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed")); }
@@ -967,11 +984,11 @@ mod tests {
 
     #[test]
     fn integration_adapter_catalog_is_explicit_and_bounded() {
-        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean"] {
+        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon"] {
             assert!(is_control_api_adapter(adapter));
             assert!(!is_ai_adapter(adapter));
         }
-        for adapter in ["flyio", "supabase", "neon", "unknown"] {
+        for adapter in ["unknown"] {
             assert!(!is_control_api_adapter(adapter));
         }
     }
