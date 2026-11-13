@@ -1,16 +1,15 @@
 # Security baseline
 
-- All `/v1/*` control endpoints require an HTTP Bearer token. `USH_API_TOKEN` must contain at least 32 characters and must be stored in the deployment platform's secret manager.
-- The token is compared with a constant-time comparison and is never returned by API responses.
+- All `/v1/*` control endpoints require an HTTP Bearer token. `USH_API_TOKEN` is the bootstrap administrator token and must contain at least 32 characters; issued API keys are also accepted. Store all token values in the deployment platform's secret manager.
+- The bootstrap token is compared in constant time. Issued API keys are SHA-256 hashed at rest and are shown only once. Token values are never returned by list or audit endpoints.
 - Startup fails in `USH_ENVIRONMENT=production` when the API token is missing.
 - `/healthz` and `/readyz` remain public for platform health checks; they expose no provider credentials.
-- This increment provides a single service token, not user identity, project tenancy or role-based access control. Do not treat it as a complete multi-tenant authorization system.
 - Never commit provider API keys, OAuth refresh tokens, database passwords, private keys or production connection strings.
 - Keep provider secret values in the deployment platform's secret manager. The Hub should store secret references and metadata only.
 - Do not return credentials or raw provider error bodies from API endpoints.
 - Require TLS for all external endpoints and restrict network access to trusted operators and project services.
 - Apply least privilege and separate development, staging and production credentials.
-- Log actor, project, provider, operation, decision and correlation ID; redact secrets and request payloads.
+- Log actor, project, provider, operation, decision and correlation ID; redact secrets and request payloads. Current audit records are durable but not tamper-evident or exported to an immutable external store.
 - Validate webhook signatures and prevent replay when webhook adapters are introduced.
 - Use bounded timeouts, retries with jitter, rate limits and circuit breakers.
 - Pin dependencies, scan images and dependencies, and rotate credentials after suspected exposure.
