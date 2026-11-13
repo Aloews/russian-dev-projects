@@ -5,7 +5,7 @@
 - Startup fails in `USH_ENVIRONMENT=production` when the API token is missing.
 - `/healthz` and `/readyz` remain public for platform health checks; they expose no provider credentials.
 - The root service token is an administrator credential. Project runtime tokens are stored as SHA-256 hashes, scoped to one project, role-checked, revocable and returned only once at issuance.
-- `owner` and `operator` project roles can invoke provider selection and AI chat; `viewer` cannot. Project owners can issue/revoke operator and viewer tokens for their own project, but cannot issue another owner token or change project policy. Only the root administrator can issue owner tokens, change/delete projects, configure providers or read global audit data. Project capabilities and optional provider allowlists are enforced on execution routes.
+- `owner` and `operator` project roles can invoke AI chat; all project roles can use read-only provider selection. Project owners can issue/revoke operator and viewer tokens for their own project, but cannot issue another owner token or change project policy. Only the root administrator can issue owner tokens, change/delete projects, configure providers or read global audit data. Project capabilities and optional provider allowlists are enforced on execution routes.
 - Provider administration, audit reads and project/token administration require the root administrator token.
 - Project tokens do not yet provide per-user identity, SSO, fine-grained per-operation grants, or tenant-scoped audit views.
 - Never commit provider API keys, OAuth refresh tokens, database passwords, private keys or production connection strings.
