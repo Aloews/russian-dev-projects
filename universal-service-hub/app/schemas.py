@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.config import ProviderConfig
 
 
 class ProviderView(BaseModel):
@@ -15,6 +17,10 @@ class ProviderView(BaseModel):
     health_status: Literal["unknown", "healthy", "unhealthy"]
     checked_at: datetime | None = None
     latency_ms: float | None = None
+    adapter_type: Literal["none", "openai_compatible", "anthropic", "gemini"] = "none"
+    model: str | None = None
+    credentials_configured: bool = False
+    supports_idempotency: bool = False
 
 
 class ProviderUpsertRequest(BaseModel):
@@ -24,6 +30,29 @@ class ProviderUpsertRequest(BaseModel):
     enabled: bool = True
     health_url: str | None = Field(default=None, max_length=2048)
     timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    adapter_type: Literal["none", "openai_compatible", "anthropic", "gemini"] = "none"
+    model: str | None = Field(default=None, max_length=160)
+    base_url: str | None = Field(default=None, max_length=2048)
+    api_key_env: str | None = Field(default=None, max_length=120)
+    supports_idempotency: bool = False
+
+    @model_validator(mode="after")
+    def validate_adapter_configuration(self):
+        ProviderConfig(
+            id="schema-validation",
+            name=self.name,
+            capabilities=self.capabilities,
+            priority=self.priority,
+            enabled=self.enabled,
+            health_url=self.health_url,
+            timeout_seconds=self.timeout_seconds,
+            adapter_type=self.adapter_type,
+            model=self.model,
+            base_url=self.base_url,
+            api_key_env=self.api_key_env,
+            supports_idempotency=self.supports_idempotency,
+        )
+        return self
 
 
 class HealthCheckResult(BaseModel):
@@ -48,3 +77,26 @@ class ProviderSelectionResponse(BaseModel):
 class ProviderHealthProbeRequest(BaseModel):
     provider_id: str | None = None
     limit: int = Field(default=50, ge=1, le=100)
+
+
+class ChatMessage(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(min_length=1, max_length=20000)
+
+
+class AIChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(min_length=1, max_length=100)
+    capability: str = Field(default="ai.chat", min_length=1, max_length=100)
+    temperature: float = Field(default=0.2, ge=0, le=2)
+    max_tokens: int = Field(default=1024, ge=1, le=8192)
+    exclude: list[str] = Field(default_factory=list, max_length=100)
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
+
+
+class AIChatResponse(BaseModel):
+    provider_id: str
+    model: str
+    content: str
+    usage: dict[str, Any] = Field(default_factory=dict)
+    latency_ms: float
+    attempts: int
