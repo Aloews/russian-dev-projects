@@ -36,7 +36,7 @@ class ProviderUpsertRequest(BaseModel):
     base_url: str | None = Field(default=None, max_length=2048)
     api_key_env: str | None = Field(default=None, max_length=120)
     supports_idempotency: bool = False
-    project_id: str | None = Field(default=None, max_length=80)
+    project_id: str | None = Field(default=None, max_length=80, pattern=r"^[a-zA-Z0-9._-]+$")
 
     @model_validator(mode="after")
     def validate_adapter_configuration(self):
