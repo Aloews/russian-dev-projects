@@ -366,7 +366,7 @@ async def list_audit_events(
 @app.put(
     "/v1/providers/{provider_id}",
     response_model=ProviderView,
-    dependencies=[Depends(require_api_token)],
+    dependencies=[Depends(require_admin)],
 )
 async def upsert_provider(
     payload: ProviderUpsertRequest,
