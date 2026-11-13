@@ -4,7 +4,7 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Current status
 
-**Development control plane / not production-ready.** The Hub has authenticated provider management, PostgreSQL persistence, health checks, deterministic capability selection and real HTTP adapters for OpenAI-compatible, Anthropic-compatible and Gemini chat APIs. Full user identity, project tenancy/RBAC, a managed secret-store connector, audit log, non-AI vendor adapters and production deployment are still outstanding.
+**Development control plane / not production-ready.** The Hub has authenticated provider management, PostgreSQL persistence, health checks, deterministic capability selection and real HTTP adapters for OpenAI-compatible, Anthropic-compatible and Gemini chat APIs. Full user identity, project tenancy/RBAC, a managed secret-store connector, non-AI vendor adapters and production deployment are still outstanding. Provider changes and AI usage metadata are recorded in a durable audit trail.
 
 ## Run locally
 
@@ -29,6 +29,7 @@ All `/v1/*` endpoints require `Authorization: Bearer $USH_API_TOKEN`. The token 
 
 Provider management:
 - `GET /v1/providers` — list providers
+- `GET /v1/audit?limit=50` — list recent audit events (maximum 100)
 - `PUT /v1/providers/{provider_id}` — create or replace provider configuration
 - `DELETE /v1/providers/{provider_id}` — remove a provider
 - `POST /v1/providers/health-check` — probe one provider or up to 50 providers by default (maximum 100 per call; 10 probes run concurrently)
@@ -88,7 +89,8 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 
 - Provider adapters isolate vendor-specific APIs from application logic.
 - Selection is based on declared capability, enabled state, health and explicit priority.
-- Health probes do not follow redirects and do not return raw provider response bodies.
+- Health probes and AI adapters do not follow redirects, require HTTPS, reject local/private IP destinations, and perform DNS checks before outbound requests.
+- Provider mutations and AI usage metadata are recorded without storing prompts, responses or credential values.
 - No credentials are returned by API responses or logs.
 - A provider is not a verified fallback until its integration and failure modes have been exercised.
 - This release uses one service token; do not expose it as a multi-user or multi-project authorization model.
@@ -100,7 +102,7 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 2. Control API authentication. (Completed)
 3. Durable PostgreSQL provider registry and migrations. (Completed)
 4. AI provider adapters and normalized chat routing. (This increment)
-5. Audit log, project tenancy and RBAC.
+5. Project tenancy and RBAC; the initial append-only audit event table and read API are implemented.
 6. Managed secret-store integration and non-AI adapters for compute, databases, storage, queues and observability.
 7. Policy engine: cost/latency/region constraints, circuit breakers, quotas and fallback chains.
 8. GitHub-driven project onboarding, isolated build/test workers and independent QA gates.
