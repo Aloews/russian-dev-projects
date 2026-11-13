@@ -50,7 +50,7 @@ Base repository: `Aloews/russian-dev-projects`
 ## Infrastructure API adapter increment
 
 Branch: `feat/ush-infra-api-verification-v2`, based on the latest Rust tenancy head.
-- Add read-only account verification adapters for Northflank, Railway, Cloudflare, Netlify, Render and DigitalOcean.
+- Add read-only account verification adapters for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon.
 - Store only secret-reference names in provider records; resolve tokens from Infisical shared provider secrets.
 - Add authenticated `POST /v1/integrations/{provider_id}/verify` endpoint with fixed vendor HTTPS endpoints, bounded timeout, no redirects, response normalization and redacted audit events.
 - This increment verifies API access only. It does not provision infrastructure or claim deployment-management parity.
