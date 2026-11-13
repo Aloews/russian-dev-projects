@@ -1,37 +1,62 @@
 # Universal Service Hub — Rust runtime
 
-The production control-plane runtime is Rust (Axum + Tokio + SQLx + PostgreSQL). Python files are retained temporarily as a compatibility/reference implementation during API parity migration; the production Docker image starts only the Rust binary.
+The production control-plane container is Rust (Axum + Tokio + SQLx + PostgreSQL). The legacy FastAPI code remains temporarily for compatibility and reference tests; it is not the production container entrypoint.
 
 ## Runtime
 
 - Rust stable, edition 2024
 - Axum HTTP API, Tokio async runtime
-- SQLx PostgreSQL with embedded SQL migrations
-- Reqwest with rustls for outbound provider calls
-- Structured tracing; bearer-token project isolation
+- SQLx PostgreSQL with embedded idempotent SQL migrations
+- Reqwest + rustls for outbound provider calls
+- Structured tracing and bounded request bodies
+- Root administrator and scoped project bearer tokens
 
 ## Required environment
 
 - `USH_DATABASE_URL`: PostgreSQL URL
 - `USH_API_TOKEN`: root administrator token (minimum 32 characters)
-- `USH_ENVIRONMENT=production` and `USH_SECRET_BACKEND=infisical` in production
-- `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID`, `INFISICAL_ENVIRONMENT`
+- `USH_ENVIRONMENT`: `development` or `production`
+- `USH_SECRET_BACKEND`: `env` in development; production requires `infisical`
 - `PORT`: optional, defaults to 8000
 - `RUST_LOG`: optional tracing filter
+
+When Infisical is enabled:
+- `INFISICAL_CLIENT_ID`
+- `INFISICAL_CLIENT_SECRET`
+- `INFISICAL_PROJECT_ID`
+- `INFISICAL_ENVIRONMENT`
+- `INFISICAL_URL` (optional; defaults to Infisical Cloud)
+- `USH_INFISICAL_SECRET_PATH_PREFIX` (optional; defaults to `/projects`)
 
 ## Implemented Rust routes
 
 - `GET /healthz`, `GET /readyz`
-- `GET/POST /v1/projects` (root administrator)
-- `POST /v1/projects/{project_id}/tokens` (root administrator or same-project owner; owner can issue operator/viewer only; raw token returned once)
-- `GET /v1/projects/{project_id}/tokens` (root administrator or same-project owner)
-- `DELETE /v1/projects/{project_id}/tokens/{token_id}` (root administrator or same-project owner)
-- `GET /v1/providers` (root administrator)
-- `POST /v1/providers/select` (root administrator or any scoped project role; viewer is read-only)
-- `GET /v1/audit` (root administrator)
+- `POST/GET /v1/projects`; `PUT/DELETE /v1/projects/{project_id}`
+- `POST/GET /v1/projects/{project_id}/tokens`; `DELETE /v1/projects/{project_id}/tokens/{token_id}`
+- `GET /v1/providers`; `PUT/DELETE /v1/providers/{provider_id}`
+- `GET /v1/providers/{provider_id}/models`
+- `POST /v1/providers/health-check`; `POST /v1/providers/select`
+- `POST /v1/ai/chat`
+- `GET /v1/audit`
 
-Project tokens are random, stored as SHA-256 hashes, revocable, and restricted by role and project capability/provider allowlists. Owner/operator can invoke AI; all roles can use read-only provider selection. Project owners can delegate operator/viewer tokens only within their own project; only root admin can issue owner tokens or change project policy.
+Provider adapters currently support OpenAI-compatible chat, Anthropic Messages and Gemini generateContent. Model discovery uses their corresponding model-list endpoints. Starimg/OpenRouter should be configured through the compatible adapter only after their current account protocol and model IDs have been verified.
 
-## Migration status
+## Security boundaries
 
-Rust migrations create the shared PostgreSQL tables with idempotent `CREATE TABLE IF NOT EXISTS` statements. Production cutover remains blocked until endpoint parity, migration compatibility against an existing database, security tests, CI, and a staged deployment/rollback are verified.
+- Project tokens are generated randomly, stored only as SHA-256 hashes and shown once.
+- Project owner/operator roles can invoke AI; viewer tokens can only perform read-only provider selection.
+- Project capability and provider allowlists are checked server-side.
+- Provider keys are resolved from Infisical per project path; development-only environment-variable fallback is available.
+- Outbound provider URLs require HTTPS and reject local/private DNS results. This is defense in depth, not a substitute for a hosting-platform egress firewall against DNS rebinding.
+- Audit events exclude prompts, generated responses and secret values.
+
+## Not yet production-complete
+
+- Durable asynchronous job queue and isolated worker fleet.
+- Budget/quota accounting, distributed rate limiting and circuit breakers.
+- Non-AI service adapters (GitHub, Railway, Vercel, Supabase, Cloudflare, object storage and media APIs).
+- Tool calling, streaming, multimodal input/output and provider-specific structured-output parity.
+- Full live contract tests for every provider, Infisical credentials and production deployment.
+- Network egress firewall, backup/restore rehearsal, staged rollout and rollback.
+
+Production cutover remains blocked until the exact release SHA passes CI, migration compatibility is tested against the target database, provider live smoke tests pass, budgets are configured, and rollback is rehearsed.
