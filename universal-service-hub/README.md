@@ -45,7 +45,7 @@ Provider management:
 AI:
 - `POST /v1/ai/chat` — route a chat request to a configured AI provider (admin or project owner/operator token)
 
-Project tokens have `owner`, `operator` or `viewer` roles. `owner` and `operator` can invoke AI or provider selection; `owner` can also issue/revoke operator and viewer tokens for its own project. Only the root administrator can issue owner tokens or change/delete projects. `viewer` cannot invoke execution routes. Project capability and optional provider allowlists are enforced server-side. Tokens are generated randomly, stored only as SHA-256 hashes and returned only at creation; revoked tokens are rejected.
+Project tokens have `owner`, `operator` or `viewer` roles. `owner` and `operator` can invoke AI; all three project roles can use read-only provider selection. `owner` can also issue/revoke operator and viewer tokens for its own project. Only the root administrator can issue owner tokens or change/delete projects. `viewer` cannot invoke AI. Project capability and optional provider allowlists are enforced server-side. Tokens are generated randomly, stored only as SHA-256 hashes and returned only at creation; revoked tokens are rejected.
 
 ## AI provider configuration
 
