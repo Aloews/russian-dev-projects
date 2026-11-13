@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         try:
             raw: Any = json.loads(self.providers_json)
             if not isinstance(raw, list):
-                raise ValueError("USH_PROVIDERS_JSON must be a JSON array")
+                raise TypeError("USH_PROVIDERS_JSON must be a JSON array")
             return [ProviderConfig.model_validate(item) for item in raw]
         except (json.JSONDecodeError, ValidationError) as exc:
             raise ValueError(f"Invalid provider configuration: {exc}") from exc
