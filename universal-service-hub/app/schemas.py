@@ -100,3 +100,13 @@ class AIChatResponse(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
     latency_ms: float
     attempts: int
+
+
+class AuditEventView(BaseModel):
+    id: str
+    occurred_at: datetime
+    actor: str
+    action: str
+    resource_type: str
+    resource_id: str
+    details: dict[str, Any] = Field(default_factory=dict)
