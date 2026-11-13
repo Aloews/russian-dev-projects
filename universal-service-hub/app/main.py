@@ -16,7 +16,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters import ProviderAdapterError, create_ai_adapter
-from app.auth import Principal, require_admin, require_api_token, require_project_operator
+from app.auth import Principal, require_admin, require_project_operator
 from app.config import get_settings
 from app.database import create_database, get_session
 from app.models import AuditEvent, Base, ProjectRecord, ProjectTokenRecord, ProviderRecord
@@ -351,7 +351,7 @@ async def list_providers(session: Annotated[AsyncSession, Depends(get_session)])
 @app.get(
     "/v1/audit",
     response_model=list[AuditEventView],
-    dependencies=[Depends(require_api_token)],
+    dependencies=[Depends(require_admin)],
 )
 async def list_audit_events(
     session: Annotated[AsyncSession, Depends(get_session)],
