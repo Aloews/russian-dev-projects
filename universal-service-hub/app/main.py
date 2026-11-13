@@ -131,7 +131,7 @@ async def lifespan(app: FastAPI):
         await engine.dispose()
 
 
-app = FastAPI(title="Universal Service Hub", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Universal Service Hub", version="0.4.0", lifespan=lifespan)
 
 
 @app.get("/healthz")
