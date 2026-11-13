@@ -125,8 +125,11 @@ struct Principal {
 fn bearer(headers: &HeaderMap) -> ApiResult<&str> {
     let value = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok())
         .ok_or(ApiError(StatusCode::UNAUTHORIZED, "bearer_token_required"))?;
-    let token = value.strip_prefix("Bearer ")
+    let (scheme, token) = value.split_once(' ')
         .ok_or(ApiError(StatusCode::UNAUTHORIZED, "bearer_token_required"))?;
+    if !scheme.eq_ignore_ascii_case("Bearer") || token.contains(' ') {
+        return Err(ApiError(StatusCode::UNAUTHORIZED, "bearer_token_required"));
+    }
     if token.len() < 32 {
         return Err(ApiError(StatusCode::UNAUTHORIZED, "invalid_bearer_token"));
     }
@@ -763,6 +766,23 @@ mod tests {
         assert_eq!(digest.len(), 64);
         assert_ne!(digest, raw);
     }
+
+    #[test]
+    fn infisical_secret_paths_are_project_isolated() {
+        let client = InfisicalClient {
+            http: reqwest::Client::new(),
+            base_url: "https://app.infisical.com".into(),
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            project_id: "infisical-project".into(),
+            environment: "prod".into(),
+            path_prefix: "/projects".into(),
+            token_cache: Arc::new(RwLock::new(None)),
+        };
+        assert_eq!(client.provider_path(Some("sherlock-scholes")), "/projects/sherlock-scholes/providers");
+        assert_eq!(client.provider_path(None), "/projects/shared/providers");
+    }
+
 }
 
 
