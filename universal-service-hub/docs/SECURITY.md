@@ -15,3 +15,8 @@
 - Use bounded timeouts, retries with jitter, rate limits and circuit breakers.
 - Pin dependencies, scan images and dependencies, and rotate credentials after suspected exposure.
 - Do not allow autonomous agents to access production secrets or deploy production changes without a separate policy gate and verified rollback.
+
+- AI provider API keys are resolved from environment-variable references at request time. The database stores only the reference name, never the credential value.
+- AI provider base URLs must use HTTPS, cannot contain URL credentials/query strings/fragments, and redirects are disabled. These checks are not a substitute for an outbound egress allowlist; deploy privately until network-level SSRF controls are in place.
+- Do not enable provider idempotent failover unless the provider's current documentation and a sandbox test confirm support. Gemini is not configured for idempotent failover.
+- The Hub does not currently enforce per-user or per-project quotas, spend ceilings or rate limits.
