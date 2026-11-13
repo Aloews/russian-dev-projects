@@ -141,3 +141,38 @@ def test_production_requires_postgresql(monkeypatch, tmp_path):
         assert "PostgreSQL" in str(exc)
     finally:
         get_settings.cache_clear()
+
+
+def test_health_probe_without_endpoint_is_not_configured(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "probe.db") as client:
+        client.put("/v1/providers/local", json=provider_payload())
+        response = client.post(
+            "/v1/providers/health-check",
+            json={"provider_id": "local"},
+        )
+        assert response.status_code == 200
+        assert response.json()[0]["status"] == "not_configured"
+
+
+def test_environment_seed_does_not_overwrite_database_changes(monkeypatch, tmp_path):
+    database_path = tmp_path / "seed.db"
+    original = (
+        '[{"id":"primary","name":"Primary","capabilities":["ai"],"priority":90}]'
+    )
+    changed = (
+        '[{"id":"primary","name":"Changed","capabilities":["compute"],"priority":5}]'
+    )
+    with client_with_providers(monkeypatch, original, database_path) as client:
+        assert client.get("/v1/providers").json()[0]["priority"] == 90
+
+    with client_with_providers(monkeypatch, changed, database_path) as client:
+        provider = client.get("/v1/providers").json()[0]
+        assert provider["name"] == "Primary"
+        assert provider["priority"] == 90
+        assert provider["capabilities"] == ["ai"]
+
+
+def test_invalid_provider_id_is_rejected(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "invalid-id.db") as client:
+        response = client.put("/v1/providers/not valid", json=provider_payload())
+        assert response.status_code == 422
