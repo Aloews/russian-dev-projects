@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.main import app
 
 TEST_TOKEN = "test-token-that-is-long-enough-for-validation-123"
@@ -179,7 +179,5 @@ def test_invalid_provider_id_is_rejected(monkeypatch, tmp_path):
 
 
 def test_normalizes_standard_postgres_urls():
-    from app.config import Settings
-
     settings = Settings(database_url="postgresql://user:pass@db.example/hub")
     assert settings.database_url == "postgresql+asyncpg://user:pass@db.example/hub"
