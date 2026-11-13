@@ -160,9 +160,13 @@ async fn require_admin(state: &AppState, headers: &HeaderMap) -> ApiResult<Princ
     Ok(principal)
 }
 
+fn can_invoke_ai(principal: &Principal) -> bool {
+    principal.admin || principal.role == "owner" || principal.role == "operator"
+}
+
 async fn require_operator(state: &AppState, headers: &HeaderMap) -> ApiResult<Principal> {
     let principal = authenticate(state, headers).await?;
-    if !principal.admin && principal.role != "owner" && principal.role != "operator" {
+    if !can_invoke_ai(&principal) {
         return Err(ApiError(StatusCode::FORBIDDEN, "project_operator_required"));
     }
     Ok(principal)
@@ -869,6 +873,8 @@ mod project_permission_tests {
 
         assert!(can_access_project(&admin));
         assert!(can_access_project(&viewer_alpha));
+        assert!(!can_invoke_ai(&viewer_alpha));
+        assert!(can_invoke_ai(&operator_alpha));
         assert!(can_manage_project_tokens(&admin, "alpha"));
         assert!(can_manage_project_tokens(&owner_alpha, "alpha"));
         assert!(!can_manage_project_tokens(&owner_beta, "alpha"));
