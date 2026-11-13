@@ -1,5 +1,6 @@
 FROM rust:1.88-bookworm AS builder
 WORKDIR /build
+ENV CARGO_NET_RETRY=2 CARGO_HTTP_TIMEOUT=60 CARGO_PROFILE_RELEASE_OPT_LEVEL=1
 COPY Cargo.toml ./
 COPY src ./src
 COPY rust-migrations ./rust-migrations
