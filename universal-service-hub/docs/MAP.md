@@ -27,6 +27,7 @@ Base repository: `Aloews/russian-dev-projects`
 - PR #5: AI adapters and normalized chat routing — merged 2026-11-13; exact final head `f8a2b7de53647aeaf3aa134868935eaf62a6536e`; GitHub Actions run #107 passed Ruff, PostgreSQL 16 migration smoke test, pytest, Docker build and container smoke test.
 - PR #8: outbound destination checks and durable audit trail — merged 2026-11-13; final head `482e4f4542f8db4900024d12350cf92cb280d0d9`; GitHub Actions run #143 passed Ruff, PostgreSQL migration, pytest, Docker build and container smoke test.
 - Current production deployment: none.
+- Railway project creation attempt: blocked by the workspace Free-plan resource limit; no existing Sherlock or Novel Forge project was modified.
 - Live provider inference: not yet verified.
 - No paid cloud resources were provisioned by these changes.
 
@@ -58,15 +59,17 @@ Branch: `feat/ush-provider-api-adapters-final-v2`, layered on the latest observe
 
 ## Work in progress
 
-Project tenancy increment on branch `feat/ush-project-tenancy`:
-- Add project and project-token tables with PostgreSQL migration.
-- Issue one-time raw tokens; store SHA-256 hashes only; support revocation and last-used timestamps.
-- Separate root-only administration from project-scoped AI/provider selection.
-- Enforce owner/operator/viewer roles and per-project capability/provider allowlists.
-- Permit viewer tokens read-only provider selection; restrict AI inference to owner/operator.
-- Allow project owners to manage operator/viewer tokens without granting root administration.
-- Add project update/delete and lifecycle tests.
-- Require passing CI, review exact head SHA, then merge.
+Provider verification increment is open as PR #20 on `feat/ush-provider-api-adapters-on-main`.
+- Adds read-only account verification for Northflank, Railway, Cloudflare, Netlify, Render, Fly.io, DigitalOcean, Supabase, Neon and read-only storage/database/Redis probes.
+- Requires CI and review on the exact final PR head before merge.
+- Does not provision resources, deploy workloads, transfer objects or orchestrate queues.
+
+Remaining product work after provider verification:
+- Provider-specific resource management (provision/deploy/scale/logs/rollback) behind explicit approval and dry-run plans.
+- Durable asynchronous jobs, queue adapters, retry/dead-letter policies and idempotent task execution.
+- Per-project/provider budgets, spend ceilings, quotas, usage metering and kill switches.
+- GitHub App installation and project onboarding automation.
+- Production hosting, managed PostgreSQL, Infisical machine identity, backups, alerts and rollback rehearsal.
 
 ## Owner-selected provider pool
 
