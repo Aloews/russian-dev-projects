@@ -397,11 +397,11 @@ async fn select_provider(State(state): State<AppState>, headers: HeaderMap, Json
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_failed"))?
             .ok_or(ApiError(StatusCode::FORBIDDEN, "project_not_found"))?;
         let caps: Value = project.get("allowed_capabilities");
-        if !caps.as_array().is_some_and(|a| a.iter().any(|v| v.as_str()==Some(&body.capability))) {
+        if caps.as_array().is_none_or(|a| !a.iter().any(|v| v.as_str()==Some(&body.capability))) {
             return Err(ApiError(StatusCode::FORBIDDEN, "capability_not_allowed"));
         }
         let allowed: Value = project.get("allowed_provider_ids");
-        let ids = allowed.as_array().map(|items| items.iter().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>()).unwrap_or_default();
+        let ids = allowed.as_array().map_or_else(Vec::new, |items| items.iter().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>());
         if ids.is_empty() { None } else { Some(ids) }
     } else { None };
     let row = sqlx::query("SELECT id,name,capabilities,priority,health_status FROM providers WHERE enabled=TRUE ORDER BY priority DESC,id")
@@ -449,7 +449,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_failed"))?
             .ok_or(ApiError(StatusCode::FORBIDDEN, "project_not_found"))?;
         let caps: Value = project.get("allowed_capabilities");
-        if !caps.as_array().is_some_and(|a| a.iter().any(|v| v.as_str()==Some("ai.chat"))) {
+        if caps.as_array().is_none_or(|a| !a.iter().any(|v| v.as_str()==Some("ai.chat"))) {
             return Err(ApiError(StatusCode::FORBIDDEN, "capability_not_allowed"));
         }
         let ids: Value = project.get("allowed_provider_ids");
@@ -496,7 +496,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
                     "model":model,"messages":body.messages.iter().map(|m| json!({"role":m.role,"content":m.content})).collect::<Vec<_>>(),
                     "temperature":body.temperature,"max_tokens":body.max_tokens
                 }));
-                if idempotent { if let Some(key) = body.idempotency_key.as_deref() { req=req.header("Idempotency-Key",key); } }
+                if idempotent && let Some(key) = body.idempotency_key.as_deref() { req=req.header("Idempotency-Key",key); }
                 req
             }
             "anthropic" => {
