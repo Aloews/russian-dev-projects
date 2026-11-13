@@ -774,6 +774,9 @@ async fn main() -> anyhow::Result<()> {
     let secret_backend = env::var("USH_SECRET_BACKEND").unwrap_or_else(|_| {
         if runtime_environment == "production" { "infisical".into() } else { "env".into() }
     });
+    if !["env", "infisical"].contains(&secret_backend.as_str()) {
+        anyhow::bail!("USH_SECRET_BACKEND must be env or infisical");
+    }
     if runtime_environment == "production" && secret_backend != "infisical" {
         anyhow::bail!("Production requires USH_SECRET_BACKEND=infisical");
     }
