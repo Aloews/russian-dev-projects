@@ -13,10 +13,17 @@ This is a capability catalog, not a claim that integrations are already connecte
 | P0 | Anthropic API | Direct Claude Messages API, including coding/reasoning models when available to the account | Anthropic API key; workspace budget/limits |
 | P0 | OpenAI API | Direct Responses API, tool calling, image/vision and transcription where enabled | OpenAI API key with project-level budget |
 | P1 | Google Gemini API | Independent text, multimodal and image-capable model route | Google AI API key / project quota |
-| P0 | Railway Public API | Deploy and manage services, variables, environments, logs and rollbacks | Workspace token or project token; prefer project scope |
+| P0 | Northflank API | Compute, services, jobs, add-ons and deployments | Organization-scoped token with least-privilege Team Read for account verification |
+| P0 | Railway Public API | Deploy and manage services, variables, environments, logs and rollbacks | Account/workspace token or OAuth; project token for project-scoped work |
+| P1 | Render API | Services, workers, cron, deploys and logs | Render API key |
+| P1 | Netlify API | Sites, deploys, functions and domains | Personal access token |
+| P1 | Fly.io API | Apps, Machines, volumes and deployments | Fly API token |
+| P1 | DigitalOcean API | App Platform, Droplets and managed resources | Scoped DigitalOcean API token |
 | P1 | Vercel API | Deployments, domains, environment variables, logs and rollback for frontend/serverless projects | Scoped Vercel access token |
 | P0 | Supabase Management API | Manage projects and database operations when authorized | Scoped Supabase PAT; avoid broad legacy tokens |
+| P1 | Neon API | Manage serverless PostgreSQL projects, branches and compute | Personal or organization-scoped Neon API key |
 | P1 | Cloudflare API + R2 S3 API | DNS, TLS, CDN, object storage and edge services | Scoped API token + R2 access key/secret |
+| P1 | Backblaze B2 API | Object storage and S3-compatible access | Restricted application key ID + application key |
 | P1 | Upstash Redis / QStash | Distributed queues, job scheduling, locks, cache, rate limits and retries | Redis REST URL/token and/or QStash token |
 | P1 | Sentry | Error tracking, releases and alert integration | Project/org token with minimum required scopes |
 
@@ -30,6 +37,37 @@ This is a capability catalog, not a claim that integrations are already connecte
 | Web search for agents | Tavily or Exa | A second search API selected after quality and price tests |
 | Website crawling/extraction | Firecrawl | Browserless or a self-hosted browser worker |
 | Long-running coding agents | Claude API/Managed Agents where enabled | OpenAI Responses API tools + isolated code workers |
+
+## Rust read-only account verification (implemented; live credentials pending)
+
+The Rust control plane exposes `POST /v1/integrations/{provider_id}/verify`. Provider records use the vendor name as `adapter_type` and `api_key_env` as an Infisical secret reference. The endpoint uses fixed HTTPS API destinations, bounded requests, no redirects, normalized non-secret output and redacted audit events. It never creates or modifies vendor resources.
+
+Implemented account checks:
+- Northflank: `GET /v1/teams?per_page=1` (organization-scoped token with Team Read permission).
+- Railway: GraphQL `query { me { id name email } }`.
+- Cloudflare: token verification endpoint; requires an active token.
+- Netlify: current-user endpoint.
+- Render: list workspaces endpoint.
+- DigitalOcean: account-read endpoint.
+- Fly.io: GraphQL viewer identity query.
+- Supabase: Management API list-projects endpoint; requires project-read scope.
+- Neon: list-projects endpoint; bearer API key.
+- Cloudflare R2: list buckets endpoint; requires Workers R2 Storage Read permission. Store a JSON secret referenced by `CLOUDFLARE_R2_CREDENTIALS_JSON` with `account_id` and `api_token`.
+- Backblaze B2: Native API account authorization endpoint. Store a JSON secret referenced by `BACKBLAZE_B2_CREDENTIALS_JSON` with `key_id` and `application_key`; prefer a restricted application key.
+
+Supabase Storage:
+- Adapter type `supabase_storage`. Store a JSON secret referenced by `SUPABASE_STORAGE_CREDENTIALS_JSON` with `project_url` and `service_role_key`. The verifier calls the read-only bucket-list endpoint and returns only bucket count/name. The service-role key is highly privileged; use a dedicated Supabase project and keep it in Infisical only.
+
+S3-compatible object storage:
+- Adapter type `s3_compatible`. Store `S3_COMPATIBLE_CREDENTIALS_JSON` in Infisical with `endpoint_url`, `region`, `access_key_id`, `secret_access_key`, and optionally a bucket name. The verifier uses AWS Signature Version 4 and performs a read-only `HeadBucket` when a bucket is specified; otherwise it performs `ListBuckets`. Prefer bucket-scoped credentials and `HeadBucket` to avoid account-wide listing permissions. Supports AWS S3, Cloudflare R2, Supabase Storage S3 protocol and Backblaze B2 S3 API endpoints.
+
+PostgreSQL data-plane connectivity:
+- Self-managed PostgreSQL: adapter type `postgresql`, with a secret reference such as `POSTGRESQL_DATABASE_URL`. The verifier requires a PostgreSQL URL, rejects private/local destinations, forces TLS, opens a single-connection pool, executes `SELECT 1`, then closes the pool. It does not run migrations or modify data.
+
+Redis data-plane connectivity:
+- Railway Redis, Northflank Redis and other Redis-compatible services: adapter type `redis`, with a secret reference such as `REDIS_URL`. The verifier requires a `rediss://` URL, rejects private/local destinations, opens one bounded async connection and sends `PING`. It never writes keys or data.
+
+These are implemented API checks, not active connections. Each provider remains unconnected until credentials are stored in Infisical and live verification succeeds. PostgreSQL and Redis have read-only connection probes only; they do not manage schema, replication, queues or locks. R2/B2 object transfer and generic S3 object operations remain future increments. GitHub OAuth sign-in does not automatically grant the Hub a provider's management API token; each vendor credential must be separately created and stored in Infisical.
 
 ## Architecture decisions
 
