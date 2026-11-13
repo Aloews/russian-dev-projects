@@ -592,7 +592,7 @@ async fn list_audit(State(state): State<AppState>, headers: HeaderMap, Query(que
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
+    let _ = dotenvy::dotenv();
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
     let database_url = env::var("USH_DATABASE_URL").or_else(|_| env::var("DATABASE_URL"))?;
     let admin_token = env::var("USH_API_TOKEN")?;
