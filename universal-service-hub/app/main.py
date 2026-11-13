@@ -30,6 +30,7 @@ from app.schemas import (
     ProjectTokenCreated,
     ProjectTokenView,
     ProjectView,
+    ProjectUpdateRequest,
     HealthCheckResult,
     ProviderHealthProbeRequest,
     ProviderSelectionRequest,
@@ -243,6 +244,65 @@ async def create_project(
 async def list_projects(session: Annotated[AsyncSession, Depends(get_session)]):
     result = await session.scalars(select(ProjectRecord).order_by(ProjectRecord.id.asc()))
     return [ProjectView.model_validate(project, from_attributes=True) for project in result.all()]
+
+
+@app.put(
+    "/v1/projects/{project_id}",
+    response_model=ProjectView,
+    dependencies=[Depends(require_admin)],
+)
+async def update_project(
+    project_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
+    payload: ProjectUpdateRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    project = await session.get(ProjectRecord, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.name = payload.name
+    project.allowed_capabilities = payload.allowed_capabilities
+    project.allowed_provider_ids = payload.allowed_provider_ids
+    audit_event(
+        session,
+        action="project.update",
+        resource_type="project",
+        resource_id=project_id,
+        details={
+            "allowed_capabilities": payload.allowed_capabilities,
+            "allowed_provider_ids": payload.allowed_provider_ids,
+        },
+    )
+    await session.commit()
+    await session.refresh(project)
+    return ProjectView.model_validate(project, from_attributes=True)
+
+
+@app.delete(
+    "/v1/projects/{project_id}",
+    status_code=204,
+    dependencies=[Depends(require_admin)],
+)
+async def delete_project(
+    project_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    project = await session.get(ProjectRecord, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tokens = await session.scalars(
+        select(ProjectTokenRecord).where(ProjectTokenRecord.project_id == project_id)
+    )
+    for token in tokens.all():
+        await session.delete(token)
+    audit_event(
+        session,
+        action="project.delete",
+        resource_type="project",
+        resource_id=project_id,
+        details={"name": project.name},
+    )
+    await session.delete(project)
+    await session.commit()
 
 
 @app.post(
