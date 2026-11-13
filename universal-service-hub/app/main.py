@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -206,9 +207,19 @@ async def health_check(
             raise HTTPException(status_code=404, detail="Provider not found")
         records = [record]
     else:
-        result = await session.scalars(select(ProviderRecord))
+        result = await session.scalars(
+            select(ProviderRecord)
+            .order_by(ProviderRecord.priority.desc(), ProviderRecord.id.asc())
+            .limit(payload.limit)
+        )
         records = result.all()
-    checks = [await probe_provider(record) for record in records]
+    semaphore = asyncio.Semaphore(10)
+
+    async def bounded_probe(record: ProviderRecord) -> HealthCheckResult:
+        async with semaphore:
+            return await probe_provider(record)
+
+    checks = await asyncio.gather(*(bounded_probe(record) for record in records))
     await session.commit()
     return checks
 
