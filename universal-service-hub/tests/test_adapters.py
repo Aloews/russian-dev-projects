@@ -128,3 +128,24 @@ async def test_retryable_provider_status_is_normalized_without_body_leak():
     assert raised.value.retryable is False
     assert raised.value.status_code == 503
     assert "private upstream diagnostic" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_connect_failure_is_safe_to_fail_over():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("private connection detail", request=request)
+
+    adapter = OpenAICompatibleAdapter(transport=httpx.MockTransport(handler))
+    with pytest.raises(ProviderAdapterError) as raised:
+        await adapter.chat(
+            base_url="https://api.example/v1",
+            api_key="test-secret",
+            model="model-a",
+            messages=[{"role": "user", "content": "Hello"}],
+            temperature=0.2,
+            max_tokens=100,
+            timeout=2,
+            idempotency_key="request-key-12345",
+        )
+    assert raised.value.retryable is True
+    assert "private connection detail" not in str(raised.value)
