@@ -388,7 +388,7 @@ fn is_ai_adapter(adapter: &str) -> bool {
 }
 
 fn is_control_api_adapter(adapter: &str) -> bool {
-    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql"].contains(&adapter)
+    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql", "redis"].contains(&adapter)
 }
 
 fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
@@ -497,6 +497,26 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     let token = resolve_provider_secret(&state, &key_name, None).await?
         .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "integration_credential_unavailable"))?;
     let started = Instant::now();
+
+    if adapter == "redis" {
+        let redis_url = url::Url::parse(&token).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"))?;
+        if redis_url.scheme() != "rediss" || redis_url.host_str().is_none() {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "redis_tls_required"));
+        }
+        ensure_public_destination(&redis_url).await?;
+        let client = redis::Client::open(token.as_str())
+            .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"))?;
+        let mut connection = tokio::time::timeout(Duration::from_secs(8), client.get_multiplexed_async_connection())
+            .await.map_err(|_| ApiError(StatusCode::GATEWAY_TIMEOUT, "redis_connection_timeout"))?
+            .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "redis_connection_failed"))?;
+        let pong: String = tokio::time::timeout(Duration::from_secs(5), redis::cmd("PING").query_async(&mut connection))
+            .await.map_err(|_| ApiError(StatusCode::GATEWAY_TIMEOUT, "redis_ping_timeout"))?
+            .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "redis_ping_failed"))?;
+        if pong != "PONG" { return Err(ApiError(StatusCode::BAD_GATEWAY, "redis_ping_invalid_response")); }
+        let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+        audit(&state, &principal.actor, "integration.verify.success", "provider", &provider_id, json!({"adapter":"redis","latency_ms":latency_ms})).await;
+        return Ok(Json(json!({"provider_id":provider_id,"adapter":"redis","connected":true,"verified":true,"latency_ms":latency_ms})));
+    }
 
     if adapter == "postgresql" {
         let database_url = url::Url::parse(&token).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"))?;
@@ -925,6 +945,7 @@ async fn list_audit(State(state): State<AppState>, headers: HeaderMap, Query(que
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
+    let _ = rustls::crypto::ring::default_provider().install_default();
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
     let environment = env::var("USH_ENVIRONMENT").unwrap_or_else(|_| "development".into());
     let secret_backend = env::var("USH_SECRET_BACKEND").unwrap_or_else(|_| if environment == "production" { "infisical".into() } else { "env".into() });
@@ -1045,7 +1066,7 @@ mod tests {
 
     #[test]
     fn integration_adapter_catalog_is_explicit_and_bounded() {
-        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql"] {
+        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql", "redis"] {
             assert!(is_control_api_adapter(adapter));
             assert!(!is_ai_adapter(adapter));
         }
