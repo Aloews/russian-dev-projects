@@ -110,3 +110,41 @@ class AuditEventView(BaseModel):
     resource_type: str
     resource_id: str
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectCreateRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9._-]+$")
+    name: str = Field(min_length=1, max_length=160)
+    allowed_capabilities: list[str] = Field(min_length=1, max_length=100)
+    allowed_provider_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class ProjectView(BaseModel):
+    id: str
+    name: str
+    allowed_capabilities: list[str]
+    allowed_provider_ids: list[str]
+    created_at: datetime
+
+
+class ProjectTokenCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    role: Literal["owner", "operator", "viewer"] = "operator"
+
+
+class ProjectTokenCreated(BaseModel):
+    id: str
+    project_id: str
+    name: str
+    role: Literal["owner", "operator", "viewer"]
+    token: str
+
+
+class ProjectTokenView(BaseModel):
+    id: str
+    project_id: str
+    name: str
+    role: Literal["owner", "operator", "viewer"]
+    created_at: datetime
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
