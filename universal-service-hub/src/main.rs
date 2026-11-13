@@ -414,6 +414,22 @@ fn validate_fixed_integration_url(raw: &str) -> Result<url::Url, ApiError> {
     Ok(parsed)
 }
 
+fn parse_postgres_url(raw: &str) -> Result<url::Url, ApiError> {
+    let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"))?;
+    if !["postgres", "postgresql"].contains(&parsed.scheme()) || parsed.host_str().is_none() {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"));
+    }
+    Ok(parsed)
+}
+
+fn parse_redis_url(raw: &str) -> Result<url::Url, ApiError> {
+    let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"))?;
+    if parsed.scheme() != "rediss" || parsed.host_str().is_none() {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "redis_tls_required"));
+    }
+    Ok(parsed)
+}
+
 fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -499,10 +515,7 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     let started = Instant::now();
 
     if adapter == "redis" {
-        let redis_url = url::Url::parse(&token).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"))?;
-        if redis_url.scheme() != "rediss" || redis_url.host_str().is_none() {
-            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "redis_tls_required"));
-        }
+        let redis_url = parse_redis_url(&token)?;
         ensure_public_destination(&redis_url).await?;
         let client = redis::Client::open(token.as_str())
             .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"))?;
@@ -519,10 +532,7 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     }
 
     if adapter == "postgresql" {
-        let database_url = url::Url::parse(&token).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"))?;
-        if !["postgres", "postgresql"].contains(&database_url.scheme()) || database_url.host_str().is_none() {
-            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"));
-        }
+        let database_url = parse_postgres_url(&token)?;
         ensure_public_destination(&database_url).await?;
         let options = PgConnectOptions::from_str(&token)
             .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"))?
@@ -1105,6 +1115,14 @@ mod outbound_tests {
         assert!(!is_public_ip("192.168.1.1".parse().unwrap()));
         assert!(!is_public_ip("::1".parse().unwrap()));
         assert!(!is_public_ip("fc00::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn database_and_redis_connection_urls_require_supported_schemes() {
+        assert!(parse_postgres_url("postgresql://user:pass@db.example.test:5432/app").is_ok());
+        assert!(parse_postgres_url("https://db.example.test").is_err());
+        assert!(parse_redis_url("rediss://default:secret@cache.example.test:6379").is_ok());
+        assert!(parse_redis_url("redis://default:secret@cache.example.test:6379").is_err());
     }
 
     #[test]
