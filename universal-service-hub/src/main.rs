@@ -1067,6 +1067,14 @@ mod outbound_tests {
     }
 
     #[test]
+    fn fixed_integration_urls_allow_static_query_parameters_only_on_https() {
+        assert!(validate_fixed_integration_url("https://api.example.com/v1/items?limit=1").is_ok());
+        assert!(validate_fixed_integration_url("http://api.example.com/v1/items?limit=1").is_err());
+        assert!(validate_fixed_integration_url("https://user:pass@api.example.com/v1").is_err());
+        assert!(validate_fixed_integration_url("https://api.example.com/v1#fragment").is_err());
+    }
+
+    #[test]
     fn provider_url_policy_requires_clean_https_url() {
         assert!(validate_https_url("https://api.example.com/v1").is_ok());
         assert!(validate_https_url("http://api.example.com").is_err());
