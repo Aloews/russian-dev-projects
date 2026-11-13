@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
@@ -129,7 +129,7 @@ async fn create_project(State(state): State<AppState>, headers: HeaderMap, Json(
     }
     let result = sqlx::query(
         "INSERT INTO projects (id,name,allowed_capabilities,allowed_provider_ids,created_at,updated_at) VALUES ($1,$2,$3,$4,NOW(),NOW()) ON CONFLICT (id) DO NOTHING"
-    ).bind(&body.id).bind(&body.name).bind(json!(body.allowed_capabilities)).bind(json!(body.allowed_provider_ids))
+    ).bind(&body.id).bind(&body.name).bind(json!(body.allowed_capabilities.clone())).bind(json!(body.allowed_provider_ids.clone()))
      .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_create_failed"))?;
     if result.rows_affected() == 0 { return Err(ApiError(StatusCode::CONFLICT, "project_exists")); }
     audit(&state, &principal.actor, "project.create", "project", &body.id, json!({})).await;
@@ -167,7 +167,7 @@ async fn create_project_token(State(state): State<AppState>, headers: HeaderMap,
     sqlx::query("INSERT INTO project_tokens (id,project_id,name,role,token_hash,created_at) VALUES ($1,$2,$3,$4,$5,NOW())")
         .bind(&id).bind(&project_id).bind(&body.name).bind(&body.role).bind(hash).execute(&state.db).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_create_failed"))?;
-    audit(&state, &principal.actor, "project.token.create", "project", &project_id, json!({"token_id":id,"role":body.role})).await;
+    audit(&state, &principal.actor, "project.token.create", "project", &project_id, json!({"token_id":id.clone(),"role":body.role.clone()})).await;
     Ok(Json(json!({"id":id,"project_id":project_id,"name":body.name,"role":body.role,"token":raw})))
 }
 
@@ -201,6 +201,19 @@ struct ProviderSelect { capability: String, #[serde(default)] exclude: Vec<Strin
 
 async fn select_provider(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<ProviderSelect>) -> ApiResult<Json<Value>> {
     let principal = require_operator(&state, &headers).await?;
+    let allowed_provider_ids: Option<Vec<String>> = if let Some(project_id) = principal.project_id {
+        let project = sqlx::query("SELECT allowed_capabilities,allowed_provider_ids FROM projects WHERE id=$1")
+            .bind(project_id).fetch_optional(&state.db).await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_failed"))?
+            .ok_or(ApiError(StatusCode::FORBIDDEN, "project_not_found"))?;
+        let caps: Value = project.get("allowed_capabilities");
+        if !caps.as_array().is_some_and(|a| a.iter().any(|v| v.as_str()==Some(&body.capability))) {
+            return Err(ApiError(StatusCode::FORBIDDEN, "capability_not_allowed"));
+        }
+        let allowed: Value = project.get("allowed_provider_ids");
+        let ids = allowed.as_array().map(|items| items.iter().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>()).unwrap_or_default();
+        if ids.is_empty() { None } else { Some(ids) }
+    } else { None };
     let row = sqlx::query("SELECT id,name,capabilities,priority,health_status FROM providers WHERE enabled=TRUE ORDER BY priority DESC,id")
         .fetch_all(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "provider_select_failed"))?
         .into_iter().find(|r| {
@@ -209,23 +222,8 @@ async fn select_provider(State(state): State<AppState>, headers: HeaderMap, Json
             let health: String = r.get("health_status");
             !body.exclude.contains(&id) && health != "unhealthy" &&
               caps.as_array().is_some_and(|a| a.iter().any(|v| v.as_str()==Some(&body.capability))) &&
-              (principal.admin || true)
+              allowed_provider_ids.as_ref().is_none_or(|ids| ids.contains(&id))
         }).ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "no_eligible_provider"))?;
-    if let Some(project_id) = principal.project_id {
-        let project = sqlx::query("SELECT allowed_capabilities,allowed_provider_ids FROM projects WHERE id=$1")
-            .bind(project_id).fetch_optional(&state.db).await
-            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_failed"))?
-            .ok_or(ApiError(StatusCode::FORBIDDEN, "project_not_found"))?;
-        let caps: Value = project.get("allowed_capabilities");
-        let allowed: Value = project.get("allowed_provider_ids");
-        if !caps.as_array().is_some_and(|a| a.iter().any(|v| v.as_str()==Some(&body.capability))) {
-            return Err(ApiError(StatusCode::FORBIDDEN, "capability_not_allowed"));
-        }
-        let id: String = row.get("id");
-        if allowed.as_array().is_some_and(|a| !a.is_empty() && !a.iter().any(|v| v.as_str()==Some(&id))) {
-            return Err(ApiError(StatusCode::FORBIDDEN, "provider_not_allowed"));
-        }
-    }
     Ok(Json(json!({"provider":{"id":row.get::<String,_>("id"),"name":row.get::<String,_>("name"),"priority":row.get::<i32,_>("priority")},"fallbacks":[]})))
 }
 
