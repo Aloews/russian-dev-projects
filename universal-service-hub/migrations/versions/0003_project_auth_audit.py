@@ -24,20 +24,19 @@ def upgrade() -> None:
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
-    op.add_column("providers", sa.Column("project_id", sa.String(length=80), nullable=True))
-    op.create_foreign_key(
-        "fk_providers_project_id_projects",
-        "providers",
-        "projects",
-        ["project_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.create_index(
-        "ix_providers_project_enabled_priority",
-        "providers",
-        ["project_id", "enabled", "priority"],
-    )
+    with op.batch_alter_table("providers") as batch_op:
+        batch_op.add_column(sa.Column("project_id", sa.String(length=80), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_providers_project_id_projects",
+            "projects",
+            ["project_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        batch_op.create_index(
+            "ix_providers_project_enabled_priority",
+            ["project_id", "enabled", "priority"],
+        )
     op.create_table(
         "api_keys",
         sa.Column("id", sa.String(length=36), primary_key=True),
@@ -79,7 +78,8 @@ def downgrade() -> None:
     op.drop_table("audit_logs")
     op.drop_index("ix_api_keys_token_hash", table_name="api_keys")
     op.drop_table("api_keys")
-    op.drop_index("ix_providers_project_enabled_priority", table_name="providers")
-    op.drop_constraint("fk_providers_project_id_projects", "providers", type_="foreignkey")
-    op.drop_column("providers", "project_id")
+    with op.batch_alter_table("providers") as batch_op:
+        batch_op.drop_index("ix_providers_project_enabled_priority")
+        batch_op.drop_constraint("fk_providers_project_id_projects", type_="foreignkey")
+        batch_op.drop_column("project_id")
     op.drop_table("projects")
