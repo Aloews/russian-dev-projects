@@ -52,7 +52,11 @@ Additional verified API contracts implemented:
 - Supabase: `GET https://api.supabase.com/v1/projects?limit=1` using a Management API personal access token or scoped OAuth access token with project-read permission.
 - Neon: `GET https://console.neon.tech/api/v2/projects?limit=1` using a personal or organization-scoped bearer API key.
 
-These adapters are implemented but are not connected until their API tokens are stored in Infisical and each live verification succeeds. GitHub OAuth at a hosting vendor is not a substitute for its API token.
+Storage management API checks implemented:
+- Cloudflare R2: `GET /client/v4/accounts/{account_id}/r2/buckets?per_page=1` with a token holding Workers R2 Storage Read permission. Store one JSON secret referenced by `CLOUDFLARE_R2_CREDENTIALS_JSON`: `{"account_id":"32-hex-account-id","api_token":"..." }`.
+- Backblaze B2 Native API: `GET https://api.backblazeb2.com/b2api/v4/b2_authorize_account` using HTTP Basic authentication. Store one JSON secret referenced by `BACKBLAZE_B2_CREDENTIALS_JSON`: `{"key_id":"...","application_key":"..." }`. Prefer a restricted application key, not the master key.
+
+These adapters are implemented but are not connected until their API credentials are stored in Infisical and each live verification succeeds. GitHub OAuth at a hosting vendor is not a substitute for its API token.
 
 ## Architecture decisions
 
