@@ -412,7 +412,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
         if list.is_empty() { None } else { Some(list) }
     } else { None };
 
-    let rows = sqlx::query("SELECT id,name,adapter_type,model,base_url,api_key_env,timeout_seconds,supports_idempotency FROM providers WHERE enabled=TRUE AND 'ai.chat'=ANY(SELECT jsonb_array_elements_text(capabilities)) ORDER BY priority DESC,id")
+    let rows = sqlx::query("SELECT id,name,adapter_type,model,base_url,api_key_env,timeout_seconds,supports_idempotency FROM providers WHERE enabled=TRUE AND capabilities ? 'ai.chat' ORDER BY priority DESC,id")
         .fetch_all(&state.db).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "provider_query_failed"))?;
     let candidates: Vec<_> = rows.into_iter().filter(|r| {
@@ -612,5 +612,32 @@ mod tests {
         let digest = hex::encode(Sha256::digest(raw.as_bytes()));
         assert_eq!(digest.len(), 64);
         assert_ne!(digest, raw);
+    }
+}
+
+
+#[cfg(test)]
+mod outbound_tests {
+    use super::*;
+
+    #[test]
+    fn public_address_filter_rejects_private_and_metadata_ranges() {
+        assert!(is_public_ip("8.8.8.8".parse().unwrap()));
+        assert!(!is_public_ip("127.0.0.1".parse().unwrap()));
+        assert!(!is_public_ip("10.0.0.8".parse().unwrap()));
+        assert!(!is_public_ip("169.254.169.254".parse().unwrap()));
+        assert!(!is_public_ip("192.168.1.1".parse().unwrap()));
+        assert!(!is_public_ip("::1".parse().unwrap()));
+        assert!(!is_public_ip("fc00::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn provider_url_policy_requires_clean_https_url() {
+        assert!(validate_https_url("https://api.example.com/v1").is_ok());
+        assert!(validate_https_url("http://api.example.com").is_err());
+        assert!(validate_https_url("https://127.0.0.1").is_err());
+        assert!(validate_https_url("https://api.example.com/?token=secret").is_err());
+        assert!(validate_https_url("https://user:pass@api.example.com").is_err());
+        assert!(validate_https_url("https://localhost").is_err());
     }
 }
