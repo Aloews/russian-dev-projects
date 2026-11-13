@@ -506,9 +506,16 @@ def test_project_viewer_cannot_invoke_ai(monkeypatch, tmp_path):
             "/v1/projects/read-only/tokens",
             json={"name": "viewer", "role": "viewer"},
         )
+        viewer_headers = {"Authorization": f"Bearer {token_response.json()['token']}"}
+        selected = client.post(
+            "/v1/providers/select",
+            headers=viewer_headers,
+            json={"capability": "ai.chat"},
+        )
+        assert selected.status_code == 200
         response = client.post(
             "/v1/ai/chat",
-            headers={"Authorization": f"Bearer {token_response.json()['token']}"},
+            headers=viewer_headers,
             json={"messages": [{"role": "user", "content": "Hello"}]},
         )
         assert response.status_code == 403
