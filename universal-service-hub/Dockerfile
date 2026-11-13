@@ -1,17 +1,21 @@
-FROM python:3.12-slim
+FROM rust:1.88-bookworm AS builder
+WORKDIR /build
+COPY Cargo.toml ./
+COPY src ./src
+COPY rust-migrations ./rust-migrations
+RUN cargo build --release
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
-
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 ush \
+    && useradd --system --uid 10001 --gid ush --home-dir /app ush
 WORKDIR /app
-COPY pyproject.toml README.md alembic.ini ./
-COPY app ./app
-COPY migrations ./migrations
-COPY entrypoint.sh ./entrypoint.sh
-RUN pip install --no-cache-dir .
+COPY --from=builder /build/target/release/universal-service-hub /app/universal-service-hub
 USER 10001:10001
+ENV PORT=8000
 EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"
-CMD ["sh", "./entrypoint.sh"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:8000/healthz || exit 1
+ENTRYPOINT ["/app/universal-service-hub"]
