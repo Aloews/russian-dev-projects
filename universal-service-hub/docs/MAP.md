@@ -59,6 +59,19 @@ Project tenancy increment on branch `feat/ush-project-tenancy`:
 - Add project update/delete and lifecycle tests.
 - Require passing CI, review exact head SHA, then merge.
 
+## Owner-selected provider pool
+
+Preferred infrastructure categories recorded in `docs/INTEGRATION_PLAN.md`:
+- Hosting/frontend: Northflank, Cloudflare, Netlify, Render.
+- Backend/API/workers: Northflank, Railway, Fly.io, DigitalOcean.
+- Databases: Supabase, Neon, self-managed PostgreSQL.
+- Object storage: Supabase Storage, Cloudflare R2, S3, Backblaze B2.
+- Queues/background work: Railway Redis, Northflank Redis, with Redis-compatible alternatives.
+
+Current ChatGPT-connected management integrations available to the agent: GitHub, Railway, Supabase and Vercel. Direct connector tools for Northflank, Cloudflare, Netlify, Render, Fly.io, DigitalOcean, Neon and Backblaze are not available in this workspace at present. These vendors are included in the Hub's provider catalog and require their own API credentials/adapter implementation for direct account management.
+
+GitHub OAuth sign-in to a hosting vendor is not equivalent to granting the Hub that vendor's management API access. Repository linking can enable GitHub-triggered deploys; direct service creation, configuration, database/storage administration and rollback require separately scoped vendor API credentials. Never mark a vendor connected until a live API identity check succeeds.
+
 ## Production readiness gates
 
 1. Security: SSO/per-user identity, fine-grained scoped RBAC, audit retention/access, rate limits, egress firewall, managed secret storage, dependency/image scanning.
