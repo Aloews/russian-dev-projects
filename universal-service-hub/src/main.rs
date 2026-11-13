@@ -1,10 +1,10 @@
-use std::{env, net::SocketAddr, sync::Arc, time::Duration};
+use std::{env, net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr}, sync::Arc, time::{Duration, Instant}};
 
 use axum::{
     extract::{Path, Query, State},
     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
@@ -22,6 +22,7 @@ use uuid::Uuid;
 struct AppState {
     db: PgPool,
     admin_token: Arc<String>,
+    http: reqwest::Client,
 }
 
 #[derive(Debug)]
@@ -186,6 +187,160 @@ async fn list_providers(State(state): State<AppState>, headers: HeaderMap) -> Ap
     Ok(Json(json!(values)))
 }
 
+
+#[derive(Deserialize)]
+struct ProviderUpsert {
+    name: String,
+    #[serde(default)]
+    capabilities: Vec<String>,
+    #[serde(default = "default_priority")]
+    priority: i32,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    health_url: Option<String>,
+    #[serde(default = "default_adapter")]
+    adapter_type: String,
+    model: Option<String>,
+    base_url: Option<String>,
+    api_key_env: Option<String>,
+    #[serde(default)]
+    supports_idempotency: bool,
+    #[serde(default = "default_timeout")]
+    timeout_seconds: f64,
+}
+fn default_priority() -> i32 { 100 }
+fn default_true() -> bool { true }
+fn default_adapter() -> String { "none".into() }
+fn default_timeout() -> f64 { 3.0 }
+
+fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
+    let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_provider_url"))?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsafe_provider_url"));
+    }
+    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") || host.ends_with(".internal") || host == "metadata.google.internal" {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsafe_provider_host"));
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if !is_public_ip(ip) { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "non_public_provider_ip")); }
+    }
+    Ok(parsed)
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            !(v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_broadcast() || v4.is_unspecified() || v4.is_multicast()
+                || o[0] == 0 || (o[0] == 100 && (64..=127).contains(&o[1]))
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                || (o[0] == 192 && o[1] == 0 && o[2] == 2)
+                || (o[0] == 198 && (o[1] == 18 || o[1] == 19))
+                || (o[0] == 198 && o[1] == 51 && o[2] == 100)
+                || (o[0] == 203 && o[1] == 0 && o[2] == 113)
+                || o[0] >= 240)
+        }
+        IpAddr::V6(v6) => {
+            let segments = v6.segments();
+            !(v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || v6.is_unique_local() || v6.is_unicast_link_local()
+                || (segments[0] & 0xe000) != 0x2000)
+        }
+    }
+}
+
+async fn ensure_public_destination(url: &url::Url) -> ApiResult<()> {
+    let host = url.host_str().ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_provider_host"))?;
+    let port = url.port_or_known_default().unwrap_or(443);
+    let resolved = tokio::net::lookup_host((host, port)).await
+        .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "provider_dns_failed"))?;
+    let addresses: Vec<SocketAddr> = resolved.collect();
+    if addresses.is_empty() || addresses.iter().any(|addr| !is_public_ip(addr.ip())) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsafe_provider_dns_result"));
+    }
+    Ok(())
+}
+
+async fn upsert_provider(State(state): State<AppState>, headers: HeaderMap, Path(provider_id): Path<String>, Json(body): Json<ProviderUpsert>) -> ApiResult<StatusCode> {
+    let principal = require_admin(&state, &headers).await?;
+    if provider_id.is_empty() || provider_id.len() > 80 || !provider_id.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+        || body.name.trim().is_empty() || body.name.len() > 160 || body.timeout_seconds <= 0.0 || body.timeout_seconds > 30.0 {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_provider"));
+    }
+    if !["none","openai_compatible","anthropic","gemini"].contains(&body.adapter_type.as_str()) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_adapter_type"));
+    }
+    if let Some(url) = body.base_url.as_deref() { validate_https_url(url)?; }
+    if let Some(url) = body.health_url.as_deref() { validate_https_url(url)?; }
+    if body.adapter_type != "none" {
+        if body.model.as_deref().is_none_or(str::is_empty) || body.base_url.is_none() || body.api_key_env.as_deref().is_none_or(|v| v.len() < 2 || v.len() > 120 || !v.chars().next().is_some_and(|c| c.is_ascii_uppercase()) || !v.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')) {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "incomplete_ai_provider"));
+        }
+        if body.adapter_type == "gemini" && body.supports_idempotency {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "gemini_idempotency_not_supported"));
+        }
+    }
+    sqlx::query("INSERT INTO providers (id,name,capabilities,priority,enabled,health_url,adapter_type,model,base_url,api_key_env,supports_idempotency,timeout_seconds,health_status,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'unknown',NOW(),NOW()) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,capabilities=EXCLUDED.capabilities,priority=EXCLUDED.priority,enabled=EXCLUDED.enabled,health_url=EXCLUDED.health_url,adapter_type=EXCLUDED.adapter_type,model=EXCLUDED.model,base_url=EXCLUDED.base_url,api_key_env=EXCLUDED.api_key_env,supports_idempotency=EXCLUDED.supports_idempotency,timeout_seconds=EXCLUDED.timeout_seconds,updated_at=NOW()")
+        .bind(&provider_id).bind(&body.name).bind(json!(body.capabilities)).bind(body.priority).bind(body.enabled).bind(&body.health_url)
+        .bind(&body.adapter_type).bind(&body.model).bind(&body.base_url).bind(&body.api_key_env).bind(body.supports_idempotency).bind(body.timeout_seconds)
+        .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "provider_upsert_failed"))?;
+    audit(&state, &principal.actor, "provider.upsert", "provider", &provider_id, json!({"adapter_type":body.adapter_type,"capabilities":body.capabilities})).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_provider(State(state): State<AppState>, headers: HeaderMap, Path(provider_id): Path<String>) -> ApiResult<StatusCode> {
+    let principal = require_admin(&state, &headers).await?;
+    let result = sqlx::query("DELETE FROM providers WHERE id=$1").bind(&provider_id).execute(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "provider_delete_failed"))?;
+    if result.rows_affected() == 0 { return Err(ApiError(StatusCode::NOT_FOUND, "provider_not_found")); }
+    audit(&state, &principal.actor, "provider.delete", "provider", &provider_id, json!({})).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct HealthCheckRequest {
+    provider_id: Option<String>,
+    #[serde(default = "default_health_limit")]
+    limit: i64,
+}
+fn default_health_limit() -> i64 { 50 }
+
+async fn health_check(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<HealthCheckRequest>) -> ApiResult<Json<Value>> {
+    require_admin(&state, &headers).await?;
+    let limit = body.limit.clamp(1,100);
+    let rows = if let Some(id) = body.provider_id {
+        sqlx::query("SELECT id,health_url,timeout_seconds FROM providers WHERE id=$1 AND enabled=TRUE").bind(id).fetch_all(&state.db).await
+    } else {
+        sqlx::query("SELECT id,health_url,timeout_seconds FROM providers WHERE enabled=TRUE ORDER BY priority DESC LIMIT $1").bind(limit).fetch_all(&state.db).await
+    }.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "provider_health_query_failed"))?;
+    let mut results = Vec::new();
+    for row in rows {
+        let id: String = row.get("id");
+        let health_url: Option<String> = row.get("health_url");
+        let timeout: f64 = row.get("timeout_seconds");
+        let started = Instant::now();
+        let (status, detail) = if let Some(raw_url) = health_url {
+            match validate_https_url(&raw_url) {
+                Ok(url) => match ensure_public_destination(&url).await {
+                    Ok(()) => match state.http.get(url).timeout(Duration::from_secs_f64(timeout)).send().await {
+                        Ok(response) if response.status().is_success() => ("healthy","http_success"),
+                        Ok(response) => ("unhealthy", if response.status().is_server_error() { "http_5xx" } else { "http_non_success" }),
+                        Err(_) => ("unhealthy","connection_failed"),
+                    },
+                    Err(_) => ("unhealthy","unsafe_destination"),
+                },
+                Err(_) => ("unhealthy","unsafe_url"),
+            }
+        } else { ("unknown","health_url_not_configured") };
+        let latency = started.elapsed().as_secs_f64()*1000.0;
+        let _ = sqlx::query("UPDATE providers SET health_status=$1,checked_at=NOW(),latency_ms=$2,health_detail=$3 WHERE id=$4")
+            .bind(status).bind(latency).bind(detail).bind(&id).execute(&state.db).await;
+        results.push(json!({"provider_id":id,"status":status,"detail":detail,"latency_ms":latency}));
+    }
+    Ok(Json(json!({"results":results})))
+}
+
+
 #[derive(Deserialize)]
 struct ProviderSelect { capability: String, #[serde(default)] exclude: Vec<String> }
 
@@ -244,7 +399,8 @@ async fn main() -> anyhow::Result<()> {
     if admin_token.len() < 32 { anyhow::bail!("USH_API_TOKEN must contain at least 32 characters"); }
     let db = PgPoolOptions::new().max_connections(20).acquire_timeout(Duration::from_secs(10)).connect(&database_url).await?;
     sqlx::migrate!("./rust-migrations").run(&db).await?;
-    let state = AppState { db, admin_token: Arc::new(admin_token) };
+    let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
+    let state = AppState { db, admin_token: Arc::new(admin_token), http };
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -252,6 +408,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/projects/{project_id}/tokens", post(create_project_token))
         .route("/v1/projects/{project_id}/tokens/{token_id}", delete(revoke_project_token))
         .route("/v1/providers", get(list_providers))
+        .route("/v1/providers/{provider_id}", put(upsert_provider).delete(delete_provider))
+        .route("/v1/providers/health-check", post(health_check))
         .route("/v1/providers/select", post(select_provider))
         .route("/v1/audit", get(list_audit))
         .with_state(state)
