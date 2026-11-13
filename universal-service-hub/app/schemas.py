@@ -128,7 +128,7 @@ ALLOWED_SCOPES = {
 class ApiKeyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     role: Literal["operator", "agent", "project"]
-    project_id: str | None = Field(default=None, max_length=80)
+    project_id: str | None = Field(default=None, max_length=80, pattern=r"^[a-zA-Z0-9._-]+$")
     scopes: list[str] = Field(min_length=1, max_length=10)
     expires_in_days: int = Field(default=90, ge=1, le=365)
 
@@ -138,6 +138,8 @@ class ApiKeyCreateRequest(BaseModel):
             raise ValueError("Operator keys cannot be project-scoped")
         if self.role in {"agent", "project"} and self.project_id is None:
             raise ValueError("Project and agent keys require project_id")
+        if len(self.scopes) != len(set(self.scopes)):
+            raise ValueError("API key scopes must be unique")
         if not set(self.scopes).issubset(ALLOWED_SCOPES):
             raise ValueError("API key contains an unsupported scope")
         if self.role != "operator" and "providers:write" in self.scopes:
