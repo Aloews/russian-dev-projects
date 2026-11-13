@@ -364,6 +364,8 @@ struct S3CompatibleCredentials {
     region: String,
     access_key_id: String,
     secret_access_key: String,
+    #[serde(default)]
+    bucket: Option<String>,
 }
 
 fn parse_s3_compatible_credentials(raw: &str) -> ApiResult<S3CompatibleCredentials> {
@@ -374,10 +376,22 @@ fn parse_s3_compatible_credentials(raw: &str) -> ApiResult<S3CompatibleCredentia
         || credentials.region.len() > 64
         || credentials.access_key_id.is_empty()
         || credentials.secret_access_key.is_empty()
+        || credentials.bucket.as_deref().is_some_and(|bucket| !valid_s3_bucket_name(bucket))
     {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_s3_credential_config"));
     }
     Ok(credentials)
+}
+
+fn valid_s3_bucket_name(bucket: &str) -> bool {
+    let bytes = bucket.as_bytes();
+    bytes.len() >= 3
+        && bytes.len() <= 63
+        && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes.iter().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-' || *byte == b'.')
+        && !bucket.contains("..")
+        && bucket.parse::<IpAddr>().is_err()
 }
 
 #[derive(Deserialize)]
@@ -579,11 +593,22 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
             .force_path_style(true)
             .build();
         let s3_client = aws_sdk_s3::Client::from_conf(sdk_config);
-        let output = tokio::time::timeout(Duration::from_secs(15), s3_client.list_buckets().send())
+        let bucket_count = if let Some(bucket) = credentials.bucket.as_deref() {
+            tokio::time::timeout(
+                Duration::from_secs(15),
+                s3_client.head_bucket().bucket(bucket).send(),
+            )
             .await
-            .map_err(|_| ApiError(StatusCode::GATEWAY_TIMEOUT, "s3_list_buckets_timeout"))?
+            .map_err(|_| ApiError(StatusCode::GATEWAY_TIMEOUT, "s3_head_bucket_timeout"))?
             .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "s3_authentication_or_request_failed"))?;
-        let bucket_count = output.buckets().len();
+            1
+        } else {
+            let output = tokio::time::timeout(Duration::from_secs(15), s3_client.list_buckets().send())
+                .await
+                .map_err(|_| ApiError(StatusCode::GATEWAY_TIMEOUT, "s3_list_buckets_timeout"))?
+                .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "s3_authentication_or_request_failed"))?;
+            output.buckets().len()
+        };
         let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
         audit(
             &state,
@@ -1178,6 +1203,10 @@ mod tests {
         let valid = r#"{"endpoint_url":"https://s3.us-east-1.amazonaws.com","region":"us-east-1","access_key_id":"access","secret_access_key":"secret"}"#;
         let credentials = parse_s3_compatible_credentials(valid).unwrap();
         assert_eq!(credentials.region, "us-east-1");
+        assert_eq!(credentials.bucket.as_deref(), Some("project-assets"));
+        assert!(!valid_s3_bucket_name("bad..bucket"));
+        assert!(!valid_s3_bucket_name("127.0.0.1"));
+        assert!(valid_s3_bucket_name("project-assets"));
         assert!(parse_s3_compatible_credentials(r#"{"endpoint_url":"https://s3.example.com"}"#).is_err());
     }
 
