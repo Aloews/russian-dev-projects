@@ -47,3 +47,15 @@ A deployment is blocked until all are true:
 ## Deployment policy
 
 No production deployment is enabled by this increment. First deploy to an isolated development environment. Promote only after an independent review and verified staging checks. Do not modify existing project deployments or production databases as part of Hub bootstrap.
+
+## AI provider activation
+
+Before enabling an AI provider:
+1. Verify the provider's current official API protocol, base URL, auth header, model ID, request limits and retry semantics.
+2. Add the key to the deployment platform's secret manager/environment settings and set `api_key_env` to the variable name only.
+3. Use a low-cost/low-token model for the first live smoke test. No live inference is exercised by CI.
+4. Confirm the response shape, usage fields, latency and provider-side billing.
+5. Keep `supports_idempotency=false` unless the provider explicitly documents idempotency for the exact endpoint and the behavior has been tested.
+6. Do not expose the Hub publicly until egress allowlisting, user/project authorization, rate limits, budget controls and audit logging are implemented.
+
+Starimg protocol compatibility and any selected model ID must be confirmed from the user's current provider account/docs before activation. A generic Anthropic adapter test is not evidence that Starimg accepts the Anthropic Messages API.
