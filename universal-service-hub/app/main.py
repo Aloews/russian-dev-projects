@@ -16,7 +16,12 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters import ProviderAdapterError, create_ai_adapter
-from app.auth import Principal, require_admin, require_project_operator
+from app.auth import (
+    Principal,
+    require_admin,
+    require_project_access,
+    require_project_operator,
+)
 from app.config import get_settings
 from app.database import create_database, get_session
 from app.models import AuditEvent, Base, ProjectRecord, ProjectTokenRecord, ProviderRecord
@@ -548,7 +553,7 @@ async def health_check(
 async def select_provider(
     payload: ProviderSelectionRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
-    principal: Annotated[Principal, Depends(require_project_operator)],
+    principal: Annotated[Principal, Depends(require_project_access)],
 ):
     result = await session.scalars(
         select(ProviderRecord).where(ProviderRecord.enabled.is_(True))
