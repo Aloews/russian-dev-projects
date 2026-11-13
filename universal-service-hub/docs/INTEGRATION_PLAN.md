@@ -47,6 +47,11 @@ Verified API contracts implemented:
 - Render: `GET https://api.render.com/v1/owners?limit=1`.
 - DigitalOcean: `GET https://api.digitalocean.com/v2/account`.
 
+Additional verified API contracts implemented:
+- Fly.io: GraphQL `query { viewer { email } }` at `https://api.fly.io/graphql`.
+- Supabase: `GET https://api.supabase.com/v1/projects?limit=1` using a Management API personal access token or scoped OAuth access token with project-read permission.
+- Neon: `GET https://console.neon.tech/api/v2/projects?limit=1` using a personal or organization-scoped bearer API key.
+
 These adapters are implemented but are not connected until their API tokens are stored in Infisical and each live verification succeeds. GitHub OAuth at a hosting vendor is not a substitute for its API token.
 
 ## Architecture decisions
