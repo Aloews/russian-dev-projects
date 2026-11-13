@@ -31,7 +31,7 @@ Protected:
 - `GET /v1/providers` — list providers
 - `PUT /v1/providers/{provider_id}` — create or replace provider configuration
 - `DELETE /v1/providers/{provider_id}` — remove a provider
-- `POST /v1/providers/health-check` — probe one provider or all providers
+- `POST /v1/providers/health-check` — probe one provider or up to 50 providers by default (maximum 100 per call; 10 probes run concurrently)
 - `POST /v1/providers/select` — choose the highest-priority eligible provider for a capability
 
 Provider fields: `name`, `capabilities`, `priority`, `enabled`, optional `health_url`, optional `timeout_seconds`. Health state and timestamps are stored in the database. Environment configuration in `USH_PROVIDERS_JSON` seeds only missing provider IDs; it does not overwrite changes already made through the API.
