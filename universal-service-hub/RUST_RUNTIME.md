@@ -21,13 +21,14 @@ The production control-plane runtime is Rust (Axum + Tokio + SQLx + PostgreSQL).
 
 - `GET /healthz`, `GET /readyz`
 - `GET/POST /v1/projects` (root administrator)
-- `POST /v1/projects/{project_id}/tokens` (root administrator; raw token returned once)
-- `DELETE /v1/projects/{project_id}/tokens/{token_id}` (root administrator)
+- `POST /v1/projects/{project_id}/tokens` (root administrator or same-project owner; owner can issue operator/viewer only; raw token returned once)
+- `GET /v1/projects/{project_id}/tokens` (root administrator or same-project owner)
+- `DELETE /v1/projects/{project_id}/tokens/{token_id}` (root administrator or same-project owner)
 - `GET /v1/providers` (root administrator)
-- `POST /v1/providers/select` (root administrator or scoped project owner/operator)
+- `POST /v1/providers/select` (root administrator or any scoped project role; viewer is read-only)
 - `GET /v1/audit` (root administrator)
 
-Project tokens are random, stored as SHA-256 hashes, revocable, and restricted by role and project capability/provider allowlists.
+Project tokens are random, stored as SHA-256 hashes, revocable, and restricted by role and project capability/provider allowlists. Owner/operator can invoke AI; all roles can use read-only provider selection. Project owners can delegate operator/viewer tokens only within their own project; only root admin can issue owner tokens or change project policy.
 
 ## Migration status
 
