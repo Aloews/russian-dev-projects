@@ -4,6 +4,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from time import perf_counter
+from typing import Annotated
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Path, Request
@@ -125,7 +126,7 @@ async def healthz():
 
 
 @app.get("/readyz")
-async def readyz(session: AsyncSession = Depends(get_session)):
+async def readyz(session: Annotated[AsyncSession, Depends(get_session)]):
     try:
         count = await session.scalar(select(func.count()).select_from(ProviderRecord))
     except Exception as exc:
@@ -152,8 +153,8 @@ async def list_providers(session: AsyncSession = Depends(get_session)):
 )
 async def upsert_provider(
     payload: ProviderUpsertRequest,
-    session: AsyncSession = Depends(get_session),
-    provider_id: str = Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    provider_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
 ):
     record = await session.get(ProviderRecord, provider_id)
     if record is None:
@@ -180,8 +181,8 @@ async def upsert_provider(
     dependencies=[Depends(require_api_token)],
 )
 async def delete_provider(
-    provider_id: str = Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern),
-    session: AsyncSession = Depends(get_session),
+    provider_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     record = await session.get(ProviderRecord, provider_id)
     if record is None:
@@ -197,7 +198,7 @@ async def delete_provider(
 )
 async def health_check(
     payload: ProviderHealthProbeRequest,
-    session: AsyncSession = Depends(get_session),
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     if payload.provider_id:
         record = await session.get(ProviderRecord, payload.provider_id)
