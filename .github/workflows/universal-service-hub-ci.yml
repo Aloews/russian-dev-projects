@@ -33,6 +33,15 @@ jobs:
         working-directory: universal-service-hub
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Rust format
+        run: cargo fmt --all
+      - name: Rust lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -55,9 +64,9 @@ jobs:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
         run: |
           set -eu
-          docker run -d --rm --name ush-smoke -p 127.0.0.1:8000:8000 \
+          docker run -d --rm --name ush-smoke --network host \
             -e USH_API_TOKEN="$USH_API_TOKEN" \
-            -e USH_DATABASE_URL="sqlite+aiosqlite:////tmp/ush-smoke.db" \
+            -e USH_DATABASE_URL="postgres://ush:ush-test-password@127.0.0.1:5432/ush_test" \
             universal-service-hub:test
           trap 'docker stop ush-smoke >/dev/null 2>&1 || true' EXIT
           ready=0
