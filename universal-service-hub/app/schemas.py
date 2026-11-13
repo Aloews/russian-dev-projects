@@ -148,3 +148,9 @@ class ProjectTokenView(BaseModel):
     created_at: datetime
     last_used_at: datetime | None = None
     revoked_at: datetime | None = None
+
+
+class ProjectUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    allowed_capabilities: list[str] = Field(min_length=1, max_length=100)
+    allowed_provider_ids: list[str] = Field(default_factory=list, max_length=100)
