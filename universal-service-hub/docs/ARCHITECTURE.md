@@ -14,6 +14,10 @@ The Hub is a control plane, not a proxy for arbitrary provider traffic. It owns 
 - One service Bearer token protects all `/v1/*` endpoints. Full identity, project tenancy and RBAC are not yet implemented.
 - Selection is based on enabled state, capability, health and priority; ties are deterministic by provider ID.
 
+## Infrastructure account verification
+
+The Rust runtime supports read-only identity/connection checks for Northflank, Railway, Cloudflare, Netlify, Render and DigitalOcean. These use fixed official HTTPS API endpoints rather than caller-supplied URLs, resolve API tokens through Infisical, apply bounded request timeouts, reject redirects, normalize the response and audit only provider ID/type, latency and non-secret counts. This is a connection-verification layer, not yet a resource provisioning/deployment adapter.
+
 ## Target architecture
 
 ```text
