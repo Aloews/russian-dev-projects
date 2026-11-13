@@ -255,7 +255,7 @@ async fn main() -> anyhow::Result<()> {
     let admin_token = env::var("USH_API_TOKEN")?;
     if admin_token.len() < 32 { anyhow::bail!("USH_API_TOKEN must contain at least 32 characters"); }
     let db = PgPoolOptions::new().max_connections(20).acquire_timeout(Duration::from_secs(10)).connect(&database_url).await?;
-    sqlx::migrate!("./migrations").run(&db).await?;
+    sqlx::migrate!("./rust-migrations").run(&db).await?;
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
     let state = AppState { db, admin_token: Arc::new(admin_token), http };
     let app = Router::new()
