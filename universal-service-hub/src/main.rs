@@ -616,9 +616,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/audit", get(list_audit))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
-    let address: SocketAddr = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into()).parse()?;
+    let address: IpAddr = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into()).parse()?;
     let port: u16 = env::var("PORT").unwrap_or_else(|_| "8000".into()).parse()?;
-    let listener = tokio::net::TcpListener::bind((address,port)).await?;
+    let listener = tokio::net::TcpListener::bind(SocketAddr::new(address, port)).await?;
     info!(port, "Universal Service Hub Rust runtime started");
     axum::serve(listener, app).with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; }).await?;
     Ok(())
