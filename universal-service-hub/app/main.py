@@ -413,7 +413,7 @@ async def upsert_provider(
 @app.delete(
     "/v1/providers/{provider_id}",
     status_code=204,
-    dependencies=[Depends(require_api_token)],
+    dependencies=[Depends(require_admin)],
 )
 async def delete_provider(
     provider_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
@@ -436,7 +436,7 @@ async def delete_provider(
 @app.post(
     "/v1/providers/health-check",
     response_model=list[HealthCheckResult],
-    dependencies=[Depends(require_api_token)],
+    dependencies=[Depends(require_admin)],
 )
 async def health_check(
     payload: ProviderHealthProbeRequest,
