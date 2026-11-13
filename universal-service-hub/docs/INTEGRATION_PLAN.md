@@ -31,6 +31,24 @@ This is a capability catalog, not a claim that integrations are already connecte
 | Website crawling/extraction | Firecrawl | Browserless or a self-hosted browser worker |
 | Long-running coding agents | Claude API/Managed Agents where enabled | OpenAI Responses API tools + isolated code workers |
 
+## Rust account-verification adapters (implemented; live credentials pending)
+
+The Rust control plane exposes an authenticated, read-only verification endpoint:
+
+`POST /v1/integrations/{provider_id}/verify`
+
+The provider record uses `adapter_type` set to the vendor name and `api_key_env` set to a secret reference name. The secret is resolved from Infisical's shared provider path for root-level infrastructure accounts. The endpoint performs one bounded HTTPS read request, validates the upstream response, returns only normalized account metadata, and writes a redacted audit event. It does not create, modify, deploy or delete vendor resources.
+
+Verified API contracts implemented:
+- Northflank: `GET https://api.northflank.com/v1/teams?per_page=1` (requires an organization-scoped token with organization team read permission; team-scoped tokens cannot enumerate organization teams).
+- Railway: GraphQL `query { me { id name email } }` at `https://backboard.railway.com/graphql/v2`.
+- Cloudflare: `GET /client/v4/user/tokens/verify`; the response must report `success=true` and token status `active`.
+- Netlify: `GET https://api.netlify.com/api/v1/user`.
+- Render: `GET https://api.render.com/v1/owners?limit=1`.
+- DigitalOcean: `GET https://api.digitalocean.com/v2/account`.
+
+These adapters are implemented but are not connected until their API tokens are stored in Infisical and each live verification succeeds. GitHub OAuth at a hosting vendor is not a substitute for its API token.
+
 ## Architecture decisions
 
 1. **Do not hardwire projects to one vendor.** Every connector implements a Rust trait with capability metadata, timeouts, typed errors, health state, quotas and contract tests.
