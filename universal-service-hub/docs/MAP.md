@@ -74,7 +74,7 @@ GitHub OAuth sign-in to a hosting vendor is not equivalent to granting the Hub t
 
 ## Production readiness gates
 
-1. Security: SSO/per-user identity, fine-grained scoped RBAC, audit retention/access, rate limits, egress firewall, managed secret storage, dependency/image scanning.
+1. Security: token expiry and fine-grained scopes, SSO/per-user identity, audit retention/access, rate limits, egress firewall, managed secret storage, dependency/image scanning.
 2. Persistence: managed PostgreSQL, backups, restore rehearsal, migration/rollback runbook.
 3. Provider reliability: live protocol verification for each vendor, provider-specific limits, health probes, circuit breakers, quota and spend controls.
 4. Routing: compute/storage/database/queue/observability adapters, deterministic policies, safe fallback semantics.
