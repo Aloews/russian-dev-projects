@@ -48,6 +48,9 @@ Implemented account checks:
 - Cloudflare R2: list buckets endpoint; requires Workers R2 Storage Read permission. Store a JSON secret referenced by `CLOUDFLARE_R2_CREDENTIALS_JSON` with `account_id` and `api_token`.
 - Backblaze B2: Native API account authorization endpoint. Store a JSON secret referenced by `BACKBLAZE_B2_CREDENTIALS_JSON` with `key_id` and `application_key`; prefer a restricted application key.
 
+Supabase Storage:
+- Adapter type `supabase_storage`. Store a JSON secret referenced by `SUPABASE_STORAGE_CREDENTIALS_JSON` with `project_url` and `service_role_key`. The verifier calls the read-only bucket-list endpoint and returns only bucket count/name. The service-role key is highly privileged; use a dedicated Supabase project and keep it in Infisical only.
+
 PostgreSQL data-plane connectivity:
 - Self-managed PostgreSQL: adapter type `postgresql`, with a secret reference such as `POSTGRESQL_DATABASE_URL`. The verifier requires a PostgreSQL URL, rejects private/local destinations, forces TLS, opens a single-connection pool, executes `SELECT 1`, then closes the pool. It does not run migrations or modify data.
 
