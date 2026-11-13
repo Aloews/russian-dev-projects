@@ -47,3 +47,4 @@ class ProviderSelectionResponse(BaseModel):
 
 class ProviderHealthProbeRequest(BaseModel):
     provider_id: str | None = None
+    limit: int = Field(default=50, ge=1, le=100)
