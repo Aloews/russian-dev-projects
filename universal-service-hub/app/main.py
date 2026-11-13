@@ -468,11 +468,11 @@ async def health_check(
 @app.post(
     "/v1/providers/select",
     response_model=ProviderSelectionResponse,
-    dependencies=[Depends(require_api_token)],
 )
 async def select_provider(
     payload: ProviderSelectionRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
+    principal: Annotated[Principal, Depends(require_project_operator)],
 ):
     result = await session.scalars(
         select(ProviderRecord).where(ProviderRecord.enabled.is_(True))
@@ -504,23 +504,25 @@ async def select_provider(
 @app.post(
     "/v1/ai/chat",
     response_model=AIChatResponse,
-    dependencies=[Depends(require_api_token)],
 )
 async def ai_chat(
     payload: AIChatRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
+    principal: Annotated[Principal, Depends(require_project_operator)],
 ):
     result = await session.scalars(
         select(ProviderRecord)
         .where(ProviderRecord.enabled.is_(True))
         .order_by(ProviderRecord.priority.desc(), ProviderRecord.id.asc())
     )
+    scoped = await scope_project_providers(
+        session, principal, payload.capability, result.all()
+    )
     excluded = set(payload.exclude)
     candidates = [
         record
-        for record in result.all()
-        if payload.capability in record.capabilities
-        and record.id not in excluded
+        for record in scoped
+        if record.id not in excluded
         and record.health_status != "unhealthy"
         and record.adapter_type != "none"
         and record.model
