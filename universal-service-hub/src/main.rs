@@ -141,6 +141,51 @@ async fn list_projects(State(state): State<AppState>, headers: HeaderMap) -> Api
 }
 
 #[derive(Deserialize)]
+struct ProjectUpdate {
+    name: String,
+    allowed_capabilities: Vec<String>,
+    #[serde(default)]
+    allowed_provider_ids: Vec<String>,
+}
+
+async fn update_project(State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>, Json(body): Json<ProjectUpdate>) -> ApiResult<Json<Value>> {
+    let principal = require_admin(&state, &headers).await?;
+    if body.name.trim().is_empty() || body.name.len() > 160 || body.allowed_capabilities.is_empty() || body.allowed_capabilities.len() > 100 || body.allowed_provider_ids.len() > 100 {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_project"));
+    }
+    let result = sqlx::query("UPDATE projects SET name=$1,allowed_capabilities=$2,allowed_provider_ids=$3,updated_at=NOW() WHERE id=$4")
+        .bind(&body.name).bind(json!(body.allowed_capabilities)).bind(json!(body.allowed_provider_ids)).bind(&project_id)
+        .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_update_failed"))?;
+    if result.rows_affected()==0 { return Err(ApiError(StatusCode::NOT_FOUND, "project_not_found")); }
+    audit(&state, &principal.actor, "project.update", "project", &project_id, json!({})).await;
+    Ok(Json(json!({"id":project_id,"name":body.name})))
+}
+
+async fn delete_project(State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>) -> ApiResult<StatusCode> {
+    let principal = require_admin(&state, &headers).await?;
+    let result = sqlx::query("DELETE FROM projects WHERE id=$1").bind(&project_id).execute(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_delete_failed"))?;
+    if result.rows_affected()==0 { return Err(ApiError(StatusCode::NOT_FOUND, "project_not_found")); }
+    audit(&state, &principal.actor, "project.delete", "project", &project_id, json!({})).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_project_tokens(State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>) -> ApiResult<Json<Value>> {
+    require_admin(&state, &headers).await?;
+    let rows = sqlx::query("SELECT id,project_id,name,role,created_at,last_used_at,revoked_at FROM project_tokens WHERE project_id=$1 ORDER BY created_at DESC")
+        .bind(&project_id).fetch_all(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_list_failed"))?;
+    let values: Vec<Value> = rows.into_iter().map(|r| json!({
+        "id":r.get::<String,_>("id"),"project_id":r.get::<String,_>("project_id"),
+        "name":r.get::<String,_>("name"),"role":r.get::<String,_>("role"),
+        "created_at":r.get::<DateTime<Utc>,_>("created_at"),
+        "last_used_at":r.get::<Option<DateTime<Utc>>,_>("last_used_at"),
+        "revoked_at":r.get::<Option<DateTime<Utc>>,_>("revoked_at")
+    })).collect();
+    Ok(Json(json!(values)))
+}
+
+
+#[derive(Deserialize)]
 struct TokenCreate { name: String, #[serde(default = "default_role")] role: String }
 fn default_role() -> String { "operator".into() }
 
@@ -560,7 +605,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/v1/projects", get(list_projects).post(create_project))
-        .route("/v1/projects/{project_id}/tokens", post(create_project_token))
+        .route("/v1/projects/{project_id}", put(update_project).delete(delete_project))
+        .route("/v1/projects/{project_id}/tokens", get(list_project_tokens).post(create_project_token))
         .route("/v1/projects/{project_id}/tokens/{token_id}", delete(revoke_project_token))
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers/{provider_id}", put(upsert_provider).delete(delete_provider))
