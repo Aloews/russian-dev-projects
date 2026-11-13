@@ -229,7 +229,7 @@ struct ProjectCreate {
 
 async fn create_project(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<ProjectCreate>) -> ApiResult<Json<Value>> {
     let principal = require_admin(&state, &headers).await?;
-    if body.id.is_empty() || body.id.len() > 80 || !body.id.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) || body.name.trim().is_empty() || body.allowed_capabilities.is_empty() {
+    if body.id.is_empty() || body.id.len() > 80 || !body.id.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) || body.name.trim().is_empty() || body.name.len() > 160 || body.allowed_capabilities.is_empty() || body.allowed_capabilities.len() > 100 || body.allowed_provider_ids.len() > 100 {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_project"));
     }
     let result = sqlx::query(
@@ -426,7 +426,7 @@ async fn ensure_public_destination(url: &url::Url) -> ApiResult<()> {
 async fn upsert_provider(State(state): State<AppState>, headers: HeaderMap, Path(provider_id): Path<String>, Json(body): Json<ProviderUpsert>) -> ApiResult<StatusCode> {
     let principal = require_admin(&state, &headers).await?;
     if provider_id.is_empty() || provider_id.len() > 80 || !provider_id.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
-        || body.name.trim().is_empty() || body.name.len() > 160 || body.timeout_seconds <= 0.0 || body.timeout_seconds > 120.0 {
+        || body.name.trim().is_empty() || body.name.len() > 160 || body.capabilities.len() > 100 || body.timeout_seconds <= 0.0 || body.timeout_seconds > 120.0 {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_provider"));
     }
     if !["none","openai_compatible","anthropic","gemini"].contains(&body.adapter_type.as_str()) {
