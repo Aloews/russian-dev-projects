@@ -10,7 +10,8 @@ This directory contains the Universal Service Hub. Work autonomously within the 
 4. Run formatting, static checks, unit tests, integration tests and container build.
 5. Fix failures and rerun all affected checks on the exact final commit SHA.
 6. Record provider/API evidence, versions, limitations and reproducible commands.
-7. Open a PR with test evidence. Do not merge or deploy production merely because CI is green.
+7. Open or update a PR with test evidence. Do not merge or deploy production merely because CI is green.
+8. Keep intermediate reports, test output, agent findings and proposed fixes inside the engineering workflow (PR checks, review notes, artifacts or project docs). The coordinator must inspect, reconcile and act on them. Do not send routine intermediate reports or decision requests to the user. Contact the user only for a genuinely unavoidable permission, credential, budget or product decision; continue independent work meanwhile.
 
 ## Provider integration rules
 
