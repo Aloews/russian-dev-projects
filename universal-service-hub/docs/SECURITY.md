@@ -4,14 +4,17 @@
 - The token is compared with a constant-time comparison and is never returned by API responses.
 - Startup fails in `USH_ENVIRONMENT=production` when the API token is missing.
 - `/healthz` and `/readyz` remain public for platform health checks; they expose no provider credentials.
-- This increment provides a single service token, not user identity, project tenancy or role-based access control. Do not treat it as a complete multi-tenant authorization system.
+- The root service token is an administrator credential. Project runtime tokens are stored as SHA-256 hashes, scoped to one project, role-checked, revocable and returned only once at issuance.
+- `owner` and `operator` project roles can invoke provider selection and AI chat; `viewer` cannot. Project capabilities and optional provider allowlists are enforced on those routes.
+- Provider administration, audit reads and project/token administration require the root administrator token.
+- Project tokens do not yet provide per-user identity, SSO, fine-grained per-operation grants, or tenant-scoped audit views.
 - Never commit provider API keys, OAuth refresh tokens, database passwords, private keys or production connection strings.
 - Keep provider secret values in the deployment platform's secret manager. The Hub should store secret references and metadata only.
 - Do not return credentials or raw provider error bodies from API endpoints.
 - Require TLS for all external endpoints and restrict network access to trusted operators and project services.
 - Apply least privilege and separate development, staging and production credentials.
 - Provider create/update/delete and AI inference outcomes are written to a durable audit table. AI audit records contain provider/model, outcome, latency, attempt count and numeric token usage only; prompts, responses and credentials are excluded.
-- The audit actor is currently the single service-token identity. Project identity, tenant-scoped audit access and cryptographically protected append-only storage remain future work.
+- Audit events distinguish the root service token from project token identities. Tenant-scoped audit views and cryptographically protected append-only storage remain future work.
 - Outbound endpoints must use HTTPS. Local, private and link-local IP destinations are rejected, and DNS answers are checked before requests. This DNS check is defense in depth, not a substitute for a production egress firewall; enforce outbound network policy at the hosting platform to prevent DNS rebinding and metadata access.
 - Validate webhook signatures and prevent replay when webhook adapters are introduced.
 - Use bounded timeouts, retries with jitter, rate limits and circuit breakers.
