@@ -406,6 +406,14 @@ fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
     Ok(parsed)
 }
 
+fn validate_fixed_integration_url(raw: &str) -> Result<url::Url, ApiError> {
+    let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_internal_integration_url"))?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some() || parsed.fragment().is_some() {
+        return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_internal_integration_url"));
+    }
+    Ok(parsed)
+}
+
 fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -509,7 +517,7 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
             .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_r2_account_id"))?;
         let api_token = config["api_token"].as_str().filter(|v| !v.is_empty())
             .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_r2_api_token"))?;
-        (format!("{url}/accounts/{account_id}/r2/buckets?per_page=1"), Some(api_token.to_owned()), None)
+        (format!("{url}/accounts/{account_id}/r2/buckets"), Some(api_token.to_owned()), None)
     } else if adapter == "backblaze_b2" {
         let config: Value = serde_json::from_str(&token).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_b2_credential_config"))?;
         let key_id = config["key_id"].as_str().filter(|v| !v.is_empty())
@@ -520,7 +528,7 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     } else {
         (url.to_owned(), Some(token.clone()), None)
     };
-    let parsed = validate_https_url(&request_url)?;
+    let parsed = validate_fixed_integration_url(&request_url)?;
     ensure_public_destination(&parsed).await?;
     let mut request = state.http.request(method, parsed).timeout(Duration::from_secs(10));
     if let Some(auth_token) = auth_token { request = request.bearer_auth(auth_token); }
