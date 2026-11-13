@@ -465,10 +465,13 @@ fn parse_postgres_url(raw: &str) -> Result<url::Url, ApiError> {
     Ok(parsed)
 }
 
-fn parse_redis_url(raw: &str) -> Result<url::Url, ApiError> {
+fn parse_redis_url(raw: &str, private_host_allowlist: &str) -> Result<url::Url, ApiError> {
     let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"))?;
-    if parsed.scheme() != "rediss" || parsed.host_str().is_none() {
-        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "redis_tls_required"));
+    let host = parsed.host_str().ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"))?;
+    let secure = parsed.scheme() == "rediss";
+    let allowlisted_private = parsed.scheme() == "redis" && is_allowed_private_host(host, private_host_allowlist);
+    if !secure && !allowlisted_private {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "redis_tls_required_unless_private_host_allowlisted"));
     }
     Ok(parsed)
 }
@@ -523,7 +526,8 @@ async fn ensure_public_destination(url: &url::Url) -> ApiResult<()> {
     let all_public = addresses.iter().all(|addr| is_public_ip(addr.ip()));
     let all_private = addresses.iter().all(|addr| is_private_network_ip(addr.ip()));
     let allowlist = env::var("USH_ALLOWED_PRIVATE_HOSTS").unwrap_or_default();
-    if !all_public && !(all_private && is_allowed_private_host(host, &allowlist)) {
+    let private_allowed = all_private && is_allowed_private_host(host, &allowlist);
+    if (url.scheme() == "redis" && !private_allowed) || (!all_public && !private_allowed) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsafe_provider_dns_result"));
     }
     Ok(())
@@ -680,7 +684,8 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     }
 
     if adapter == "redis" {
-        let redis_url = parse_redis_url(&token)?;
+        let private_host_allowlist = env::var("USH_ALLOWED_PRIVATE_HOSTS").unwrap_or_default();
+        let redis_url = parse_redis_url(&token, &private_host_allowlist)?;
         ensure_public_destination(&redis_url).await?;
         let client = redis::Client::open(token.as_str())
             .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_redis_url"))?;
@@ -1318,8 +1323,9 @@ mod outbound_tests {
     fn database_and_redis_connection_urls_require_supported_schemes() {
         assert!(parse_postgres_url("postgresql://user:pass@db.example.test:5432/app").is_ok());
         assert!(parse_postgres_url("https://db.example.test").is_err());
-        assert!(parse_redis_url("rediss://default:secret@cache.example.test:6379").is_ok());
-        assert!(parse_redis_url("redis://default:secret@cache.example.test:6379").is_err());
+        assert!(parse_redis_url("rediss://default:secret@cache.example.test:6379", "").is_ok());
+        assert!(parse_redis_url("redis://default:secret@cache.example.test:6379", "").is_err());
+        assert!(parse_redis_url("redis://default:secret@redis.railway.internal:6379", "redis.railway.internal").is_ok());
     }
 
     #[test]
