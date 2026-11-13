@@ -176,3 +176,10 @@ def test_invalid_provider_id_is_rejected(monkeypatch, tmp_path):
     with client_with_providers(monkeypatch, "[]", tmp_path / "invalid-id.db") as client:
         response = client.put("/v1/providers/not valid", json=provider_payload())
         assert response.status_code == 422
+
+
+def test_normalizes_standard_postgres_urls():
+    from app.config import Settings
+
+    settings = Settings(database_url="postgresql://user:pass@db.example/hub")
+    assert settings.database_url == "postgresql+asyncpg://user:pass@db.example/hub"
