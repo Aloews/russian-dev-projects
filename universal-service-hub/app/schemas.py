@@ -178,4 +178,5 @@ class AuditLogView(BaseModel):
     resource_id: str | None
     outcome: str
     correlation_id: str
+    event_metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
