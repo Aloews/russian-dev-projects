@@ -388,7 +388,7 @@ fn is_ai_adapter(adapter: &str) -> bool {
 }
 
 fn is_control_api_adapter(adapter: &str) -> bool {
-    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql", "redis"].contains(&adapter)
+    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql", "redis", "supabase_storage"].contains(&adapter)
 }
 
 fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
@@ -513,6 +513,31 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     let token = resolve_provider_secret(&state, &key_name, None).await?
         .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "integration_credential_unavailable"))?;
     let started = Instant::now();
+
+    if adapter == "supabase_storage" {
+        let config: Value = serde_json::from_str(&token).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_supabase_storage_config"))?;
+        let project_url = config["project_url"].as_str().filter(|v| !v.is_empty())
+            .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "supabase_storage_project_url_required"))?;
+        let service_role_key = config["service_role_key"].as_str().filter(|v| !v.is_empty())
+            .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "supabase_storage_key_required"))?;
+        let base = validate_https_url(project_url)?;
+        ensure_public_destination(&base).await?;
+        let endpoint = format!("{}/storage/v1/bucket", project_url.trim_end_matches('/'));
+        let response = state.http.get(endpoint).header("apikey", service_role_key).bearer_auth(service_role_key)
+            .timeout(Duration::from_secs(8)).send().await
+            .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "supabase_storage_request_failed"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let code = if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN { StatusCode::UNAUTHORIZED } else if status == StatusCode::TOO_MANY_REQUESTS { StatusCode::TOO_MANY_REQUESTS } else { StatusCode::BAD_GATEWAY };
+            audit(&state, &principal.actor, "integration.verify.failure", "provider", &provider_id, json!({"adapter":"supabase_storage","upstream_status":status.as_u16()})).await;
+            return Err(ApiError(code, if code == StatusCode::UNAUTHORIZED { "integration_authentication_failed" } else if code == StatusCode::TOO_MANY_REQUESTS { "integration_rate_limited" } else { "integration_upstream_failed" }));
+        }
+        let buckets: Value = response.json().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
+        let buckets = buckets.as_array().ok_or(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
+        let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+        audit(&state, &principal.actor, "integration.verify.success", "provider", &provider_id, json!({"adapter":"supabase_storage","latency_ms":latency_ms,"resource_count":buckets.len()})).await;
+        return Ok(Json(json!({"provider_id":provider_id,"adapter":"supabase_storage","connected":true,"verified":true,"resource_count":buckets.len(),"account_label":buckets.first().and_then(|v| v["name"].as_str()),"latency_ms":latency_ms})));
+    }
 
     if adapter == "redis" {
         let redis_url = parse_redis_url(&token)?;
@@ -1076,7 +1101,7 @@ mod tests {
 
     #[test]
     fn integration_adapter_catalog_is_explicit_and_bounded() {
-        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql", "redis"] {
+        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql", "redis", "supabase_storage"] {
             assert!(is_control_api_adapter(adapter));
             assert!(!is_ai_adapter(adapter));
         }
