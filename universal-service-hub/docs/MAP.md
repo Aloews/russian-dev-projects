@@ -52,8 +52,9 @@ Base repository: `Aloews/russian-dev-projects`
 Branch: `feat/ush-provider-api-adapters-final`, layered on the latest observed Rust tenancy head.
 - Read-only account checks: Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon.
 - Storage management checks: Cloudflare R2 bucket inventory and Backblaze B2 account authorization.
+- S3 data-plane verification: AWS S3, Cloudflare R2, Supabase Storage S3 protocol and Backblaze B2 through AWS SigV4 `ListBuckets`.
 - Authenticated `POST /v1/integrations/{provider_id}/verify` resolves credentials through Infisical and uses fixed HTTPS endpoints, bounded timeouts, no redirects, normalized responses and redacted audit events.
-- These checks do not provision hosting resources or perform object upload/download. Generic S3 object operations remain outstanding. Read-only PostgreSQL and Redis probes enforce TLS and execute SELECT 1 and PING respectively.
+- These checks do not provision hosting resources or perform object upload/download. S3-compatible account verification performs a signed read-only `ListBuckets` call; object CRUD and transfer tests remain outstanding. PostgreSQL and Redis probes enforce TLS and execute SELECT 1 and PING respectively.
 - PR and exact-SHA CI validation are required before merge.
 
 ## Work in progress
