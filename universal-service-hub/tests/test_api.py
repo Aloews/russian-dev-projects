@@ -296,3 +296,35 @@ def test_ai_provider_rejects_insecure_or_secret_bearing_base_url(monkeypatch, tm
         payload["base_url"] = "https://api.example/v1?api_key=leak"
         response = client.put("/v1/providers/unsafe", json=payload)
         assert response.status_code == 422
+
+
+def test_ai_chat_requires_provider_secret(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "missing-key.db") as client:
+        client.put(
+            "/v1/providers/starimg",
+            json=ai_provider_payload(priority=100, api_key_env="MISSING_STARIMG_KEY"),
+        )
+        response = client.post(
+            "/v1/ai/chat",
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert response.status_code == 503
+        provider = client.get("/v1/providers").json()[0]
+        assert provider["credentials_configured"] is False
+        assert "api_key_env" not in provider
+        assert "base_url" not in provider
+
+
+def test_gemini_cannot_be_marked_idempotent(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "gemini.db") as client:
+        payload = {
+            "name": "Gemini",
+            "capabilities": ["ai.chat"],
+            "adapter_type": "gemini",
+            "model": "gemini-test",
+            "base_url": "https://generativelanguage.googleapis.com",
+            "api_key_env": "GEMINI_API_KEY",
+            "supports_idempotency": True,
+        }
+        response = client.put("/v1/providers/gemini", json=payload)
+        assert response.status_code == 422
