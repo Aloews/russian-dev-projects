@@ -197,7 +197,7 @@ async def list_audit_events(
     result = await session.scalars(
         select(AuditEvent).order_by(AuditEvent.occurred_at.desc(), AuditEvent.id.desc()).limit(limit)
     )
-    return result.all()
+    return [AuditEventView.model_validate(event, from_attributes=True) for event in result.all()]
 
 
 @app.put(
