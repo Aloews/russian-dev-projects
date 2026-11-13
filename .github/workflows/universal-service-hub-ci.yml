@@ -87,3 +87,90 @@ jobs:
           status=$(curl -sS -o /dev/null -w "%{http_code}" \
             http://127.0.0.1:8000/v1/providers)
           test "$status" = "401"
+          curl -fsS -X POST http://127.0.0.1:8000/v1/projects \
+            -H "Authorization: Bearer $USH_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"id":"smoke-project","name":"Smoke project","allowed_capabilities":["ai.chat"],"allowed_provider_ids":[]}' >/dev/null
+          curl -fsS -X PUT http://127.0.0.1:8000/v1/providers/smoke-provider \
+            -H "Authorization: Bearer $USH_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"Smoke provider","capabilities":["ai.chat"],"priority":100}' >/dev/null
+
+          owner_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $USH_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"owner","role":"owner"}')
+          owner_token=$(printf '%s' "$owner_response" | jq -r '.token')
+          owner_id=$(printf '%s' "$owner_response" | jq -r '.id')
+          echo "::add-mask::$owner_token"
+
+          operator_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $owner_token" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"runtime","role":"operator"}')
+          operator_token=$(printf '%s' "$operator_response" | jq -r '.token')
+          operator_id=$(printf '%s' "$operator_response" | jq -r '.id')
+          echo "::add-mask::$operator_token"
+
+          viewer_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $owner_token" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"readonly","role":"viewer"}')
+          viewer_token=$(printf '%s' "$viewer_response" | jq -r '.token')
+          echo "::add-mask::$viewer_token"
+
+          curl -fsS -H "Authorization: Bearer $owner_token" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tokens | jq -e 'length == 3' >/dev/null
+
+          owner_escalation=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"name":"second-owner","role":"owner"}')
+          test "$owner_escalation" = "403"
+
+          operator_delegation=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d '{"name":"extra","role":"viewer"}')
+          test "$operator_delegation" = "403"
+
+          selection=$(curl -fsS -X POST http://127.0.0.1:8000/v1/providers/select \
+            -H "Authorization: Bearer $viewer_token" -H "Content-Type: application/json" \
+            -d '{"capability":"ai.chat"}')
+          printf '%s' "$selection" | jq -e '.provider.id == "smoke-provider"' >/dev/null
+
+          viewer_ai=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/ai/chat \
+            -H "Authorization: Bearer $viewer_token" -H "Content-Type: application/json" \
+            -d '{"messages":[{"role":"user","content":"hello"}]}')
+          test "$viewer_ai" = "403"
+
+          operator_ai=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/ai/chat \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d '{"messages":[{"role":"user","content":"hello"}]}')
+          test "$operator_ai" = "503"
+
+          curl -fsS -X DELETE \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/tokens/$operator_id" \
+            -H "Authorization: Bearer $owner_token" >/dev/null
+          revoked=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/ai/chat \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d '{"messages":[{"role":"user","content":"hello"}]}')
+          test "$revoked" = "401"
+
+          curl -fsS -X DELETE http://127.0.0.1:8000/v1/projects/smoke-project \
+            -H "Authorization: Bearer $USH_API_TOKEN" >/dev/null
+          deleted_token=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/providers/select \
+            -H "Authorization: Bearer $viewer_token" -H "Content-Type: application/json" \
+            -d '{"capability":"ai.chat"}')
+          test "$deleted_token" = "401"
+
+          production_secret_guard=$(docker run --rm --network host \
+            -e USH_API_TOKEN="$USH_API_TOKEN" \
+            -e USH_DATABASE_URL="postgres://ush:ush-test-password@127.0.0.1:5432/ush_test" \
+            -e USH_ENVIRONMENT=production \
+            universal-service-hub:test >/dev/null 2>&1; echo $?)
+          test "$production_secret_guard" -ne 0
