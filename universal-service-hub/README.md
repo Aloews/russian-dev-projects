@@ -41,24 +41,24 @@ AI:
 
 The provider record stores the environment-variable name that references the key, never the key value. Put the actual key in the deployment secret/environment settings.
 
-Example for an Anthropic-compatible Starimg endpoint:
+Example for a standard Anthropic Messages API endpoint:
 
 ```json
 {
-  "name": "Starimg",
+  "name": "Anthropic",
   "capabilities": ["ai.chat"],
   "priority": 100,
   "enabled": true,
   "adapter_type": "anthropic",
-  "model": "claude-fable-5-2",
-  "base_url": "https://ai.starimg.ru",
-  "api_key_env": "STARIMG_API_KEY",
+  "model": "provider-model-id",
+  "base_url": "https://api.anthropic.com",
+  "api_key_env": "ANTHROPIC_API_KEY",
   "timeout_seconds": 30,
   "supports_idempotency": false
 }
 ```
 
-Send this object to `PUT /v1/providers/starimg`. Set `STARIMG_API_KEY` in the runtime environment. The API response reveals only whether the referenced credential is configured; it never returns the environment-variable name or secret.
+Send this object to `PUT /v1/providers/anthropic`. Set `ANTHROPIC_API_KEY` in the runtime environment. For Starimg, use this adapter only after its current account documentation confirms the Anthropic Messages endpoint and use the model identifier returned by that provider. The API response reveals only whether the referenced credential is configured; it never returns the environment-variable name or secret.
 
 Supported adapter types:
 - `openai_compatible` — OpenAI-compatible `/chat/completions` endpoints
