@@ -67,3 +67,44 @@ No external API provides literally unlimited execution. Limits include account q
 - Contract tests cover success, malformed response, auth failure, rate limit, timeout and unavailable service.
 - One explicitly authorized live smoke test passes.
 - Pricing, quota and budget ceiling are configured before the connector is enabled for production.
+
+
+## Credential inventory (names only)
+
+Create these secrets in Infisical, not in GitHub or source files. The Rust runtime will consume secret references after the Infisical adapter is implemented.
+
+### Core
+- `GITHUB_APP_ID`
+- `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_INSTALLATION_ID`
+- `INFISICAL_CLIENT_ID`
+- `INFISICAL_CLIENT_SECRET`
+- `INFISICAL_PROJECT_ID`
+- `INFISICAL_ENVIRONMENT`
+- `STARIMG_API_KEY`
+- `OPENROUTER_API_KEY`
+- `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` as the first direct model provider)
+- `RAILWAY_TOKEN`
+- `VERCEL_TOKEN`
+- `SUPABASE_ACCESS_TOKEN`
+
+### Platform operations
+- `CLOUDFLARE_API_TOKEN`
+- `R2_ACCOUNT_ID`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
+- `QSTASH_TOKEN`
+- `SENTRY_AUTH_TOKEN`
+
+### Optional generation/research capabilities
+- `GEMINI_API_KEY`
+- `OPENAI_API_KEY`
+- `FAL_KEY`
+- `RUNWAY_API_KEY`
+- `ELEVENLABS_API_KEY`
+- `TAVILY_API_KEY` or `EXA_API_KEY`
+- `FIRECRAWL_API_KEY`
+
+Do not create duplicate secrets for the same provider/account. The Hub must support multiple credential versions per provider, rotation without downtime, per-project access policies and revocation. Never place the root Infisical identity in project runtime containers.
