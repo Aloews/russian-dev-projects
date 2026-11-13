@@ -51,7 +51,7 @@ class BaseAIAdapter:
         except httpx.HTTPError as exc:
             raise ProviderAdapterError("provider_network_error") from exc
 
-        if response.is_error:
+        if not response.is_success:
             status_code = response.status_code
             raise ProviderAdapterError(
                 f"provider_http_{status_code}",
