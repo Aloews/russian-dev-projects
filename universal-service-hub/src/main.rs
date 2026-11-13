@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use subtle::ConstantTimeEq;
+use tokio::sync::RwLock;
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::{error, info};
 use uuid::Uuid;
@@ -23,7 +24,84 @@ struct AppState {
     db: PgPool,
     admin_token: Arc<String>,
     http: reqwest::Client,
+    infisical: Option<InfisicalClient>,
 }
+
+#[derive(Clone)]
+struct InfisicalClient {
+    http: reqwest::Client,
+    base_url: String,
+    client_id: String,
+    client_secret: String,
+    project_id: String,
+    environment: String,
+    path_prefix: String,
+    token_cache: Arc<RwLock<Option<(String, Instant)>>>,
+}
+
+impl InfisicalClient {
+    async fn access_token(&self) -> ApiResult<String> {
+        {
+            let cached = self.token_cache.read().await;
+            if let Some((token, expires_at)) = cached.as_ref() {
+                if *expires_at > Instant::now() + Duration::from_secs(30) {
+                    return Ok(token.clone());
+                }
+            }
+        }
+        let mut cached = self.token_cache.write().await;
+        if let Some((token, expires_at)) = cached.as_ref() {
+            if *expires_at > Instant::now() + Duration::from_secs(30) {
+                return Ok(token.clone());
+            }
+        }
+        let response = self.http.post(format!("{}/api/v1/auth/universal-auth/login", self.base_url.trim_end_matches('/')))
+            .form(&[("clientId", self.client_id.as_str()), ("clientSecret", self.client_secret.as_str())])
+            .send().await.map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "secret_manager_auth_failed"))?;
+        if !response.status().is_success() {
+            return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "secret_manager_auth_failed"));
+        }
+        let data: Value = response.json().await.map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "secret_manager_invalid_response"))?;
+        let token = data["accessToken"].as_str().filter(|v| !v.is_empty())
+            .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "secret_manager_invalid_response"))?.to_owned();
+        let ttl = data["expiresIn"].as_u64().unwrap_or(300).clamp(60, 86_400);
+        *cached = Some((token.clone(), Instant::now() + Duration::from_secs(ttl.saturating_sub(30))));
+        Ok(token)
+    }
+
+    async fn get_secret(&self, name: &str, secret_path: &str) -> ApiResult<Option<String>> {
+        if name.is_empty() || name.len() > 120 || !name.chars().all(|c| c.is_ascii_alphanumeric() || "_-".contains(c)) {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_secret_reference"));
+        }
+        let token = self.access_token().await?;
+        let url = format!("{}/api/v4/secrets/{}", self.base_url.trim_end_matches('/'), name);
+        let response = self.http.get(url).bearer_auth(token)
+            .query(&[
+                ("projectId", self.project_id.as_str()),
+                ("environment", self.environment.as_str()),
+                ("secretPath", secret_path),
+            ]).send().await.map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "secret_manager_request_failed"))?;
+        if response.status() == StatusCode::NOT_FOUND { return Ok(None); }
+        if !response.status().is_success() {
+            return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "secret_manager_request_failed"));
+        }
+        let data: Value = response.json().await.map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "secret_manager_invalid_response"))?;
+        let value = data["secret"]["secretValue"].as_str()
+            .or_else(|| data["secretValue"].as_str())
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned);
+        Ok(value)
+    }
+
+    fn provider_path(&self, project_id: Option<&str>) -> String {
+        let prefix = self.path_prefix.trim_end_matches('/');
+        match project_id {
+            Some(id) => format!("{prefix}/{id}/providers"),
+            None => format!("{prefix}/shared/providers"),
+        }
+    }
+}
+
 
 #[derive(Debug)]
 struct ApiError(StatusCode, &'static str);
@@ -477,8 +555,14 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
         let idempotent: bool = row.get("supports_idempotency");
         if adapter == "none" { continue; }
         let (Some(model), Some(base_url), Some(key_env)) = (model, base_url, key_env) else { continue; };
-        let api_key = match env::var(&key_env) {
-            Ok(value) if !value.is_empty() => value,
+        let api_key_result = if let Some(secrets) = state.infisical.as_ref() {
+            let path = secrets.provider_path(principal.project_id.as_deref());
+            secrets.get_secret(&key_env, &path).await
+        } else {
+            Ok(env::var(&key_env).ok().filter(|value| !value.is_empty()))
+        };
+        let api_key = match api_key_result {
+            Ok(Some(value)) => value,
             _ => {
                 audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":"credential_unavailable"})).await;
                 continue;
@@ -600,7 +684,26 @@ async fn main() -> anyhow::Result<()> {
     let db = PgPoolOptions::new().max_connections(20).acquire_timeout(Duration::from_secs(10)).connect(&database_url).await?;
     sqlx::migrate!("./rust-migrations").run(&db).await?;
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
-    let state = AppState { db, admin_token: Arc::new(admin_token), http };
+    let infisical = match (
+        env::var("INFISICAL_CLIENT_ID").ok(),
+        env::var("INFISICAL_CLIENT_SECRET").ok(),
+        env::var("INFISICAL_PROJECT_ID").ok(),
+        env::var("INFISICAL_ENVIRONMENT").ok(),
+    ) {
+        (Some(client_id), Some(client_secret), Some(project_id), Some(environment)) => Some(InfisicalClient {
+            http: http.clone(),
+            base_url: env::var("INFISICAL_URL").unwrap_or_else(|_| "https://app.infisical.com".into()),
+            client_id,
+            client_secret,
+            project_id,
+            environment,
+            path_prefix: env::var("USH_INFISICAL_SECRET_PATH_PREFIX").unwrap_or_else(|_| "/projects".into()),
+            token_cache: Arc::new(RwLock::new(None)),
+        }),
+        (None, None, None, None) if env::var("USH_SECRET_BACKEND").unwrap_or_else(|_| "env".into()) != "infisical" => None,
+        _ => anyhow::bail!("Infisical backend requires client ID, client secret, project ID and environment"),
+    };
+    let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical };
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
