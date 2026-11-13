@@ -380,7 +380,7 @@ fn is_ai_adapter(adapter: &str) -> bool {
 }
 
 fn is_control_api_adapter(adapter: &str) -> bool {
-    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon"].contains(&adapter)
+    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2"].contains(&adapter)
 }
 
 fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
@@ -491,11 +491,32 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
         "flyio" => ("https://api.fly.io/graphql", reqwest::Method::POST, Some(json!({"query":"query { viewer { email } }"}))),
         "supabase" => ("https://api.supabase.com/v1/projects?limit=1", reqwest::Method::GET, None),
         "neon" => ("https://console.neon.tech/api/v2/projects?limit=1", reqwest::Method::GET, None),
+        "cloudflare_r2" => ("https://api.cloudflare.com/client/v4", reqwest::Method::GET, None),
+        "backblaze_b2" => ("https://api.backblazeb2.com/b2api/v4/b2_authorize_account", reqwest::Method::GET, None),
         _ => return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_control_api_adapter")),
     };
-    let parsed = validate_https_url(url)?;
+    let (request_url, auth_token, b2_credentials) = if adapter == "cloudflare_r2" {
+        let config: Value = serde_json::from_str(&token).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_r2_credential_config"))?;
+        let account_id = config["account_id"].as_str().filter(|v| v.len() == 32 && v.chars().all(|c| c.is_ascii_hexdigit()))
+            .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_r2_account_id"))?;
+        let api_token = config["api_token"].as_str().filter(|v| !v.is_empty())
+            .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_r2_api_token"))?;
+        (format!("{url}/accounts/{account_id}/r2/buckets?per_page=1"), Some(api_token.to_owned()), None)
+    } else if adapter == "backblaze_b2" {
+        let config: Value = serde_json::from_str(&token).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_b2_credential_config"))?;
+        let key_id = config["key_id"].as_str().filter(|v| !v.is_empty())
+            .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_b2_key_id"))?;
+        let application_key = config["application_key"].as_str().filter(|v| !v.is_empty())
+            .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_b2_application_key"))?;
+        (url.to_owned(), None, Some((key_id.to_owned(), application_key.to_owned())))
+    } else {
+        (url.to_owned(), Some(token.clone()), None)
+    };
+    let parsed = validate_https_url(&request_url)?;
     ensure_public_destination(&parsed).await?;
-    let mut request = state.http.request(method, parsed).bearer_auth(&token).timeout(Duration::from_secs(10));
+    let mut request = state.http.request(method, parsed).timeout(Duration::from_secs(10));
+    if let Some(auth_token) = auth_token { request = request.bearer_auth(auth_token); }
+    if let Some((key_id, application_key)) = b2_credentials { request = request.basic_auth(key_id, Some(application_key)); }
     if let Some(body) = payload { request = request.json(&body); }
     let started = Instant::now();
     let response = request.send().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "integration_request_failed"))?;
@@ -542,6 +563,16 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
         "neon" => {
             let projects = data["projects"].as_array().ok_or(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
             (true, Some(projects.len()), projects.first().and_then(|v| v["name"].as_str()).map(str::to_owned))
+        }
+        "cloudflare_r2" => {
+            if data["success"].as_bool() != Some(true) { return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed")); }
+            let buckets = data["result"]["buckets"].as_array().ok_or(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
+            (true, Some(buckets.len()), buckets.first().and_then(|v| v["name"].as_str()).map(str::to_owned))
+        }
+        "backblaze_b2" => {
+            let account_id = data["accountId"].as_str().filter(|v| !v.is_empty());
+            if account_id.is_none() || data["authorizationToken"].as_str().is_none() { return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed")); }
+            (true, None, Some("Backblaze B2 account authorized".into()))
         }
         _ => (false, None, None),
     };
@@ -984,7 +1015,7 @@ mod tests {
 
     #[test]
     fn integration_adapter_catalog_is_explicit_and_bounded() {
-        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon"] {
+        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2"] {
             assert!(is_control_api_adapter(adapter));
             assert!(!is_ai_adapter(adapter));
         }
