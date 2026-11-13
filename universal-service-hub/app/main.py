@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException, Request
 
@@ -40,7 +40,7 @@ app = FastAPI(title="Universal Service Hub", version="0.1.0", lifespan=lifespan)
 
 @app.get("/healthz")
 async def healthz():
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc)}
+    return {"status": "ok", "timestamp": datetime.now(UTC)}
 
 
 @app.get("/readyz")
@@ -70,7 +70,7 @@ async def health_check(payload: ProviderHealthProbeRequest, request: Request):
             provider_id=state.config.id,
             status=state.health_status if state.health_status != "unknown" else "not_configured",
             latency_ms=state.latency_ms,
-            checked_at=state.checked_at or datetime.now(timezone.utc),
+            checked_at=state.checked_at or datetime.now(UTC),
             detail=state.detail,
         )
         for state in states
