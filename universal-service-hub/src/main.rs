@@ -764,7 +764,18 @@ async fn list_audit(State(state): State<AppState>, headers: HeaderMap, Query(que
 async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
+    let environment = env::var("USH_ENVIRONMENT").unwrap_or_else(|_| "development".into());
+    let secret_backend = env::var("USH_SECRET_BACKEND").unwrap_or_else(|_| if environment == "production" { "infisical".into() } else { "env".into() });
+    if environment == "production" && secret_backend != "infisical" {
+        anyhow::bail!("production requires USH_SECRET_BACKEND=infisical");
+    }
+    if !["env", "infisical"].contains(&secret_backend.as_str()) {
+        anyhow::bail!("unsupported USH_SECRET_BACKEND");
+    }
     let database_url = env::var("USH_DATABASE_URL").or_else(|_| env::var("DATABASE_URL"))?;
+    if !database_url.starts_with("postgres://") && !database_url.starts_with("postgresql://") {
+        anyhow::bail!("USH_DATABASE_URL must use PostgreSQL");
+    }
     let admin_token = env::var("USH_API_TOKEN")?;
     if admin_token.len() < 32 { anyhow::bail!("USH_API_TOKEN must contain at least 32 characters"); }
     let db = PgPoolOptions::new().max_connections(20).acquire_timeout(Duration::from_secs(10)).connect(&database_url).await?;
