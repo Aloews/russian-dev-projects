@@ -33,7 +33,10 @@ class ProjectRecord(Base):
 
 class ProviderRecord(Base):
     __tablename__ = "providers"
-    __table_args__ = (Index("ix_providers_project_enabled_priority", "project_id", "enabled", "priority"),)
+    __table_args__ = (
+        Index("ix_providers_enabled_priority", "enabled", "priority"),
+        Index("ix_providers_project_enabled_priority", "project_id", "enabled", "priority"),
+    )
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     project_id: Mapped[str | None] = mapped_column(
