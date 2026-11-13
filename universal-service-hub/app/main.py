@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -12,11 +13,14 @@ from fastapi import Depends, FastAPI, HTTPException, Path
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.adapters import ProviderAdapterError, create_ai_adapter
 from app.auth import require_api_token
 from app.config import get_settings
 from app.database import create_database, get_session
 from app.models import Base, ProviderRecord
 from app.schemas import (
+    AIChatRequest,
+    AIChatResponse,
     HealthCheckResult,
     ProviderHealthProbeRequest,
     ProviderSelectionRequest,
@@ -38,6 +42,10 @@ def view(record: ProviderRecord) -> ProviderView:
         health_status=record.health_status,
         checked_at=record.checked_at,
         latency_ms=record.latency_ms,
+        adapter_type=record.adapter_type,
+        model=record.model,
+        credentials_configured=bool(record.api_key_env and os.environ.get(record.api_key_env)),
+        supports_idempotency=record.supports_idempotency,
     )
 
 
@@ -110,6 +118,11 @@ async def lifespan(app: FastAPI):
                             enabled=config.enabled,
                             health_url=config.health_url,
                             timeout_seconds=config.timeout_seconds,
+                            adapter_type=config.adapter_type,
+                            model=config.model,
+                            base_url=config.base_url,
+                            api_key_env=config.api_key_env,
+                            supports_idempotency=config.supports_idempotency,
                         )
                     )
             await session.commit()
@@ -167,6 +180,11 @@ async def upsert_provider(
     record.enabled = payload.enabled
     record.health_url = payload.health_url
     record.timeout_seconds = payload.timeout_seconds
+    record.adapter_type = payload.adapter_type
+    record.model = payload.model
+    record.base_url = payload.base_url
+    record.api_key_env = payload.api_key_env
+    record.supports_idempotency = payload.supports_idempotency
     record.health_status = "unknown"
     record.checked_at = None
     record.latency_ms = None
@@ -256,3 +274,100 @@ async def select_provider(
         provider=view(selected),
         reason="Highest-priority eligible provider",
     )
+
+
+@app.post(
+    "/v1/ai/chat",
+    response_model=AIChatResponse,
+    dependencies=[Depends(require_api_token)],
+)
+async def ai_chat(
+    payload: AIChatRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    result = await session.scalars(
+        select(ProviderRecord)
+        .where(ProviderRecord.enabled.is_(True))
+        .order_by(ProviderRecord.priority.desc(), ProviderRecord.id.asc())
+    )
+    excluded = set(payload.exclude)
+    candidates = [
+        record
+        for record in result.all()
+        if payload.capability in record.capabilities
+        and record.id not in excluded
+        and record.health_status != "unhealthy"
+        and record.adapter_type != "none"
+        and record.model
+        and record.base_url
+        and record.api_key_env
+    ]
+    if not candidates:
+        raise HTTPException(status_code=503, detail="No eligible AI provider is configured")
+
+    configured_candidates = [
+        (record, os.environ.get(record.api_key_env or ""))
+        for record in candidates
+    ]
+    configured_candidates = [
+        (record, api_key) for record, api_key in configured_candidates if api_key
+    ]
+    if not configured_candidates:
+        raise HTTPException(status_code=503, detail="No eligible AI provider has configured credentials")
+
+    attempts = 0
+    for record, api_key in configured_candidates:
+        attempts += 1
+        started = perf_counter()
+        adapter = create_ai_adapter(record.adapter_type)
+        messages = [message.model_dump() for message in payload.messages]
+        try:
+            result = await adapter.chat(
+                base_url=record.base_url or "",
+                api_key=api_key or "",
+                model=record.model or "",
+                messages=messages,
+                temperature=payload.temperature,
+                max_tokens=payload.max_tokens,
+                timeout=record.timeout_seconds,
+                idempotency_key=payload.idempotency_key,
+            )
+        except ProviderAdapterError as exc:
+            record.checked_at = datetime.now(UTC)
+            record.latency_ms = round((perf_counter() - started) * 1000, 2)
+            if exc.status_code != 429:
+                record.health_status = "unhealthy"
+                record.health_detail = exc.kind
+            else:
+                record.health_detail = "provider_rate_limited"
+            await session.commit()
+            can_failover = (
+                exc.retryable
+                and payload.idempotency_key is not None
+                and record.supports_idempotency
+                and record.adapter_type != "gemini"
+            )
+            if can_failover:
+                continue
+            status_code = 429 if exc.status_code == 429 else 502
+            raise HTTPException(
+                status_code=status_code,
+                detail="AI provider request failed",
+            ) from exc
+
+        latency_ms = round((perf_counter() - started) * 1000, 2)
+        record.health_status = "healthy"
+        record.health_detail = None
+        record.checked_at = datetime.now(UTC)
+        record.latency_ms = latency_ms
+        await session.commit()
+        return AIChatResponse(
+            provider_id=record.id,
+            model=record.model or "",
+            content=result.content,
+            usage=result.usage,
+            latency_ms=latency_ms,
+            attempts=attempts,
+        )
+
+    raise HTTPException(status_code=502, detail="All eligible AI providers failed")
