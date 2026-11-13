@@ -5,7 +5,7 @@
 ```bash
 pip install -e ".[dev]"
 pytest -q
-ruff check app tests
+ruff check app tests migrations
 ```
 
 The local default is SQLite. The application creates the SQLite schema during startup for development and tests.
@@ -33,8 +33,8 @@ The container runs as a non-root user. The health check uses `/healthz`. Postgre
 
 A deployment is blocked until all are true:
 
-1. User identity, project tenancy and RBAC are implemented and tested; the current single-token auth is only an operator boundary.
-2. Audit events are durable and include actor, project, provider, action and correlation ID.
+1. External immutable audit export, retention policy and tamper-evidence are implemented and tested.
+2. Egress allowlisting/SSRF protections, per-project rate limits and budget ceilings are enforced.
 3. Secret references resolve through the target secret manager; no secret values are stored in the database or repository.
 4. Each enabled adapter has contract tests and a sandbox integration test.
 5. Fallback behavior is tested against timeouts, 4xx/5xx responses, rate limits and duplicate requests.
