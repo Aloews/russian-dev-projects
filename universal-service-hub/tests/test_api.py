@@ -264,7 +264,7 @@ def test_ai_chat_fails_over_only_with_idempotency_key(monkeypatch, tmp_path):
         assert response.json()["provider_id"] == "backup"
         assert response.json()["attempts"] == 2
         providers = {item["id"]: item for item in client.get("/v1/providers").json()}
-        assert providers["primary"]["health_status"] == "unhealthy"
+        assert providers["primary"]["health_detail"] == "provider_rate_limited"
 
 
 def test_ai_chat_does_not_retry_billable_request_without_idempotency(monkeypatch, tmp_path):
