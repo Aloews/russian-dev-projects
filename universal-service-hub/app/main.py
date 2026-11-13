@@ -25,8 +25,8 @@ from app.models import ApiKeyRecord, AuditLogRecord, Base, ProjectRecord, Provid
 from app.schemas import (
     AIChatRequest,
     AIChatResponse,
-    ApiKeyCreateRequest,
     ApiKeyCreatedResponse,
+    ApiKeyCreateRequest,
     ApiKeyView,
     AuditLogView,
     HealthCheckResult,
