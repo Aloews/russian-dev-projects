@@ -87,7 +87,7 @@ Example for a standard Anthropic Messages API endpoint:
 Send this object to `PUT /v1/providers/anthropic`. In production, store `ANTHROPIC_API_KEY` in Infisical at the project's `/providers` path; environment variables are development-only. For Starimg, use this adapter only after its current account documentation confirms the Anthropic Messages endpoint and use the model identifier returned by that provider. The API response reveals only whether the referenced credential is configured; it never returns the environment-variable name or secret.
 
 Supported adapter types:
-- Infrastructure verification adapters: `northflank`, `railway`, `cloudflare`, `netlify`, `render`, `digitalocean`, `flyio`, `supabase`, `supabase_storage`, `neon`, `cloudflare_r2`, `backblaze_b2`, `postgresql`, `redis` (read-only checks only; PostgreSQL and Redis require TLS)
+- Infrastructure verification adapters: `northflank`, `railway`, `cloudflare`, `netlify`, `render`, `digitalocean`, `flyio`, `supabase`, `supabase_storage`, `neon`, `cloudflare_r2`, `backblaze_b2`, `postgresql`, `redis`, `s3_compatible` (read-only checks only; PostgreSQL and Redis require TLS; S3 uses SigV4 ListBuckets)
 - `openai_compatible` — OpenAI-compatible `/chat/completions` endpoints
 - `anthropic` — Anthropic Messages API
 - `gemini` — Gemini `generateContent` API
