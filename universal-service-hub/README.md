@@ -6,6 +6,10 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 **Rust control plane implemented; production activation remains incomplete.** The production container uses an Axum/Tokio/SQLx Rust binary. It includes PostgreSQL-backed project/token management, provider registry/selection, health probes, audit, AI chat routing and read-only verification adapters for hosting, database, storage, PostgreSQL and Redis services. Provider credentials resolve through Infisical references. Private database/Redis hosts are rejected unless exact DNS names are explicitly allowlisted with `USH_ALLOWED_PRIVATE_HOSTS`. The legacy FastAPI implementation remains a compatibility/reference target. The provider checks are not live connections until credentials are added and verified. Deployment/resource mutation, object upload/download, queue orchestration, budgets/quotas, production rollout and live Infisical/provider smoke tests remain outstanding.
 
+## Provider integration matrix
+
+See [`docs/PROVIDER_API_MATRIX.md`](docs/PROVIDER_API_MATRIX.md) for the requested hosting, backend, database, object-storage and queue provider matrix, current verification coverage and remaining resource-management work.
+
 ## Run locally
 
 The Rust runtime requires PostgreSQL.
