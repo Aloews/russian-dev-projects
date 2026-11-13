@@ -106,6 +106,14 @@ impl InfisicalClient {
 #[derive(Debug)]
 struct ApiError(StatusCode, &'static str);
 
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.0, self.1)
+    }
+}
+
+impl std::error::Error for ApiError {}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, Json(json!({"error": self.1}))).into_response()
