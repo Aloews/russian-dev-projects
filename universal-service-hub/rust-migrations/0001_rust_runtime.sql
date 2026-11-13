@@ -22,7 +22,7 @@ CREATE INDEX IF NOT EXISTS ix_project_tokens_project_id ON project_tokens(projec
 CREATE TABLE IF NOT EXISTS audit_events (
     id VARCHAR(36) PRIMARY KEY,
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    actor VARCHAR(120) NOT NULL,
+    actor VARCHAR(200) NOT NULL,
     action VARCHAR(80) NOT NULL,
     resource_type VARCHAR(80) NOT NULL,
     resource_id VARCHAR(160) NOT NULL,
@@ -50,3 +50,7 @@ CREATE TABLE IF NOT EXISTS providers (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+ALTER TABLE audit_events
+    ALTER COLUMN actor TYPE VARCHAR(200);
