@@ -288,7 +288,7 @@ mod tests {
         let valid = "sherlock-scholes.prod_1";
         assert!(valid.len() <= 80 && valid.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)));
         for invalid in ["../admin", "project/name", "project name", ""] {
-            assert!(!invalid.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)));
+            assert!(!invalid.is_empty() && !invalid.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)));
         }
     }
 
