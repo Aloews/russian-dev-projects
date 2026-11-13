@@ -496,6 +496,7 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     let key_name = key_name.ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "integration_credential_reference_missing"))?;
     let token = resolve_provider_secret(&state, &key_name, None).await?
         .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "integration_credential_unavailable"))?;
+    let started = Instant::now();
 
     if adapter == "postgresql" {
         let database_url = url::Url::parse(&token).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"))?;
@@ -554,7 +555,6 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     if let Some(auth_token) = auth_token { request = request.bearer_auth(auth_token); }
     if let Some((key_id, application_key)) = b2_credentials { request = request.basic_auth(key_id, Some(application_key)); }
     if let Some(body) = payload { request = request.json(&body); }
-    let started = Instant::now();
     let response = request.send().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "integration_request_failed"))?;
     let status = response.status();
     if !status.is_success() {
