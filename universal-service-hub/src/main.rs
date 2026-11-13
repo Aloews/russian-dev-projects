@@ -1,4 +1,4 @@
-use std::{env, net::{IpAddr, SocketAddr}, sync::Arc, time::{Duration, Instant}};
+use std::{env, net::{IpAddr, SocketAddr}, str::FromStr, sync::Arc, time::{Duration, Instant}};
 
 use axum::{
     extract::{Path, Query, State},
@@ -12,7 +12,7 @@ use rand::{distr::Alphanumeric, Rng};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use sqlx::{postgres::PgPoolOptions, PgPool, Row};
+use sqlx::{postgres::{PgConnectOptions, PgPoolOptions, PgSslMode}, PgPool, Row};
 use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
@@ -388,7 +388,7 @@ fn is_ai_adapter(adapter: &str) -> bool {
 }
 
 fn is_control_api_adapter(adapter: &str) -> bool {
-    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2"].contains(&adapter)
+    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql"].contains(&adapter)
 }
 
 fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
@@ -496,6 +496,26 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
     let key_name = key_name.ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "integration_credential_reference_missing"))?;
     let token = resolve_provider_secret(&state, &key_name, None).await?
         .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "integration_credential_unavailable"))?;
+
+    if adapter == "postgresql" {
+        let database_url = url::Url::parse(&token).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"))?;
+        if !["postgres", "postgresql"].contains(&database_url.scheme()) || database_url.host_str().is_none() {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"));
+        }
+        ensure_public_destination(&database_url).await?;
+        let options = PgConnectOptions::from_str(&token)
+            .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_database_url"))?
+            .ssl_mode(PgSslMode::Require);
+        let pool = PgPoolOptions::new().max_connections(1).acquire_timeout(Duration::from_secs(8))
+            .connect_with(options).await
+            .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "database_connection_failed"))?;
+        sqlx::query("SELECT 1").execute(&pool).await
+            .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "database_query_failed"))?;
+        pool.close().await;
+        let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+        audit(&state, &principal.actor, "integration.verify.success", "provider", &provider_id, json!({"adapter":"postgresql","latency_ms":latency_ms})).await;
+        return Ok(Json(json!({"provider_id":provider_id,"adapter":"postgresql","connected":true,"verified":true,"latency_ms":latency_ms})));
+    }
 
     let (url, method, payload) = match adapter.as_str() {
         "northflank" => ("https://api.northflank.com/v1/teams?per_page=1", reqwest::Method::GET, None),
@@ -1025,7 +1045,7 @@ mod tests {
 
     #[test]
     fn integration_adapter_catalog_is_explicit_and_bounded() {
-        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2"] {
+        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql"] {
             assert!(is_control_api_adapter(adapter));
             assert!(!is_ai_adapter(adapter));
         }
