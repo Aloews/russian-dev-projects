@@ -11,7 +11,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_token
-from app.config import ProviderConfig, get_settings
+from app.config import get_settings
 from app.database import create_database, get_session
 from app.models import Base, ProviderRecord
 from app.schemas import (
