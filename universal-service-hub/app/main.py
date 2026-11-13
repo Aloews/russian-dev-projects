@@ -18,6 +18,7 @@ from app.auth import require_api_token
 from app.config import get_settings
 from app.database import create_database, get_session
 from app.models import Base, ProviderRecord
+from app.outbound import UnsafeDestinationError, ensure_public_destination
 from app.schemas import (
     AIChatRequest,
     AIChatResponse,
@@ -62,6 +63,7 @@ async def probe_provider(record: ProviderRecord) -> HealthCheckResult:
     else:
         started = perf_counter()
         try:
+            await ensure_public_destination(record.health_url)
             async with httpx.AsyncClient(
                 timeout=record.timeout_seconds,
                 follow_redirects=False,
@@ -73,6 +75,9 @@ async def probe_provider(record: ProviderRecord) -> HealthCheckResult:
             else:
                 record.health_status = "unhealthy"
                 record.health_detail = f"HTTP {response.status_code}"
+        except UnsafeDestinationError as exc:
+            record.health_status = "unhealthy"
+            record.health_detail = str(exc)
         except httpx.HTTPError as exc:
             record.health_status = "unhealthy"
             record.health_detail = type(exc).__name__
