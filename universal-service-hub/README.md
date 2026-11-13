@@ -29,7 +29,7 @@ The Rust implementation currently provides in-memory provider inventory, health 
 
 ## Provider integration policy
 
-See [provider API matrix](./docs/PROVIDER_API_MATRIX.md) and [provider catalog](./docs/PROVIDER_CATALOG.md). The user's initial infrastructure shortlist is represented explicitly:
+See [API connection guide](./docs/API_CONNECTIONS.md) and [provider API matrix](./docs/PROVIDER_API_MATRIX.md) and [provider catalog](./docs/PROVIDER_CATALOG.md). The user's initial infrastructure shortlist is represented explicitly:
 - Hosting/edge: Northflank, Cloudflare, Netlify, Render.
 - Backend/API: Northflank, Railway, Fly.io, DigitalOcean.
 - Database: Supabase, Neon, PostgreSQL on a dedicated server.
