@@ -47,9 +47,23 @@ AI:
 
 Project tokens have `owner`, `operator` or `viewer` roles. The current Rust runtime enforces owner/operator execution access, project capability/provider allowlists, random one-time token issuance and SHA-256 token storage. Full token listing, owner-managed token lifecycle and project update/delete parity are still being ported; use the root administrator for token lifecycle operations until that work passes CI.
 
+## Secret manager
+
+Infisical Universal Auth is supported for provider credentials. Configure:
+
+- `USH_SECRET_BACKEND=infisical`
+- `INFISICAL_URL` (optional; defaults to `https://app.infisical.com`)
+- `INFISICAL_CLIENT_ID`
+- `INFISICAL_CLIENT_SECRET`
+- `INFISICAL_PROJECT_ID`
+- `INFISICAL_ENVIRONMENT`
+- `USH_INFISICAL_SECRET_PATH_PREFIX` (optional; defaults to `/projects`)
+
+Store each provider key in Infisical under `/{project_id}/providers` with the same name as the provider's `api_key_env` reference (for example `OPENAI_API_KEY`). Root-administrator requests use `/shared/providers`. The Hub exchanges the machine identity credentials for a short-lived token, caches it until shortly before expiry, and retrieves the key only when dispatching a request. Secret values are not written to the provider table, audit events or logs. In development only, when Infisical is not configured and `USH_SECRET_BACKEND` is not set to `infisical`, provider credentials can be read from environment variables.
+
 ## AI provider configuration
 
-The provider record stores the environment-variable name that references the key, never the key value. Put the actual key in the deployment secret/environment settings.
+The provider record stores a secret reference name, never the key value. In production, the preferred source is Infisical; environment-variable lookup is retained only for development or temporary compatibility.
 
 Example for a standard Anthropic Messages API endpoint:
 
