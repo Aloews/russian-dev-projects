@@ -34,7 +34,7 @@ Administration:
 - `DELETE /v1/api-keys/{key_id}` — revoke a key
 - `GET /v1/audit-logs` — inspect durable control-action audit events (bootstrap admin only)
 
-Project and agent keys require a project ID, expire within at most 365 days and carry explicit scopes. Project-scoped keys can access global providers plus providers assigned to their project; they cannot modify provider configuration or administer projects/keys. Operator keys are global and receive only the scopes granted when created.
+Project and agent keys require a project ID, expire within at most 365 days and carry explicit scopes. Project-scoped keys can access global providers plus providers assigned to their project; they cannot modify provider configuration or administer projects/keys. Operator keys are global and receive only the scopes granted when created. Rotate a key by issuing a replacement, updating the consuming service, verifying it, then revoking the old key.
 
 Provider management:
 - `GET /v1/providers` — list providers
