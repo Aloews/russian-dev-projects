@@ -89,3 +89,11 @@ async def require_project_operator(
     if not principal.is_admin and principal.role not in {"owner", "operator"}:
         raise HTTPException(status_code=403, detail="Project operator role required")
     return principal
+
+
+async def require_project_access(
+    principal: Annotated[Principal, Depends(require_api_token)],
+) -> Principal:
+    if not principal.is_admin and principal.role not in {"owner", "operator", "viewer"}:
+        raise HTTPException(status_code=403, detail="Project access required")
+    return principal
