@@ -288,7 +288,7 @@ def test_ai_chat_does_not_retry_billable_request_without_idempotency(monkeypatch
     monkeypatch.setattr("app.main.create_ai_adapter", lambda adapter_type: AlwaysFailAdapter())
     with client_with_providers(monkeypatch, "[]", tmp_path / "no-retry.db") as client:
         client.put("/v1/providers/primary", json=ai_provider_payload(priority=100))
-        client.put("/v1/providers/backup", json=ai_provider_payload(priority=50))
+        client.put("/v1/providers/backup", json=provider_payload(priority=200))
         response = client.post(
             "/v1/ai/chat",
             json={"messages": [{"role": "user", "content": "Hello"}]},
@@ -504,3 +504,18 @@ def test_project_viewer_cannot_invoke_ai(monkeypatch, tmp_path):
             json={"messages": [{"role": "user", "content": "Hello"}]},
         )
         assert response.status_code == 403
+
+
+def test_provider_selection_requires_matching_provider_capability(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "capability-match.db") as client:
+        client.put(
+            "/v1/providers/high-priority",
+            json={"name": "High", "capabilities": ["ai.chat"], "priority": 100},
+        )
+        client.put(
+            "/v1/providers/compute-only",
+            json={"name": "Compute", "capabilities": ["compute"], "priority": 10},
+        )
+        response = client.post("/v1/providers/select", json={"capability": "compute"})
+        assert response.status_code == 200
+        assert response.json()["provider"]["id"] == "compute-only"
