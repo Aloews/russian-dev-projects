@@ -24,6 +24,7 @@ def add_audit_event(
     correlation_id = request.headers.get("x-request-id", "")
     if not correlation_id or len(correlation_id) > 80 or not correlation_id.isprintable():
         correlation_id = str(uuid4())
+    metadata = {"actor_role": actor.role, **(event_metadata or {})}
     session.add(
         AuditLogRecord(
             id=str(uuid4()),
@@ -34,6 +35,6 @@ def add_audit_event(
             resource_id=resource_id,
             outcome=outcome,
             correlation_id=correlation_id,
-            event_metadata=event_metadata or {},
+            event_metadata=metadata,
         )
     )
