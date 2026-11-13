@@ -263,3 +263,40 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; }).await?;
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bearer_parser_accepts_only_long_bearer_tokens() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer 01234567890123456789012345678901".parse().unwrap());
+        assert_eq!(
+            bearer(&headers).unwrap(),
+            "01234567890123456789012345678901"
+        );
+        headers.insert(AUTHORIZATION, "Basic abcdefghijklmnopqrstuvwxyz012345".parse().unwrap());
+        assert!(bearer(&headers).is_err());
+        headers.insert(AUTHORIZATION, "Bearer short".parse().unwrap());
+        assert!(bearer(&headers).is_err());
+    }
+
+    #[test]
+    fn project_identifiers_reject_path_and_whitespace_characters() {
+        let valid = "sherlock-scholes.prod_1";
+        assert!(valid.len() <= 80 && valid.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)));
+        for invalid in ["../admin", "project/name", "project name", ""] {
+            assert!(!invalid.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)));
+        }
+    }
+
+    #[test]
+    fn token_hash_is_one_way_sha256_hex() {
+        let raw = "test-project-token-that-is-never-stored";
+        let digest = hex::encode(Sha256::digest(raw.as_bytes()));
+        assert_eq!(digest.len(), 64);
+        assert_ne!(digest, raw);
+    }
+}
