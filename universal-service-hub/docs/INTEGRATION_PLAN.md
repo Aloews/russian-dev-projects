@@ -14,7 +14,7 @@ This is a capability catalog, not a claim that integrations are already connecte
 | P0 | OpenAI API | Direct Responses API, tool calling, image/vision and transcription where enabled | OpenAI API key with project-level budget |
 | P1 | Google Gemini API | Independent text, multimodal and image-capable model route | Google AI API key / project quota |
 | P0 | Northflank API | Compute, services, jobs, add-ons and deployments | Organization-scoped token with least-privilege Team Read for account verification |
-| P0 | Railway Public API | Deploy and manage services, variables, environments, logs and rollbacks | Account/workspace token or OAuth; project token for project-scoped work |
+| P0 | Railway Public API | Deploy and manage services, variables, environments, logs and rollbacks | Account token or OAuth token for the current-user check; workspace/project tokens need their own scoped query and header adapter |
 | P1 | Render API | Services, workers, cron, deploys and logs | Render API key |
 | P1 | Netlify API | Sites, deploys, functions and domains | Personal access token |
 | P1 | Fly.io API | Apps, Machines, volumes and deployments | Fly API token |
@@ -44,12 +44,12 @@ The Rust control plane exposes `POST /v1/integrations/{provider_id}/verify`. Pro
 
 Implemented account checks:
 - Northflank: `GET /v1/teams?per_page=1` (organization-scoped token with Team Read permission).
-- Railway: GraphQL `query { me { id name email } }`.
-- Cloudflare: token verification endpoint; requires an active token.
-- Netlify: current-user endpoint.
-- Render: list workspaces endpoint.
-- DigitalOcean: account-read endpoint.
-- Fly.io: GraphQL viewer identity query.
+- Railway: GraphQL `query { me { id name email } }`; this identity query requires an account token or OAuth access token, not a workspace/project token.
+- Cloudflare: token verification endpoint; requires an active token. This does not prove Workers/Pages permissions; R2 permissions are tested separately.
+- Netlify: current-user endpoint (authentication check only; site/deploy permissions require a separate resource check).
+- Render: list owners endpoint (authentication check only; service/deploy permissions require a separate resource check).
+- DigitalOcean: account-read endpoint (authentication check only; App Platform/Droplet permissions require a separate resource check).
+- Fly.io: GraphQL viewer identity query (authentication check only; Machines app permissions require a separate resource check).
 - Supabase: Management API list-projects endpoint; requires project-read scope.
 - Neon: list-projects endpoint; bearer API key.
 - Cloudflare R2: list buckets endpoint; requires Workers R2 Storage Read permission. Store a JSON secret referenced by `CLOUDFLARE_R2_CREDENTIALS_JSON` with `account_id` and `api_token`.
