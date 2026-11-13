@@ -4,7 +4,7 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Current status
 
-**Development control plane / not production-ready.** The Hub has authenticated provider management, PostgreSQL persistence, health checks, deterministic capability selection and real HTTP adapters for OpenAI-compatible, Anthropic-compatible and Gemini chat APIs. Full user identity, project tenancy/RBAC, a managed secret-store connector, audit log, non-AI vendor adapters and production deployment are still outstanding.
+**Development control plane / not production-ready.** The Hub has authenticated provider management, PostgreSQL persistence, health checks, deterministic capability selection and real HTTP adapters for OpenAI-compatible, Anthropic-compatible and Gemini chat APIs. Project-scoped API keys, role/scope authorization and durable control-action audit logs are implemented. A managed secret-store connector, non-AI vendor adapters, quotas and production deployment are still outstanding.
 
 ## Run locally
 
