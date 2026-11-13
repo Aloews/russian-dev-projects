@@ -556,15 +556,15 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
             if data["success"].as_bool() != Some(true) || data["result"]["status"].as_str() != Some("active") { return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed")); }
             (true, None, Some("Cloudflare API token active".into()))
         }
-        "netlify" => (data["id"].is_string(), data["site_count"].as_u64().map(|v| v as usize), data["full_name"].as_str().or(data["email"].as_str()).map(str::to_owned)),
+        "netlify" => (data["id"].is_string(), data["site_count"].as_u64().map(|v| v as usize), data["full_name"].as_str().map(str::to_owned)),
         "render" => {
             let owners = data.as_array().ok_or(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
             (true, Some(owners.len()), owners.first().and_then(|v| v["owner"]["name"].as_str()).map(str::to_owned))
         }
-        "digitalocean" => (data["account"]["uuid"].is_string(), None, data["account"]["email"].as_str().map(str::to_owned)),
+        "digitalocean" => (data["account"]["uuid"].is_string(), None, Some("DigitalOcean account authorized".into())),
         "flyio" => {
             if data["errors"].as_array().is_some_and(|v| !v.is_empty()) || data["data"]["viewer"]["email"].as_str().is_none() { return Err(ApiError(StatusCode::UNAUTHORIZED, "integration_authentication_failed")); }
-            (true, None, data["data"]["viewer"]["email"].as_str().map(str::to_owned))
+            (true, None, Some("Fly.io account authorized".into()))
         }
         "supabase" => {
             let projects = data.as_array().ok_or(ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
