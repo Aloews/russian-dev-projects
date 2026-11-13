@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use rand::{distr::Alphanumeric, Rng};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
@@ -22,7 +22,6 @@ use uuid::Uuid;
 struct AppState {
     db: PgPool,
     admin_token: Arc<String>,
-    http: reqwest::Client,
 }
 
 #[derive(Debug)]
@@ -111,15 +110,6 @@ struct ProjectCreate {
     allowed_capabilities: Vec<String>,
     #[serde(default)]
     allowed_provider_ids: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct ProjectView {
-    id: String,
-    name: String,
-    allowed_capabilities: Value,
-    allowed_provider_ids: Value,
-    created_at: DateTime<Utc>,
 }
 
 async fn create_project(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<ProjectCreate>) -> ApiResult<Json<Value>> {
@@ -254,8 +244,7 @@ async fn main() -> anyhow::Result<()> {
     if admin_token.len() < 32 { anyhow::bail!("USH_API_TOKEN must contain at least 32 characters"); }
     let db = PgPoolOptions::new().max_connections(20).acquire_timeout(Duration::from_secs(10)).connect(&database_url).await?;
     sqlx::migrate!("./rust-migrations").run(&db).await?;
-    let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
-    let state = AppState { db, admin_token: Arc::new(admin_token), http };
+    let state = AppState { db, admin_token: Arc::new(admin_token) };
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
