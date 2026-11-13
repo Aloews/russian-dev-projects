@@ -800,8 +800,10 @@ async fn main() -> anyhow::Result<()> {
     let infisical = match (infisical_credentials, secret_backend.as_str()) {
         ((Some(client_id), Some(client_secret), Some(project_id), Some(environment)), _) => {
             let base_url = env::var("INFISICAL_URL").unwrap_or_else(|_| "https://app.infisical.com".into());
-            let infisical_url = validate_https_url(&base_url)?;
-            ensure_public_destination(&infisical_url).await?;
+            let infisical_url = validate_https_url(&base_url)
+                .map_err(|_| anyhow::anyhow!("INFISICAL_URL must be a public HTTPS URL"))?;
+            ensure_public_destination(&infisical_url).await
+                .map_err(|_| anyhow::anyhow!("INFISICAL_URL must resolve only to public IP addresses"))?;
             Some(InfisicalClient {
                 http: http.clone(),
                 base_url,
