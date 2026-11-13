@@ -60,7 +60,7 @@ Infisical Universal Auth is supported for provider credentials. Configure:
 - `INFISICAL_ENVIRONMENT`
 - `USH_INFISICAL_SECRET_PATH_PREFIX` (optional; defaults to `/projects`)
 
-Store each provider key in Infisical under `/{project_id}/providers` with the same name as the provider's `api_key_env` reference (for example `OPENAI_API_KEY`). Root-administrator requests use `/shared/providers`. The Hub exchanges the machine identity credentials for a short-lived token, caches it until shortly before expiry, and retrieves the key only when dispatching a request. Secret values are not written to the provider table, audit events or logs. In development only, when Infisical is not configured and `USH_SECRET_BACKEND` is not set to `infisical`, provider credentials can be read from environment variables.
+Store each provider key in Infisical under `/projects/{project_id}/providers` with the same name as the provider's `api_key_env` reference (for example `OPENAI_API_KEY`). Root-administrator model-discovery requests use `/projects/shared/providers`. The Hub exchanges the machine identity credentials for a short-lived token, caches it until shortly before expiry, and retrieves the key only when dispatching a request. Secret values are not written to the provider table, audit events or logs. In development only, when Infisical is not configured and `USH_SECRET_BACKEND` is not set to `infisical`, provider credentials can be read from environment variables.
 
 ## AI provider configuration
 
