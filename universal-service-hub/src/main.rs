@@ -359,6 +359,28 @@ async fn list_providers(State(state): State<AppState>, headers: HeaderMap) -> Ap
 
 
 #[derive(Deserialize)]
+struct S3CompatibleCredentials {
+    endpoint_url: String,
+    region: String,
+    access_key_id: String,
+    secret_access_key: String,
+}
+
+fn parse_s3_compatible_credentials(raw: &str) -> ApiResult<S3CompatibleCredentials> {
+    let credentials: S3CompatibleCredentials = serde_json::from_str(raw)
+        .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_s3_credential_config"))?;
+    if credentials.endpoint_url.is_empty()
+        || credentials.region.is_empty()
+        || credentials.region.len() > 64
+        || credentials.access_key_id.is_empty()
+        || credentials.secret_access_key.is_empty()
+    {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_s3_credential_config"));
+    }
+    Ok(credentials)
+}
+
+#[derive(Deserialize)]
 struct ProviderUpsert {
     name: String,
     #[serde(default)]
@@ -388,7 +410,7 @@ fn is_ai_adapter(adapter: &str) -> bool {
 }
 
 fn is_control_api_adapter(adapter: &str) -> bool {
-    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql", "redis"].contains(&adapter)
+    ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql", "redis", "s3_compatible"].contains(&adapter)
 }
 
 fn validate_https_url(raw: &str) -> Result<url::Url, ApiError> {
@@ -546,6 +568,49 @@ async fn verify_integration(State(state): State<AppState>, headers: HeaderMap, P
         let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
         audit(&state, &principal.actor, "integration.verify.success", "provider", &provider_id, json!({"adapter":"postgresql","latency_ms":latency_ms})).await;
         return Ok(Json(json!({"provider_id":provider_id,"adapter":"postgresql","connected":true,"verified":true,"latency_ms":latency_ms})));
+    }
+
+    if adapter == "s3_compatible" {
+        let credentials = parse_s3_compatible_credentials(&token)?;
+        let endpoint = validate_https_url(&credentials.endpoint_url)?;
+        ensure_public_destination(&endpoint).await?;
+        let sdk_credentials = aws_credential_types::Credentials::new(
+            credentials.access_key_id,
+            credentials.secret_access_key,
+            None,
+            None,
+            "universal-service-hub",
+        );
+        let sdk_config = aws_sdk_s3::Config::builder()
+            .region(aws_sdk_s3::config::Region::new(credentials.region))
+            .endpoint_url(endpoint.as_str())
+            .credentials_provider(sdk_credentials)
+            .force_path_style(true)
+            .build();
+        let s3_client = aws_sdk_s3::Client::from_conf(sdk_config);
+        let output = tokio::time::timeout(Duration::from_secs(15), s3_client.list_buckets().send())
+            .await
+            .map_err(|_| ApiError(StatusCode::GATEWAY_TIMEOUT, "s3_list_buckets_timeout"))?
+            .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "s3_authentication_or_request_failed"))?;
+        let bucket_count = output.buckets().len();
+        let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+        audit(
+            &state,
+            &principal.actor,
+            "integration.verify.success",
+            "provider",
+            &provider_id,
+            json!({"adapter":"s3_compatible","bucket_count":bucket_count,"latency_ms":latency_ms}),
+        )
+        .await;
+        return Ok(Json(json!({
+            "provider_id":provider_id,
+            "adapter":"s3_compatible",
+            "connected":true,
+            "verified":true,
+            "bucket_count":bucket_count,
+            "latency_ms":latency_ms
+        })));
     }
 
     let (url, method, payload) = match adapter.as_str() {
@@ -1076,11 +1141,26 @@ mod tests {
 
     #[test]
     fn integration_adapter_catalog_is_explicit_and_bounded() {
-        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql", "redis"] {
+        for adapter in ["northflank", "railway", "cloudflare", "netlify", "render", "digitalocean", "flyio", "supabase", "neon", "cloudflare_r2", "backblaze_b2", "postgresql", "redis", "s3_compatible"] {
             assert!(is_control_api_adapter(adapter));
             assert!(!is_ai_adapter(adapter));
         }
         assert!(!is_control_api_adapter("unknown"));
+    }
+
+    #[test]
+    fn s3_compatible_credentials_require_all_fields() {
+        let valid = r#"{"endpoint_url":"https://s3.us-east-1.amazonaws.com","region":"us-east-1","access_key_id":"access","secret_access_key":"secret"}"#;
+        let credentials = parse_s3_compatible_credentials(valid).unwrap();
+        assert_eq!(credentials.region, "us-east-1");
+        assert!(parse_s3_compatible_credentials(r#"{"endpoint_url":"https://s3.example.com"}"#).is_err());
+    }
+
+    #[test]
+    fn s3_compatible_endpoint_requires_public_https() {
+        assert!(validate_https_url("https://s3.us-east-1.amazonaws.com").is_ok());
+        assert!(validate_https_url("http://s3.example.com").is_err());
+        assert!(validate_https_url("https://127.0.0.1").is_err());
     }
 
     #[test]
