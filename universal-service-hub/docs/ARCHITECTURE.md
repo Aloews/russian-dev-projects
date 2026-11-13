@@ -4,20 +4,22 @@
 
 The Hub is a control plane, not a proxy for arbitrary provider traffic. It owns provider metadata, eligibility decisions, policy evaluation and audit history. Workload data and application databases remain with the projects unless a migration is explicitly planned and validated.
 
-### Initial runtime
+## Current runtime
 
-- FastAPI exposes health, provider inventory, health probing and provider selection.
-- `ProviderRegistry` validates unique provider identifiers and keeps the current in-memory health state.
-- Provider configuration is loaded from `USH_PROVIDERS_JSON`.
-- A provider is selectable only when enabled, capable of the requested operation, not explicitly excluded and not marked unhealthy.
-- Higher priority wins; ties are deterministic by provider ID.
+- FastAPI exposes health, provider inventory, provider CRUD, health probing and provider selection.
+- SQLAlchemy async sessions persist provider configuration and health state.
+- SQLite is used only for local development/tests; production requires PostgreSQL.
+- Alembic migrations define the PostgreSQL schema and run before the container starts.
+- `USH_PROVIDERS_JSON` seeds missing provider records only; it does not overwrite database-managed records.
+- One service Bearer token protects all `/v1/*` endpoints. Full identity, project tenancy and RBAC are not yet implemented.
+- Selection is based on enabled state, capability, health and priority; ties are deterministic by provider ID.
 
-### Target architecture
+## Target architecture
 
 ```text
 Projects / Agents
       |
-Hub API + Policy Engine
+Hub API + AuthN/AuthZ + Policy Engine
       |
 Provider Registry ---- Secret References ---- Audit Log
       |
@@ -31,7 +33,7 @@ Health + Cost + Latency + Quota Signals
 Fallback Policy / Circuit Breakers
 ```
 
-### Required adapter contract
+## Required adapter contract
 
 Each adapter must declare:
 - stable provider ID and supported capabilities;
@@ -42,6 +44,6 @@ Each adapter must declare:
 - normalized errors and usage/cost metadata;
 - integration tests with a sandbox account or deterministic provider test server.
 
-### Routing safety
+## Routing safety
 
 The first release must not silently move stateful workloads between providers. Stateless requests may fail over only when the request is idempotent or has a stable idempotency key. Database failover requires replication, consistency checks, tested recovery objectives and an explicit migration plan.
