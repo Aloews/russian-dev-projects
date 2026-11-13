@@ -365,6 +365,8 @@ struct S3CompatibleCredentials {
     access_key_id: String,
     secret_access_key: String,
     #[serde(default)]
+    session_token: Option<String>,
+    #[serde(default)]
     bucket: Option<String>,
 }
 
@@ -372,10 +374,15 @@ fn parse_s3_compatible_credentials(raw: &str) -> ApiResult<S3CompatibleCredentia
     let credentials: S3CompatibleCredentials = serde_json::from_str(raw)
         .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_s3_credential_config"))?;
     if credentials.endpoint_url.is_empty()
+        || credentials.endpoint_url.len() > 2048
         || credentials.region.is_empty()
         || credentials.region.len() > 64
+        || !credentials.region.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
         || credentials.access_key_id.is_empty()
+        || credentials.access_key_id.len() > 256
         || credentials.secret_access_key.is_empty()
+        || credentials.secret_access_key.len() > 1024
+        || credentials.session_token.as_ref().is_some_and(|v| v.is_empty() || v.len() > 4096)
         || credentials.bucket.as_deref().is_some_and(|bucket| !valid_s3_bucket_name(bucket))
     {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_s3_credential_config"));
@@ -1220,7 +1227,7 @@ mod tests {
 
     #[test]
     fn s3_compatible_credentials_require_all_fields() {
-        let valid = r#"{"endpoint_url":"https://s3.us-east-1.amazonaws.com","region":"us-east-1","access_key_id":"access","secret_access_key":"secret","bucket":"project-assets"}"#;
+        let valid = r#"{"endpoint_url":"https://s3.us-east-1.amazonaws.com","region":"us-east-1","access_key_id":"access","secret_access_key":"secret","session_token":"temporary","bucket":"project-assets"}"#;
         let credentials = parse_s3_compatible_credentials(valid).unwrap();
         assert_eq!(credentials.region, "us-east-1");
         assert_eq!(credentials.bucket.as_deref(), Some("project-assets"));
