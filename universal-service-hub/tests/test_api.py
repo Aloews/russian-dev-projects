@@ -394,3 +394,113 @@ def test_provider_mutations_are_audited_without_secret_values(monkeypatch, tmp_p
         assert "provider.delete" in actions
         assert all(item["actor"] == "service-token" for item in events)
         assert "TEST_AI_API_KEY" not in str(events)
+
+
+def test_project_tokens_are_hashed_scoped_and_revocable(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "projects.db") as client:
+        created = client.post(
+            "/v1/projects",
+            json={
+                "id": "alpha",
+                "name": "Alpha Project",
+                "allowed_capabilities": ["ai.chat"],
+                "allowed_provider_ids": ["primary"],
+            },
+        )
+        assert created.status_code == 200
+        token_response = client.post(
+            "/v1/projects/alpha/tokens",
+            json={"name": "production", "role": "operator"},
+        )
+        assert token_response.status_code == 200
+        raw_token = token_response.json()["token"]
+        assert len(raw_token) >= 40
+
+        listed = client.get("/v1/projects/alpha/tokens").json()
+        assert len(listed) == 1
+        assert "token" not in listed[0]
+        assert "token_hash" not in listed[0]
+        assert raw_token not in str(listed)
+
+        denied_admin = client.get(
+            "/v1/providers",
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        assert denied_admin.status_code == 403
+
+        revoked = client.delete(
+            f"/v1/projects/alpha/tokens/{token_response.json()['id']}"
+        )
+        assert revoked.status_code == 204
+        denied_after_revoke = client.post(
+            "/v1/ai/chat",
+            headers={"Authorization": f"Bearer {raw_token}"},
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert denied_after_revoke.status_code == 401
+
+
+def test_project_token_can_only_route_allowed_provider_and_capability(monkeypatch, tmp_path):
+    from app.adapters import AdapterResult
+
+    class FakeAdapter:
+        async def chat(self, **kwargs):
+            return AdapterResult(content="scoped response", usage={"total_tokens": 2})
+
+    monkeypatch.setenv("TEST_AI_API_KEY", "fake-ai-key")
+    monkeypatch.setattr("app.main.create_ai_adapter", lambda adapter_type: FakeAdapter())
+    with client_with_providers(monkeypatch, "[]", tmp_path / "scoped.db") as client:
+        client.put("/v1/providers/primary", json=ai_provider_payload(priority=100))
+        client.put("/v1/providers/backup", json=ai_provider_payload(priority=50))
+        client.post(
+            "/v1/projects",
+            json={
+                "id": "alpha",
+                "name": "Alpha Project",
+                "allowed_capabilities": ["ai.chat"],
+                "allowed_provider_ids": ["primary"],
+            },
+        )
+        token_response = client.post(
+            "/v1/projects/alpha/tokens",
+            json={"name": "runtime", "role": "operator"},
+        )
+        token = token_response.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = client.post(
+            "/v1/ai/chat",
+            headers=headers,
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert response.status_code == 200
+        assert response.json()["provider_id"] == "primary"
+
+        denied = client.post(
+            "/v1/providers/select",
+            headers=headers,
+            json={"capability": "compute"},
+        )
+        assert denied.status_code == 403
+
+
+def test_project_viewer_cannot_invoke_ai(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "viewer.db") as client:
+        client.post(
+            "/v1/projects",
+            json={
+                "id": "read-only",
+                "name": "Read Only",
+                "allowed_capabilities": ["ai.chat"],
+            },
+        )
+        token_response = client.post(
+            "/v1/projects/read-only/tokens",
+            json={"name": "viewer", "role": "viewer"},
+        )
+        response = client.post(
+            "/v1/ai/chat",
+            headers={"Authorization": f"Bearer {token_response.json()['token']}"},
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert response.status_code == 403
