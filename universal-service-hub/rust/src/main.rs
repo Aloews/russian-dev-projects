@@ -1,8 +1,16 @@
-use axum::{extract::State, http::StatusCode, routing::{get, post}, Json, Router};
+use axum::{
+    extract::{Request, State},
+    http::{header::AUTHORIZATION, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, env, sync::Arc, time::Duration};
+use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 
@@ -16,15 +24,15 @@ struct Provider {
     priority: i32,
     #[serde(default = "enabled")]
     enabled: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     health_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     api_base_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     verify_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     verify_method: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     verify_body: Option<serde_json::Value>,
     #[serde(default, skip_serializing)]
     api_token_env: Option<String>,
@@ -53,12 +61,26 @@ struct SelectResponse { capability: String, provider: Option<ProviderState>, rea
 struct ProbeRequest { provider_id: Option<String> }
 
 fn initial_state() -> Vec<ProviderState> {
-    let providers = env::var("USH_PROVIDERS_JSON").ok()
-        .and_then(|v| serde_json::from_str::<Vec<Provider>>(&v).ok()).unwrap_or_default();
-    providers.into_iter().map(|provider| ProviderState {
-        provider, health_status: "unknown".into(), checked_at: None, latency_ms: None, detail: None
+    let raw = env::var("USH_PROVIDERS_JSON").unwrap_or_else(|_| "[]".into());
+    let providers: Vec<Provider> = serde_json::from_str(&raw)
+        .expect("USH_PROVIDERS_JSON must be a valid JSON array of provider definitions");
+    let mut ids = HashSet::new();
+    providers.into_iter().map(|mut provider| {
+        assert!(!provider.id.trim().is_empty(), "provider id must not be empty");
+        assert!(!provider.name.trim().is_empty(), "provider name must not be empty");
+        assert!(ids.insert(provider.id.clone()), "provider ids must be unique");
+        provider.timeout_seconds = provider.timeout_seconds.clamp(1, 30);
+        for url in [&provider.health_url, &provider.api_base_url].into_iter().flatten() {
+            let parsed = reqwest::Url::parse(url).expect("provider URLs must be absolute URLs");
+            assert_eq!(parsed.scheme(), "https", "provider URLs must use HTTPS");
+        }
+        ProviderState {
+            provider, health_status: "unknown".into(), checked_at: None,
+            latency_ms: None, detail: None
+        }
     }).collect()
 }
+
 fn choose(states: &[ProviderState], capability: &str, exclude: &[String]) -> Option<ProviderState> {
     let excluded: HashSet<&str> = exclude.iter().map(String::as_str).collect();
     states.iter()
@@ -67,6 +89,24 @@ fn choose(states: &[ProviderState], capability: &str, exclude: &[String]) -> Opt
         .filter(|s| s.health_status != "unhealthy")
         .max_by_key(|s| s.provider.priority).cloned()
 }
+
+async fn require_bearer(
+    State(expected): State<Arc<str>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let supplied = request.headers().get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let authorized = supplied.map(|value| {
+        bool::from(expected.as_bytes().ct_eq(value.as_bytes()))
+    }).unwrap_or(false);
+    if !authorized {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    next.run(request).await
+}
+
 async fn healthz() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status":"ok","timestamp":Utc::now()}))
 }
@@ -94,14 +134,20 @@ async fn probe_one(state: &AppState, index: usize) {
         let path = snapshot.provider.verify_path.as_deref().unwrap_or("/");
         reqwest::Url::parse(base).ok()?.join(path).ok().map(|u| u.to_string())
     });
-    let Some(url) = url else { return };
+    let Some(url) = url else {
+        let mut providers = state.providers.write().await;
+        if let Some(item) = providers.get_mut(index) {
+            item.health_status = "unconfigured".into();
+            item.checked_at = Some(Utc::now());
+            item.detail = Some("no verification endpoint configured".into());
+        }
+        return;
+    };
     let started = std::time::Instant::now();
     let method = snapshot.provider.verify_method.as_deref().unwrap_or("GET")
         .parse::<reqwest::Method>().unwrap_or(reqwest::Method::GET);
     let mut request = state.client.request(method, url);
-    if let Some(body) = &snapshot.provider.verify_body {
-        request = request.json(body);
-    }
+    if let Some(body) = &snapshot.provider.verify_body { request = request.json(body); }
     if let Some(token_env) = &snapshot.provider.api_token_env {
         match env::var(token_env) {
             Ok(token) if !token.trim().is_empty() => { request = request.bearer_auth(token); }
@@ -111,21 +157,21 @@ async fn probe_one(state: &AppState, index: usize) {
                     item.health_status = "unhealthy".into();
                     item.checked_at = Some(Utc::now());
                     item.latency_ms = Some(started.elapsed().as_millis());
-                    item.detail = Some("credential environment variable is not configured".into());
+                    item.detail = Some("provider credential is not configured".into());
                 }
                 return;
             }
         }
     }
     let result = tokio::time::timeout(
-        Duration::from_secs(snapshot.provider.timeout_seconds.clamp(1, 30)),
+        Duration::from_secs(snapshot.provider.timeout_seconds),
         request.send()
     ).await;
     let (status, detail) = match result {
         Ok(Ok(response)) if response.status().is_success() => ("healthy".to_string(), None),
-        Ok(Ok(response)) => ("unhealthy".to_string(), Some(format!("HTTP {}", response.status()))),
-        Ok(Err(error)) => ("unhealthy".to_string(), Some(error.to_string())),
-        Err(_) => ("unhealthy".to_string(), Some("health check timed out".into())),
+        Ok(Ok(response)) => ("unhealthy".to_string(), Some(format!("provider returned HTTP {}", response.status()))),
+        Ok(Err(_)) => ("unhealthy".to_string(), Some("provider request failed".into())),
+        Err(_) => ("unhealthy".to_string(), Some("provider health check timed out".into())),
     };
     let mut providers = state.providers.write().await;
     if let Some(item) = providers.get_mut(index) {
@@ -149,25 +195,35 @@ async fn health_check(State(state): State<AppState>, Json(req): Json<ProbeReques
     for index in indices { probe_one(&state, index).await; }
     Ok(Json(state.providers.read().await.clone()))
 }
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().with_env_filter(
         env::var("RUST_LOG").unwrap_or_else(|_| "info,tower_http=info".into())
     ).init();
+    let api_token = env::var("USH_API_TOKEN")
+        .expect("USH_API_TOKEN is required; generate a long random secret in the hosting secret manager");
+    assert!(api_token.len() >= 32, "USH_API_TOKEN must contain at least 32 characters");
     let state = AppState {
         providers: Arc::new(RwLock::new(initial_state())),
-        client: Client::builder().connect_timeout(Duration::from_secs(3)).build().expect("HTTP client")
+        client: Client::builder().connect_timeout(Duration::from_secs(3))
+            .redirect(reqwest::redirect::Policy::none()).build().expect("HTTP client")
     };
-    let app = Router::new()
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
+    let protected = Router::new()
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers/health-check", post(health_check))
         .route("/v1/providers/select", post(select_provider))
-        .layer(TraceLayer::new_for_http()).with_state(state);
+        .route_layer(middleware::from_fn_with_state(Arc::<str>::from(api_token), require_bearer))
+        .with_state(state.clone());
+    let app = Router::new()
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
+        .merge(protected)
+        .layer(TraceLayer::new_for_http());
     let addr = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into());
     let port = env::var("PORT").unwrap_or_else(|_| "8080".into());
     let listener = tokio::net::TcpListener::bind(format!("{addr}:{port}")).await.expect("bind");
+    tracing::info!("Universal Service Hub listening on {addr}:{port}");
     axum::serve(listener, app).await.expect("server");
 }
 
@@ -177,7 +233,8 @@ mod tests {
     fn state(id: &str, priority: i32, health: &str) -> ProviderState {
         ProviderState {
             provider: Provider { id:id.into(), name:id.into(), capabilities:vec!["compute".into()],
-                priority, enabled:true, health_url:None, api_base_url:None, verify_path:None, verify_method:None, verify_body:None, api_token_env:None, timeout_seconds:5 },
+                priority, enabled:true, health_url:None, api_base_url:None, verify_path:None,
+                verify_method:None, verify_body:None, api_token_env:None, timeout_seconds:5 },
             health_status:health.into(), checked_at:None, latency_ms:None, detail:None
         }
     }
@@ -197,5 +254,14 @@ mod tests {
         let providers = vec![state("one", 10, "healthy"), state("two", 5, "healthy")];
         assert_eq!(choose(&providers, "compute", &["one".into()]).unwrap().provider.id, "two");
         assert!(choose(&providers, "database", &[]).is_none());
+    }
+    #[test]
+    fn provider_runtime_configuration_is_not_serialized() {
+        let mut p = state("private", 1, "unknown");
+        p.provider.api_base_url = Some("https://secret.internal".into());
+        p.provider.api_token_env = Some("SECRET_TOKEN".into());
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(!json.contains("secret.internal"));
+        assert!(!json.contains("SECRET_TOKEN"));
     }
 }
