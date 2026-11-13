@@ -484,7 +484,8 @@ async def select_provider(
     candidates = [
         record
         for record in scoped
-        if record.id not in excluded
+        if payload.capability in record.capabilities
+        and record.id not in excluded
         and record.health_status != "unhealthy"
     ]
     if not candidates:
@@ -522,7 +523,8 @@ async def ai_chat(
     candidates = [
         record
         for record in scoped
-        if record.id not in excluded
+        if payload.capability in record.capabilities
+        and record.id not in excluded
         and record.health_status != "unhealthy"
         and record.adapter_type != "none"
         and record.model
