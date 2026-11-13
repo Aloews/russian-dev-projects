@@ -168,6 +168,35 @@ async fn require_operator(state: &AppState, headers: &HeaderMap) -> ApiResult<Pr
     Ok(principal)
 }
 
+fn can_access_project(principal: &Principal) -> bool {
+    principal.admin || ["owner", "operator", "viewer"].contains(&principal.role.as_str())
+}
+
+fn can_manage_project_tokens(principal: &Principal, project_id: &str) -> bool {
+    principal.admin
+        || (principal.role == "owner" && principal.project_id.as_deref() == Some(project_id))
+}
+
+async fn require_project_access(state: &AppState, headers: &HeaderMap) -> ApiResult<Principal> {
+    let principal = authenticate(state, headers).await?;
+    if !can_access_project(&principal) {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_access_required"));
+    }
+    Ok(principal)
+}
+
+async fn require_project_owner_or_admin(
+    state: &AppState,
+    headers: &HeaderMap,
+    project_id: &str,
+) -> ApiResult<Principal> {
+    let principal = authenticate(state, headers).await?;
+    if !can_manage_project_tokens(&principal, project_id) {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_owner_required"));
+    }
+    Ok(principal)
+}
+
 async fn audit(state: &AppState, actor: &str, action: &str, resource_type: &str, resource_id: &str, details: Value) {
     if let Err(err) = sqlx::query(
         "INSERT INTO audit_events (id, occurred_at, actor, action, resource_type, resource_id, details) VALUES ($1,$2,$3,$4,$5,$6,$7)"
@@ -252,7 +281,7 @@ async fn delete_project(State(state): State<AppState>, headers: HeaderMap, Path(
 }
 
 async fn list_project_tokens(State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>) -> ApiResult<Json<Value>> {
-    require_admin(&state, &headers).await?;
+    require_project_owner_or_admin(&state, &headers, &project_id).await?;
     let rows = sqlx::query("SELECT id,project_id,name,role,created_at,last_used_at,revoked_at FROM project_tokens WHERE project_id=$1 ORDER BY created_at DESC")
         .bind(&project_id).fetch_all(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_list_failed"))?;
     let values: Vec<Value> = rows.into_iter().map(|r| json!({
@@ -271,9 +300,12 @@ struct TokenCreate { name: String, #[serde(default = "default_role")] role: Stri
 fn default_role() -> String { "operator".into() }
 
 async fn create_project_token(State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>, Json(body): Json<TokenCreate>) -> ApiResult<Json<Value>> {
-    let principal = require_admin(&state, &headers).await?;
+    let principal = require_project_owner_or_admin(&state, &headers, &project_id).await?;
     if !["owner","operator","viewer"].contains(&body.role.as_str()) || body.name.trim().is_empty() || body.name.len() > 120 {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_project_token"));
+    }
+    if !principal.admin && body.role == "owner" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "administrator_required_for_owner_token"));
     }
     let exists = sqlx::query("SELECT id FROM projects WHERE id=$1").bind(&project_id).fetch_optional(&state.db).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_lookup_failed"))?;
@@ -289,7 +321,7 @@ async fn create_project_token(State(state): State<AppState>, headers: HeaderMap,
 }
 
 async fn revoke_project_token(State(state): State<AppState>, headers: HeaderMap, Path((project_id, token_id)): Path<(String,String)>) -> ApiResult<StatusCode> {
-    let principal = require_admin(&state, &headers).await?;
+    let principal = require_project_owner_or_admin(&state, &headers, &project_id).await?;
     let result = sqlx::query("UPDATE project_tokens SET revoked_at=NOW() WHERE id=$1 AND project_id=$2 AND revoked_at IS NULL")
         .bind(&token_id).bind(&project_id).execute(&state.db).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_revoke_failed"))?;
@@ -471,7 +503,7 @@ async fn health_check(State(state): State<AppState>, headers: HeaderMap, Json(bo
 struct ProviderSelect { capability: String, #[serde(default)] exclude: Vec<String> }
 
 async fn select_provider(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<ProviderSelect>) -> ApiResult<Json<Value>> {
-    let principal = require_operator(&state, &headers).await?;
+    let principal = require_project_access(&state, &headers).await?;
     let allowed_provider_ids: Option<Vec<String>> = if let Some(project_id) = principal.project_id {
         let project = sqlx::query("SELECT allowed_capabilities,allowed_provider_ids FROM projects WHERE id=$1")
             .bind(project_id).fetch_optional(&state.db).await
@@ -809,5 +841,38 @@ mod outbound_tests {
         assert!(validate_https_url("https://api.example.com/?token=secret").is_err());
         assert!(validate_https_url("https://user:pass@api.example.com").is_err());
         assert!(validate_https_url("https://localhost").is_err());
+    }
+}
+
+
+
+#[cfg(test)]
+mod project_permission_tests {
+    use super::*;
+
+    fn principal(role: &str, project_id: Option<&str>, admin: bool) -> Principal {
+        Principal {
+            actor: "test".into(),
+            role: role.into(),
+            project_id: project_id.map(str::to_owned),
+            admin,
+        }
+    }
+
+    #[test]
+    fn viewer_is_read_only_and_project_owner_is_scoped() {
+        let admin = principal("admin", None, true);
+        let owner_alpha = principal("owner", Some("alpha"), false);
+        let operator_alpha = principal("operator", Some("alpha"), false);
+        let viewer_alpha = principal("viewer", Some("alpha"), false);
+        let owner_beta = principal("owner", Some("beta"), false);
+
+        assert!(can_access_project(&admin));
+        assert!(can_access_project(&viewer_alpha));
+        assert!(can_manage_project_tokens(&admin, "alpha"));
+        assert!(can_manage_project_tokens(&owner_alpha, "alpha"));
+        assert!(!can_manage_project_tokens(&owner_beta, "alpha"));
+        assert!(!can_manage_project_tokens(&operator_alpha, "alpha"));
+        assert!(!can_manage_project_tokens(&viewer_alpha, "alpha"));
     }
 }
