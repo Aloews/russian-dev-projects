@@ -55,14 +55,14 @@ jobs:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
         run: |
           set -eu
-          docker run -d --rm --name ush-smoke -p 127.0.0.1:8000:8000 \
+          docker run -d --name ush-smoke -p 127.0.0.1:8000:8000 \
             -e USH_API_TOKEN="$USH_API_TOKEN" \
             -e USH_DATABASE_URL="sqlite+aiosqlite:////tmp/ush-smoke.db" \
             universal-service-hub:test
-          trap 'docker stop ush-smoke >/dev/null 2>&1 || true' EXIT
+          trap 'docker logs ush-smoke 2>/dev/null || true; docker rm -f ush-smoke >/dev/null 2>&1 || true' EXIT
           ready=0
-          for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/readyz >/dev/null; then
+          for attempt in $(seq 1 20); do
+            if curl --connect-timeout 1 --max-time 2 -fsS http://127.0.0.1:8000/readyz >/dev/null; then
               ready=1
               break
             fi
@@ -72,9 +72,9 @@ jobs:
             docker logs ush-smoke
             exit 1
           fi
-          curl -fsS http://127.0.0.1:8000/healthz >/dev/null
-          curl -fsS -H "Authorization: Bearer $USH_API_TOKEN" \
+          curl --connect-timeout 1 --max-time 5 -fsS http://127.0.0.1:8000/healthz >/dev/null
+          curl --connect-timeout 1 --max-time 5 -fsS -H "Authorization: Bearer $USH_API_TOKEN" \
             http://127.0.0.1:8000/v1/providers >/dev/null
-          status=$(curl -sS -o /dev/null -w "%{http_code}" \
+          status=$(curl --connect-timeout 1 --max-time 5 -sS -o /dev/null -w "%{http_code}" \
             http://127.0.0.1:8000/v1/providers)
           test "$status" = "401"
