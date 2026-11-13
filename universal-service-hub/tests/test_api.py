@@ -527,3 +527,46 @@ def test_provider_selection_requires_matching_provider_capability(monkeypatch, t
         response = client.post("/v1/providers/select", json={"capability": "compute"})
         assert response.status_code == 200
         assert response.json()["provider"]["id"] == "compute-only"
+
+
+def test_project_update_changes_access_and_delete_revokes_all_tokens(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "project-lifecycle.db") as client:
+        client.post(
+            "/v1/projects",
+            json={
+                "id": "lifecycle",
+                "name": "Lifecycle",
+                "allowed_capabilities": ["ai.chat"],
+            },
+        )
+        token_response = client.post(
+            "/v1/projects/lifecycle/tokens",
+            json={"name": "runtime", "role": "operator"},
+        )
+        token = token_response.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        updated = client.put(
+            "/v1/projects/lifecycle",
+            json={
+                "name": "Lifecycle Updated",
+                "allowed_capabilities": ["compute"],
+                "allowed_provider_ids": [],
+            },
+        )
+        assert updated.status_code == 200
+        denied = client.post(
+            "/v1/ai/chat",
+            headers=headers,
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert denied.status_code == 403
+
+        deleted = client.delete("/v1/projects/lifecycle")
+        assert deleted.status_code == 204
+        revoked = client.post(
+            "/v1/ai/chat",
+            headers=headers,
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert revoked.status_code == 401
