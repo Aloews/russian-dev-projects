@@ -168,9 +168,11 @@ jobs:
             -d '{"capability":"ai.chat"}')
           test "$deleted_token" = "401"
 
-          production_secret_guard=$(docker run --rm --network host \
+          if docker run --rm --network host \
             -e USH_API_TOKEN="$USH_API_TOKEN" \
             -e USH_DATABASE_URL="postgres://ush:ush-test-password@127.0.0.1:5432/ush_test" \
             -e USH_ENVIRONMENT=production \
-            universal-service-hub:test >/dev/null 2>&1; echo $?)
-          test "$production_secret_guard" -ne 0
+            universal-service-hub:test >/dev/null 2>&1; then
+            echo "Production unexpectedly started without Infisical credentials"
+            exit 1
+          fi
