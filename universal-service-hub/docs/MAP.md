@@ -32,7 +32,8 @@ Base repository: `Aloews/russian-dev-projects`
 
 ## Implemented capabilities
 
-- Rust Axum/Tokio/SQLx control-plane runtime is under active migration; FastAPI remains a temporary reference implementation.\n- Rust bearer-token authentication for root administrator and scoped project tokens.
+- Rust Axum/Tokio/SQLx control-plane runtime is under active migration; FastAPI remains a temporary reference implementation.
+- Rust bearer-token authentication for root administrator and scoped project tokens.
 - Durable provider registry on PostgreSQL, Alembic migrations and local SQLite development.
 - Provider CRUD, capability/priority selection and bounded health checks.
 - OpenAI-compatible, Anthropic Messages and Gemini generateContent adapters.
@@ -42,7 +43,8 @@ Base repository: `Aloews/russian-dev-projects`
 - HTTPS/local/private destination validation and DNS resolution checks before outbound requests.
 - Durable audit records for provider mutations and AI inference outcomes.
 - Project registry with scoped, hashed, revocable API tokens and owner/operator/viewer roles.
-- Project-level capability and provider allowlists for AI inference and provider selection.\n- Rust implementation of project/token management, provider upsert/delete, health probes, selection, audit reads and initial AI chat adapters.
+- Project-level capability and provider allowlists for AI inference and provider selection.
+- Rust implementation of project/token management, provider upsert/delete, health probes, selection, audit reads and initial AI chat adapters.
 
 ## Work in progress
 
