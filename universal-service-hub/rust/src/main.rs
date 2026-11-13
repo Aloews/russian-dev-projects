@@ -18,6 +18,12 @@ struct Provider {
     enabled: bool,
     #[serde(default)]
     health_url: Option<String>,
+    #[serde(default)]
+    api_base_url: Option<String>,
+    #[serde(default)]
+    verify_path: Option<String>,
+    #[serde(default, skip_serializing)]
+    api_token_env: Option<String>,
     #[serde(default = "default_timeout")]
     timeout_seconds: u64,
 }
@@ -79,11 +85,32 @@ async fn select_provider(State(state): State<AppState>, Json(req): Json<SelectRe
 async fn probe_one(state: &AppState, index: usize) {
     let snapshot = { state.providers.read().await.get(index).cloned() };
     let Some(snapshot) = snapshot else { return };
-    let Some(url) = snapshot.provider.health_url.clone() else { return };
+    let url = snapshot.provider.health_url.clone().or_else(|| {
+        let base = snapshot.provider.api_base_url.as_ref()?;
+        let path = snapshot.provider.verify_path.as_deref().unwrap_or("/");
+        reqwest::Url::parse(base).ok()?.join(path).ok().map(|u| u.to_string())
+    });
+    let Some(url) = url else { return };
     let started = std::time::Instant::now();
+    let mut request = state.client.get(url);
+    if let Some(token_env) = &snapshot.provider.api_token_env {
+        match env::var(token_env) {
+            Ok(token) if !token.trim().is_empty() => { request = request.bearer_auth(token); }
+            _ => {
+                let mut providers = state.providers.write().await;
+                if let Some(item) = providers.get_mut(index) {
+                    item.health_status = "unhealthy".into();
+                    item.checked_at = Some(Utc::now());
+                    item.latency_ms = Some(started.elapsed().as_millis());
+                    item.detail = Some("credential environment variable is not configured".into());
+                }
+                return;
+            }
+        }
+    }
     let result = tokio::time::timeout(
         Duration::from_secs(snapshot.provider.timeout_seconds.clamp(1, 30)),
-        state.client.get(url).send()
+        request.send()
     ).await;
     let (status, detail) = match result {
         Ok(Ok(response)) if response.status().is_success() => ("healthy".to_string(), None),
@@ -141,7 +168,7 @@ mod tests {
     fn state(id: &str, priority: i32, health: &str) -> ProviderState {
         ProviderState {
             provider: Provider { id:id.into(), name:id.into(), capabilities:vec!["compute".into()],
-                priority, enabled:true, health_url:None, timeout_seconds:5 },
+                priority, enabled:true, health_url:None, api_base_url:None, verify_path:None, api_token_env:None, timeout_seconds:5 },
             health_status:health.into(), checked_at:None, latency_ms:None, detail:None
         }
     }
