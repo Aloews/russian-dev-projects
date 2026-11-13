@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
+import secrets
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from time import perf_counter
@@ -14,15 +16,20 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters import ProviderAdapterError, create_ai_adapter
-from app.auth import require_api_token
+from app.auth import Principal, require_admin, require_api_token, require_project_operator
 from app.config import get_settings
 from app.database import create_database, get_session
-from app.models import AuditEvent, Base, ProviderRecord
+from app.models import AuditEvent, Base, ProjectRecord, ProjectTokenRecord, ProviderRecord
 from app.outbound import UnsafeDestinationError, ensure_public_destination
 from app.schemas import (
     AIChatRequest,
     AIChatResponse,
     AuditEventView,
+    ProjectCreateRequest,
+    ProjectTokenCreateRequest,
+    ProjectTokenCreated,
+    ProjectTokenView,
+    ProjectView,
     HealthCheckResult,
     ProviderHealthProbeRequest,
     ProviderSelectionRequest,
@@ -41,10 +48,11 @@ def audit_event(
     resource_type: str,
     resource_id: str,
     details: dict | None = None,
+    actor: str = "service-token",
 ) -> None:
     session.add(
         AuditEvent(
-            actor="service-token",
+            actor=actor,
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
@@ -156,7 +164,27 @@ async def lifespan(app: FastAPI):
         await engine.dispose()
 
 
-app = FastAPI(title="Universal Service Hub", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Universal Service Hub", version="0.5.0", lifespan=lifespan)
+
+
+
+async def scope_project_providers(
+    session: AsyncSession,
+    principal: Principal,
+    capability: str,
+    records: list[ProviderRecord],
+) -> list[ProviderRecord]:
+    if principal.is_admin:
+        return records
+    project = await session.get(ProjectRecord, principal.project_id)
+    if project is None:
+        raise HTTPException(status_code=403, detail="Project access is no longer active")
+    if capability not in project.allowed_capabilities:
+        raise HTTPException(status_code=403, detail="Capability is not enabled for this project")
+    allowed_ids = set(project.allowed_provider_ids)
+    if allowed_ids:
+        records = [record for record in records if record.id in allowed_ids]
+    return records
 
 
 @app.get("/healthz")
@@ -173,10 +201,145 @@ async def readyz(session: Annotated[AsyncSession, Depends(get_session)]):
     return {"status": "ready", "providers_configured": count or 0}
 
 
+
+@app.post(
+    "/v1/projects",
+    response_model=ProjectView,
+    dependencies=[Depends(require_admin)],
+)
+async def create_project(
+    payload: ProjectCreateRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    if await session.get(ProjectRecord, payload.id) is not None:
+        raise HTTPException(status_code=409, detail="Project already exists")
+    project = ProjectRecord(
+        id=payload.id,
+        name=payload.name,
+        allowed_capabilities=payload.allowed_capabilities,
+        allowed_provider_ids=payload.allowed_provider_ids,
+    )
+    session.add(project)
+    audit_event(
+        session,
+        action="project.create",
+        resource_type="project",
+        resource_id=project.id,
+        details={
+            "allowed_capabilities": payload.allowed_capabilities,
+            "allowed_provider_ids": payload.allowed_provider_ids,
+        },
+    )
+    await session.commit()
+    await session.refresh(project)
+    return ProjectView.model_validate(project, from_attributes=True)
+
+
+@app.get(
+    "/v1/projects",
+    response_model=list[ProjectView],
+    dependencies=[Depends(require_admin)],
+)
+async def list_projects(session: Annotated[AsyncSession, Depends(get_session)]):
+    result = await session.scalars(select(ProjectRecord).order_by(ProjectRecord.id.asc()))
+    return [ProjectView.model_validate(project, from_attributes=True) for project in result.all()]
+
+
+@app.post(
+    "/v1/projects/{project_id}/tokens",
+    response_model=ProjectTokenCreated,
+    dependencies=[Depends(require_admin)],
+)
+async def create_project_token(
+    project_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
+    payload: ProjectTokenCreateRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    project = await session.get(ProjectRecord, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    raw_token = secrets.token_urlsafe(32)
+    token_record = ProjectTokenRecord(
+        project_id=project_id,
+        name=payload.name,
+        role=payload.role,
+        token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+    )
+    session.add(token_record)
+    audit_event(
+        session,
+        action="project.token.create",
+        resource_type="project",
+        resource_id=project_id,
+        details={"token_name": payload.name, "role": payload.role},
+    )
+    await session.commit()
+    await session.refresh(token_record)
+    return ProjectTokenCreated(
+        id=token_record.id,
+        project_id=project_id,
+        name=token_record.name,
+        role=token_record.role,
+        token=raw_token,
+    )
+
+
+@app.get(
+    "/v1/projects/{project_id}/tokens",
+    response_model=list[ProjectTokenView],
+    dependencies=[Depends(require_admin)],
+)
+async def list_project_tokens(
+    project_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    if await session.get(ProjectRecord, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    result = await session.scalars(
+        select(ProjectTokenRecord)
+        .where(ProjectTokenRecord.project_id == project_id)
+        .order_by(ProjectTokenRecord.created_at.desc())
+    )
+    return [
+        ProjectTokenView.model_validate(token, from_attributes=True)
+        for token in result.all()
+    ]
+
+
+@app.delete(
+    "/v1/projects/{project_id}/tokens/{token_id}",
+    status_code=204,
+    dependencies=[Depends(require_admin)],
+)
+async def revoke_project_token(
+    project_id: Annotated[str, Path(min_length=1, max_length=80, pattern=PROVIDER_ID_PATTERN.pattern)],
+    token_id: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    token = await session.scalar(
+        select(ProjectTokenRecord).where(
+            ProjectTokenRecord.id == token_id,
+            ProjectTokenRecord.project_id == project_id,
+        )
+    )
+    if token is None:
+        raise HTTPException(status_code=404, detail="Project token not found")
+    if token.revoked_at is None:
+        token.revoked_at = datetime.now(UTC)
+        audit_event(
+            session,
+            action="project.token.revoke",
+            resource_type="project",
+            resource_id=project_id,
+            details={"token_id": token_id, "token_name": token.name},
+        )
+        await session.commit()
+
+
 @app.get(
     "/v1/providers",
     response_model=list[ProviderView],
-    dependencies=[Depends(require_api_token)],
+    dependencies=[Depends(require_admin)],
 )
 async def list_providers(session: Annotated[AsyncSession, Depends(get_session)]):
     result = await session.scalars(
@@ -314,12 +477,14 @@ async def select_provider(
     result = await session.scalars(
         select(ProviderRecord).where(ProviderRecord.enabled.is_(True))
     )
+    scoped = await scope_project_providers(
+        session, principal, payload.capability, result.all()
+    )
     excluded = set(payload.exclude)
     candidates = [
         record
-        for record in result.all()
-        if payload.capability in record.capabilities
-        and record.id not in excluded
+        for record in scoped
+        if record.id not in excluded
         and record.health_status != "unhealthy"
     ]
     if not candidates:
@@ -405,6 +570,7 @@ async def ai_chat(
                 action="ai.chat.failure",
                 resource_type="provider",
                 resource_id=record.id,
+                actor=principal.actor,
                 details={
                     "adapter_type": record.adapter_type,
                     "model": record.model,
@@ -442,6 +608,7 @@ async def ai_chat(
             action="ai.chat.success",
             resource_type="provider",
             resource_id=record.id,
+            actor=principal.actor,
             details={
                 "adapter_type": record.adapter_type,
                 "model": record.model,
