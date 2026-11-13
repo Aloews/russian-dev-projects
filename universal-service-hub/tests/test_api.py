@@ -181,3 +181,118 @@ def test_invalid_provider_id_is_rejected(monkeypatch, tmp_path):
 def test_normalizes_standard_postgres_urls():
     settings = Settings(database_url="postgresql://user:pass@db.example/hub")
     assert settings.database_url == "postgresql+asyncpg://user:pass@db.example/hub"
+
+
+def ai_provider_payload(priority: int, api_key_env: str = "TEST_AI_API_KEY"):
+    return {
+        "name": "AI Provider",
+        "capabilities": ["ai.chat"],
+        "priority": priority,
+        "enabled": True,
+        "adapter_type": "openai_compatible",
+        "model": "model-test",
+        "base_url": "https://api.example/v1",
+        "api_key_env": api_key_env,
+        "supports_idempotency": True,
+    }
+
+
+def test_ai_chat_routes_to_configured_adapter(monkeypatch, tmp_path):
+    from app.adapters import AdapterResult
+
+    class FakeAdapter:
+        async def chat(self, **kwargs):
+            assert kwargs["api_key"] == "fake-ai-key"
+            return AdapterResult(content="generated", usage={"total_tokens": 4})
+
+    monkeypatch.setenv("TEST_AI_API_KEY", "fake-ai-key")
+    monkeypatch.setattr("app.main.create_ai_adapter", lambda adapter_type: FakeAdapter())
+    with client_with_providers(monkeypatch, "[]", tmp_path / "ai.db") as client:
+        provider = client.put(
+            "/v1/providers/starimg",
+            json=ai_provider_payload(priority=100, api_key_env="TEST_AI_API_KEY"),
+        )
+        assert provider.status_code == 200
+        assert provider.json()["credentials_configured"] is True
+        response = client.post(
+            "/v1/ai/chat",
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert response.status_code == 200
+        assert response.json()["provider_id"] == "starimg"
+        assert response.json()["content"] == "generated"
+        assert "fake-ai-key" not in response.text
+
+
+def test_ai_chat_fails_over_only_with_idempotency_key(monkeypatch, tmp_path):
+    from app.adapters import AdapterResult, ProviderAdapterError
+
+    class FailThenSucceedAdapter:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise ProviderAdapterError(
+                    "provider_http_503",
+                    status_code=503,
+                    retryable=True,
+                )
+            return AdapterResult(content="backup response", usage={})
+
+    fake_adapter = FailThenSucceedAdapter()
+    monkeypatch.setenv("TEST_AI_API_KEY", "fake-ai-key")
+    monkeypatch.setattr("app.main.create_ai_adapter", lambda adapter_type: fake_adapter)
+    with client_with_providers(monkeypatch, "[]", tmp_path / "failover.db") as client:
+        client.put(
+            "/v1/providers/primary",
+            json=ai_provider_payload(priority=100),
+        )
+        client.put(
+            "/v1/providers/backup",
+            json=ai_provider_payload(priority=50),
+        )
+        response = client.post(
+            "/v1/ai/chat",
+            json={
+                "messages": [{"role": "user", "content": "Hello"}],
+                "idempotency_key": "request-key-12345",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["provider_id"] == "backup"
+        assert response.json()["attempts"] == 2
+        providers = {item["id"]: item for item in client.get("/v1/providers").json()}
+        assert providers["primary"]["health_status"] == "unhealthy"
+
+
+def test_ai_chat_does_not_retry_billable_request_without_idempotency(monkeypatch, tmp_path):
+    from app.adapters import ProviderAdapterError
+
+    class AlwaysFailAdapter:
+        async def chat(self, **kwargs):
+            raise ProviderAdapterError(
+                "provider_http_503",
+                status_code=503,
+                retryable=True,
+            )
+
+    monkeypatch.setenv("TEST_AI_API_KEY", "fake-ai-key")
+    monkeypatch.setattr("app.main.create_ai_adapter", lambda adapter_type: AlwaysFailAdapter())
+    with client_with_providers(monkeypatch, "[]", tmp_path / "no-retry.db") as client:
+        client.put("/v1/providers/primary", json=ai_provider_payload(priority=100))
+        client.put("/v1/providers/backup", json=ai_provider_payload(priority=50))
+        response = client.post(
+            "/v1/ai/chat",
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+        assert response.status_code == 502
+
+
+def test_ai_provider_rejects_insecure_or_secret_bearing_base_url(monkeypatch, tmp_path):
+    with client_with_providers(monkeypatch, "[]", tmp_path / "unsafe-url.db") as client:
+        payload = ai_provider_payload(priority=100)
+        payload["base_url"] = "https://api.example/v1?api_key=leak"
+        response = client.put("/v1/providers/unsafe", json=payload)
+        assert response.status_code == 422
