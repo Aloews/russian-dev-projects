@@ -43,17 +43,17 @@ impl InfisicalClient {
     async fn access_token(&self) -> ApiResult<String> {
         {
             let cached = self.token_cache.read().await;
-            if let Some((token, expires_at)) = cached.as_ref() {
-                if *expires_at > Instant::now() + Duration::from_secs(30) {
-                    return Ok(token.clone());
-                }
+            if let Some((token, expires_at)) = cached.as_ref()
+                && *expires_at > Instant::now() + Duration::from_secs(30)
+            {
+                return Ok(token.clone());
             }
         }
         let mut cached = self.token_cache.write().await;
-        if let Some((token, expires_at)) = cached.as_ref() {
-            if *expires_at > Instant::now() + Duration::from_secs(30) {
-                return Ok(token.clone());
-            }
+        if let Some((token, expires_at)) = cached.as_ref()
+            && *expires_at > Instant::now() + Duration::from_secs(30)
+        {
+            return Ok(token.clone());
         }
         let response = self.http.post(format!("{}/api/v1/auth/universal-auth/login", self.base_url.trim_end_matches('/')))
             .form(&[("clientId", self.client_id.as_str()), ("clientSecret", self.client_secret.as_str())])
@@ -607,10 +607,10 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
         || body.messages.iter().any(|m| !["system","user","assistant"].contains(&m.role.as_str()) || m.content.len() > 200_000) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_ai_request"));
     }
-    if let Some(key) = body.idempotency_key.as_deref() {
-        if key.len() < 8 || key.len() > 128 || !key.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) {
-            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_idempotency_key"));
-        }
+    if let Some(key) = body.idempotency_key.as_deref()
+        && (key.len() < 8 || key.len() > 128 || !key.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)))
+    {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_idempotency_key"));
     }
     let allowed_ids: Option<Vec<String>> = if let Some(project_id) = principal.project_id.as_deref() {
         let project = sqlx::query("SELECT allowed_capabilities,allowed_provider_ids FROM projects WHERE id=$1")
