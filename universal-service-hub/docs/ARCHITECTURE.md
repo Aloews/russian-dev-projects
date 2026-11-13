@@ -14,7 +14,7 @@ The Hub is a control plane, not a proxy for arbitrary provider traffic. It owns 
 
 ## Infrastructure account verification
 
-The Rust runtime includes read-only account/API checks for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API, Neon, Supabase Storage, Cloudflare R2 and Backblaze B2. It resolves credentials through Infisical, uses fixed HTTPS endpoints, bounded timeouts, no redirects, normalized responses and redacted audit events. Supabase Storage bucket inventory, R2 bucket inventory and B2 account authorization are supported; object transfer and generic S3 operations are not. A self-managed PostgreSQL connection probe uses a secret URL, forces TLS, rejects private destinations and runs a read-only SELECT 1. Redis connectivity requires rediss://, rejects private destinations and sends a read-only PING.
+The Rust runtime includes read-only account/API checks for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API, Neon, Supabase Storage, Cloudflare R2 and Backblaze B2. It resolves credentials through Infisical, uses fixed HTTPS endpoints, bounded timeouts, no redirects, normalized responses and redacted audit events. Supabase Storage bucket inventory, R2 bucket inventory, B2 account authorization and S3-compatible SigV4 bucket verification are supported for AWS S3, Cloudflare R2, Supabase Storage S3 protocol and Backblaze B2. Object upload/download lifecycle operations are not yet implemented. A self-managed PostgreSQL connection probe uses a secret URL, forces TLS, rejects private destinations and runs a read-only SELECT 1. Redis connectivity requires rediss://, rejects private destinations and sends a read-only PING.
 
 ## Target architecture
 
