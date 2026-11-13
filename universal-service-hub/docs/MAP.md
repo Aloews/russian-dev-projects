@@ -53,7 +53,7 @@ Branch: `feat/ush-provider-api-adapters-final`, layered on the latest observed R
 - Read-only account checks: Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon.
 - Storage management checks: Cloudflare R2 bucket inventory and Backblaze B2 account authorization.
 - Authenticated `POST /v1/integrations/{provider_id}/verify` resolves credentials through Infisical and uses fixed HTTPS endpoints, bounded timeouts, no redirects, normalized responses and redacted audit events.
-- These checks do not provision hosting resources or perform object upload/download. Generic S3 object operations and Redis remain outstanding. A read-only PostgreSQL wire-protocol probe now enforces TLS and executes SELECT 1.
+- These checks do not provision hosting resources or perform object upload/download. Generic S3 object operations remain outstanding. Read-only PostgreSQL and Redis probes enforce TLS and execute SELECT 1 and PING respectively.
 - PR and exact-SHA CI validation are required before merge.
 
 ## Work in progress
