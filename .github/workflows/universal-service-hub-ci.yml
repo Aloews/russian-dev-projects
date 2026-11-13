@@ -12,7 +12,25 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: universal-service-hub/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --all-targets
+
+  python-compat:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -30,5 +48,3 @@ jobs:
         run: ruff check app tests
       - name: Tests
         run: pytest -q
-      - name: Docker build
-        run: docker build -t universal-service-hub:test .
