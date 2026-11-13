@@ -9,7 +9,7 @@ from time import perf_counter
 from typing import Annotated
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Path
+from fastapi import Depends, FastAPI, HTTPException, Path, Query
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,11 +17,12 @@ from app.adapters import ProviderAdapterError, create_ai_adapter
 from app.auth import require_api_token
 from app.config import get_settings
 from app.database import create_database, get_session
-from app.models import Base, ProviderRecord
+from app.models import AuditEvent, Base, ProviderRecord
 from app.outbound import UnsafeDestinationError, ensure_public_destination
 from app.schemas import (
     AIChatRequest,
     AIChatResponse,
+    AuditEventView,
     HealthCheckResult,
     ProviderHealthProbeRequest,
     ProviderSelectionRequest,
@@ -31,6 +32,25 @@ from app.schemas import (
 )
 
 PROVIDER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+$")
+
+
+def audit_event(
+    session: AsyncSession,
+    *,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    details: dict | None = None,
+) -> None:
+    session.add(
+        AuditEvent(
+            actor="service-token",
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            details=details or {},
+        )
+    )
 
 
 def view(record: ProviderRecord) -> ProviderView:
@@ -165,6 +185,21 @@ async def list_providers(session: Annotated[AsyncSession, Depends(get_session)])
     return [view(record) for record in result.all()]
 
 
+@app.get(
+    "/v1/audit",
+    response_model=list[AuditEventView],
+    dependencies=[Depends(require_api_token)],
+)
+async def list_audit_events(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+):
+    result = await session.scalars(
+        select(AuditEvent).order_by(AuditEvent.occurred_at.desc(), AuditEvent.id.desc()).limit(limit)
+    )
+    return result.all()
+
+
 @app.put(
     "/v1/providers/{provider_id}",
     response_model=ProviderView,
@@ -194,6 +229,19 @@ async def upsert_provider(
     record.checked_at = None
     record.latency_ms = None
     record.health_detail = None
+    audit_event(
+        session,
+        action="provider.upsert",
+        resource_type="provider",
+        resource_id=provider_id,
+        details={
+            "adapter_type": payload.adapter_type,
+            "model": payload.model,
+            "capabilities": payload.capabilities,
+            "enabled": payload.enabled,
+            "priority": payload.priority,
+        },
+    )
     await session.commit()
     await session.refresh(record)
     return view(record)
@@ -211,6 +259,13 @@ async def delete_provider(
     record = await session.get(ProviderRecord, provider_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Provider not found")
+    audit_event(
+        session,
+        action="provider.delete",
+        resource_type="provider",
+        resource_id=provider_id,
+        details={"adapter_type": record.adapter_type},
+    )
     await session.delete(record)
     await session.commit()
 
@@ -345,6 +400,18 @@ async def ai_chat(
                 record.health_detail = exc.kind
             else:
                 record.health_detail = "provider_rate_limited"
+            audit_event(
+                session,
+                action="ai.chat.failure",
+                resource_type="provider",
+                resource_id=record.id,
+                details={
+                    "adapter_type": record.adapter_type,
+                    "model": record.model,
+                    "failure": exc.kind,
+                    "status_code": exc.status_code,
+                },
+            )
             await session.commit()
             can_failover = (
                 exc.retryable
@@ -365,6 +432,24 @@ async def ai_chat(
         record.health_detail = None
         record.checked_at = datetime.now(UTC)
         record.latency_ms = latency_ms
+        safe_usage = {
+            key: value
+            for key, value in result.usage.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        audit_event(
+            session,
+            action="ai.chat.success",
+            resource_type="provider",
+            resource_id=record.id,
+            details={
+                "adapter_type": record.adapter_type,
+                "model": record.model,
+                "latency_ms": latency_ms,
+                "attempts": attempts,
+                "usage": safe_usage,
+            },
+        )
         await session.commit()
         return AIChatResponse(
             provider_id=record.id,
