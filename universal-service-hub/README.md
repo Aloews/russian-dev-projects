@@ -4,7 +4,7 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Current status
 
-**Development control plane / not production-ready.** The Hub has authenticated provider management, PostgreSQL persistence, health checks, deterministic capability selection and real HTTP adapters for OpenAI-compatible, Anthropic-compatible and Gemini chat APIs. Managed secret-store integration, non-AI vendor adapters and production deployment are still outstanding. Project-scoped API tokens and role-based invocation access are implemented. Provider changes and AI usage metadata are recorded in a durable audit trail.
+**Rust runtime migration in progress / not production-ready.** The production container has been switched to an Axum/Tokio/SQLx Rust binary. Rust currently implements health/readiness, PostgreSQL-backed project and token management, provider registry/selection, safe health probes, audit reads and initial OpenAI-compatible/Anthropic/Gemini chat routing. The legacy FastAPI implementation remains as a temporary compatibility reference while endpoint parity and security tests are completed. Production deployment, managed secrets, non-AI adapters, full project lifecycle parity and live provider verification remain outstanding.
 
 ## Run locally
 
@@ -45,7 +45,7 @@ Provider management:
 AI:
 - `POST /v1/ai/chat` — route a chat request to a configured AI provider (admin or project owner/operator token)
 
-Project tokens have `owner`, `operator` or `viewer` roles. `owner` and `operator` can invoke AI; all three project roles can use read-only provider selection. `owner` can also issue/revoke operator and viewer tokens for its own project. Only the root administrator can issue owner tokens or change/delete projects. `viewer` cannot invoke AI. Project capability and optional provider allowlists are enforced server-side. Tokens are generated randomly, stored only as SHA-256 hashes and returned only at creation; revoked tokens are rejected.
+Project tokens have `owner`, `operator` or `viewer` roles. The current Rust runtime enforces owner/operator execution access, project capability/provider allowlists, random one-time token issuance and SHA-256 token storage. Full token listing, owner-managed token lifecycle and project update/delete parity are still being ported; use the root administrator for token lifecycle operations until that work passes CI.
 
 ## AI provider configuration
 
@@ -118,4 +118,4 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 9. Deployment controllers, staged rollout, synthetic monitoring and automated rollback.
 10. Multi-project dashboard, budget controls and operator notifications.
 
-See [ARCHITECTURE.md](./docs/ARCHITECTURE.md), [SECURITY.md](./docs/SECURITY.md), and [OPERATIONS.md](./docs/OPERATIONS.md).
+See [ARCHITECTURE.md](./docs/ARCHITECTURE.md), [SECURITY.md](./docs/SECURITY.md), [OPERATIONS.md](./docs/OPERATIONS.md), and [INTEGRATION_PLAN.md](./docs/INTEGRATION_PLAN.md).
