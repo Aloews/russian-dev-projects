@@ -235,8 +235,8 @@ def test_ai_chat_fails_over_only_with_idempotency_key(monkeypatch, tmp_path):
             self.calls += 1
             if self.calls == 1:
                 raise ProviderAdapterError(
-                    "provider_http_503",
-                    status_code=503,
+                    "provider_http_429",
+                    status_code=429,
                     retryable=True,
                 )
             return AdapterResult(content="backup response", usage={})
@@ -287,7 +287,7 @@ def test_ai_chat_does_not_retry_billable_request_without_idempotency(monkeypatch
             "/v1/ai/chat",
             json={"messages": [{"role": "user", "content": "Hello"}]},
         )
-        assert response.status_code == 502
+        assert response.status_code == 429
 
 
 def test_ai_provider_rejects_insecure_or_secret_bearing_base_url(monkeypatch, tmp_path):
