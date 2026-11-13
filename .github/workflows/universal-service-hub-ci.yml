@@ -14,6 +14,20 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ush
+          POSTGRES_PASSWORD: ush-test-password
+          POSTGRES_DB: ush_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ush -d ush_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: universal-service-hub
@@ -27,7 +41,11 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
       - name: Ruff
-        run: ruff check app tests
+        run: ruff check app tests migrations
+      - name: Migration smoke test
+        env:
+          USH_DATABASE_URL: postgresql+asyncpg://ush:ush-test-password@localhost:5432/ush_test
+        run: alembic upgrade head
       - name: Tests
         run: pytest -q
       - name: Docker build

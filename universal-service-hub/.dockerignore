@@ -5,3 +5,6 @@ __pycache__
 .ruff_cache
 .env
 *.py[cod]
+*.db
+*.sqlite
+*.sqlite3

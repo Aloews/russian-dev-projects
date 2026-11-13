@@ -4,7 +4,7 @@ import json
 from functools import lru_cache
 from typing import Any
 
-from pydantic import BaseModel, Field, SecretStr, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,7 +23,18 @@ class Settings(BaseSettings):
     app_name: str = "Universal Service Hub"
     environment: str = "development"
     api_token: SecretStr | None = Field(default=None, min_length=32)
+    database_url: str = "sqlite+aiosqlite:///./ush.db"
     providers_json: str = "[]"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            if value.startswith("postgres://"):
+                return value.replace("postgres://", "postgresql+asyncpg://", 1)
+            if value.startswith("postgresql://"):
+                return value.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return value
 
     def providers(self) -> list[ProviderConfig]:
         try:
