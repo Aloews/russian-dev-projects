@@ -443,7 +443,7 @@ async fn upsert_provider(State(state): State<AppState>, headers: HeaderMap, Path
     if let Some(url) = body.base_url.as_deref() { validate_https_url(url)?; }
     if let Some(url) = body.health_url.as_deref() { validate_https_url(url)?; }
     if body.adapter_type != "none" {
-        if body.model.as_deref().is_none_or(str::is_empty) || body.base_url.is_none() || body.api_key_env.as_deref().is_none_or(|v| v.len() < 2 || v.len() > 120 || !v.chars().next().is_some_and(|c| c.is_ascii_uppercase()) || !v.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')) {
+        if body.model.as_deref().is_none_or(str::is_empty) || body.base_url.is_none() || body.api_key_env.as_deref().is_none_or(|v| !(2..=120).contains(&v.len()) || !v.chars().next().is_some_and(|c| c.is_ascii_uppercase()) || !v.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')) {
             return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "incomplete_ai_provider"));
         }
         if body.adapter_type == "gemini" && body.supports_idempotency {
