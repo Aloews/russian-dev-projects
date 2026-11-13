@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use subtle::ConstantTimeEq;
-use tower_http::trace::TraceLayer;
+use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -367,7 +367,7 @@ async fn health_check(State(state): State<AppState>, headers: HeaderMap, Json(bo
         let (status, detail) = if let Some(raw_url) = health_url {
             match validate_https_url(&raw_url) {
                 Ok(url) => match ensure_public_destination(&url).await {
-                    Ok(()) => match state.http.get(url).timeout(Duration::from_secs_f64(timeout)).send().await {
+                    Ok(()) => match state.http.get(url).timeout(Duration::from_secs_f64(timeout.clamp(0.1, 30.0))).send().await {
                         Ok(response) if response.status().is_success() => ("healthy","http_success"),
                         Ok(response) => ("unhealthy", if response.status().is_server_error() { "http_5xx" } else { "http_non_success" }),
                         Err(_) => ("unhealthy","connection_failed"),
@@ -615,7 +615,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/providers/select", post(select_provider))
         .route("/v1/audit", get(list_audit))
         .with_state(state)
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
     let address: IpAddr = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into()).parse()?;
     let port: u16 = env::var("PORT").unwrap_or_else(|_| "8000".into()).parse()?;
     let listener = tokio::net::TcpListener::bind(SocketAddr::new(address, port)).await?;
