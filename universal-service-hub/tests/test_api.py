@@ -288,7 +288,7 @@ def test_ai_chat_does_not_retry_billable_request_without_idempotency(monkeypatch
     monkeypatch.setattr("app.main.create_ai_adapter", lambda adapter_type: AlwaysFailAdapter())
     with client_with_providers(monkeypatch, "[]", tmp_path / "no-retry.db") as client:
         client.put("/v1/providers/primary", json=ai_provider_payload(priority=100))
-        client.put("/v1/providers/backup", json=provider_payload(priority=200))
+        client.put("/v1/providers/backup", json=ai_provider_payload(priority=50))
         response = client.post(
             "/v1/ai/chat",
             json={"messages": [{"role": "user", "content": "Hello"}]},
@@ -451,7 +451,7 @@ def test_project_token_can_only_route_allowed_provider_and_capability(monkeypatc
     monkeypatch.setattr("app.main.create_ai_adapter", lambda adapter_type: FakeAdapter())
     with client_with_providers(monkeypatch, "[]", tmp_path / "scoped.db") as client:
         client.put("/v1/providers/primary", json=ai_provider_payload(priority=100))
-        client.put("/v1/providers/backup", json=ai_provider_payload(priority=50))
+        client.put("/v1/providers/backup", json=provider_payload(priority=200))
         client.post(
             "/v1/projects",
             json={
