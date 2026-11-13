@@ -22,6 +22,10 @@ struct Provider {
     api_base_url: Option<String>,
     #[serde(default)]
     verify_path: Option<String>,
+    #[serde(default)]
+    verify_method: Option<String>,
+    #[serde(default)]
+    verify_body: Option<serde_json::Value>,
     #[serde(default, skip_serializing)]
     api_token_env: Option<String>,
     #[serde(default = "default_timeout")]
@@ -92,7 +96,12 @@ async fn probe_one(state: &AppState, index: usize) {
     });
     let Some(url) = url else { return };
     let started = std::time::Instant::now();
-    let mut request = state.client.get(url);
+    let method = snapshot.provider.verify_method.as_deref().unwrap_or("GET")
+        .parse::<reqwest::Method>().unwrap_or(reqwest::Method::GET);
+    let mut request = state.client.request(method, url);
+    if let Some(body) = &snapshot.provider.verify_body {
+        request = request.json(body);
+    }
     if let Some(token_env) = &snapshot.provider.api_token_env {
         match env::var(token_env) {
             Ok(token) if !token.trim().is_empty() => { request = request.bearer_auth(token); }
@@ -168,7 +177,7 @@ mod tests {
     fn state(id: &str, priority: i32, health: &str) -> ProviderState {
         ProviderState {
             provider: Provider { id:id.into(), name:id.into(), capabilities:vec!["compute".into()],
-                priority, enabled:true, health_url:None, api_base_url:None, verify_path:None, api_token_env:None, timeout_seconds:5 },
+                priority, enabled:true, health_url:None, api_base_url:None, verify_path:None, verify_method:None, verify_body:None, api_token_env:None, timeout_seconds:5 },
             health_status:health.into(), checked_at:None, latency_ms:None, detail:None
         }
     }
