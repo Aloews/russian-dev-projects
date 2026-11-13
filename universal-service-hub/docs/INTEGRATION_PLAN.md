@@ -64,6 +64,9 @@ S3-compatible object storage:
 PostgreSQL data-plane connectivity:
 - Self-managed PostgreSQL: adapter type `postgresql`, with a secret reference such as `POSTGRESQL_DATABASE_URL`. The verifier requires a PostgreSQL URL, rejects private/local destinations, forces TLS, opens a single-connection pool, executes `SELECT 1`, then closes the pool. It does not run migrations or modify data.
 
+Private-network access:
+- Public destinations are the default. For self-managed PostgreSQL or Railway/Northflank Redis reachable only over a private service network, configure `USH_ALLOWED_PRIVATE_HOSTS` as a comma-separated list of exact DNS hostnames (no wildcards, no IP literals). The verifier permits only RFC1918/ULA addresses for those exact names; loopback, link-local and cloud metadata addresses remain blocked. Keep the allowlist minimal and deploy the Hub inside the same private network.
+
 Redis data-plane connectivity:
 - Railway Redis, Northflank Redis and other Redis-compatible services: adapter type `redis`, with a secret reference such as `REDIS_URL`. The verifier requires a `rediss://` URL, rejects private/local destinations, opens one bounded async connection and sends `PING`. It never writes keys or data.
 
