@@ -25,7 +25,7 @@ Public:
 - `GET /healthz`
 - `GET /readyz`
 
-Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This root token must be at least 32 characters. Project runtime endpoints accept project tokens issued by the administrator. Production startup fails if the root token is missing or the database URL is not PostgreSQL.
+Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This root token must be at least 32 characters. Project runtime endpoints accept project tokens issued by the administrator. Production startup fails if the root token is missing or the database URL is not PostgreSQL. Set `USH_ENVIRONMENT=production`; production requires `USH_SECRET_BACKEND=infisical` and a complete Infisical machine identity configuration.
 
 Provider management:
 - `GET /v1/providers` — list providers
