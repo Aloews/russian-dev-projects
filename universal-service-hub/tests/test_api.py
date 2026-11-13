@@ -458,7 +458,7 @@ def test_project_token_can_only_route_allowed_provider_and_capability(monkeypatc
                 "id": "alpha",
                 "name": "Alpha Project",
                 "allowed_capabilities": ["ai.chat"],
-                "allowed_provider_ids": ["primary"],
+                "allowed_provider_ids": ["primary", "backup"],
             },
         )
         token_response = client.post(
@@ -467,6 +467,14 @@ def test_project_token_can_only_route_allowed_provider_and_capability(monkeypatc
         )
         token = token_response.json()["token"]
         headers = {"Authorization": f"Bearer {token}"}
+
+        selection = client.post(
+            "/v1/providers/select",
+            headers=headers,
+            json={"capability": "ai.chat"},
+        )
+        assert selection.status_code == 200
+        assert selection.json()["provider"]["id"] == "primary"
 
         response = client.post(
             "/v1/ai/chat",
