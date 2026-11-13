@@ -178,11 +178,7 @@ async def readyz(session: Annotated[AsyncSession, Depends(get_session)]):
     return {"status": "ready", "providers_configured": count or 0}
 
 
-@app.post(
-    "/v1/projects",
-    response_model=ProjectView,
-    dependencies=[Depends(require_admin)],
-)
+@app.post("/v1/projects", response_model=ProjectView)
 async def create_project(
     payload: ProjectCreateRequest,
     request: Request,
@@ -217,11 +213,7 @@ async def list_projects(session: Annotated[AsyncSession, Depends(get_session)]):
     return [ProjectView.model_validate(project, from_attributes=True) for project in result.all()]
 
 
-@app.post(
-    "/v1/api-keys",
-    response_model=ApiKeyCreatedResponse,
-    dependencies=[Depends(require_admin)],
-)
+@app.post("/v1/api-keys", response_model=ApiKeyCreatedResponse)
 async def create_api_key(
     payload: ApiKeyCreateRequest,
     request: Request,
@@ -280,11 +272,7 @@ async def list_api_keys(session: Annotated[AsyncSession, Depends(get_session)]):
     return [ApiKeyView.model_validate(key, from_attributes=True) for key in result.all()]
 
 
-@app.delete(
-    "/v1/api-keys/{key_id}",
-    status_code=204,
-    dependencies=[Depends(require_admin)],
-)
+@app.delete("/v1/api-keys/{key_id}", status_code=204)
 async def revoke_api_key(
     key_id: Annotated[str, Path(min_length=36, max_length=36)],
     request: Request,
