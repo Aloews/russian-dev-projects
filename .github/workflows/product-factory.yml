@@ -42,7 +42,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: product-factory-${{ github.event.inputs.target_repo || 'Aloews/full' }}-${{ github.event.inputs.target_branch || 'factory/elite-estate-rc3' }}
+  group: product-factory-${{ github.event.inputs.target_repo || format('issue-{0}', github.event.issue.number) || 'Aloews/full' }}-${{ github.event.inputs.target_branch || format('task-{0}', github.event.issue.number) || 'factory/elite-estate-rc3' }}
   cancel-in-progress: false
 
 jobs:
@@ -56,10 +56,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      TARGET_REPO: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-      TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'factory/elite-estate-rc3' }}
-      BASE_BRANCH: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
-      OBJECTIVE: ${{ github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality. Implement real user journeys, security, tests and documentation. Do not merge or deploy.' }}
+      TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
+      TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc3' }}
+      BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+      OBJECTIVE: ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality. Implement real user journeys, security, tests and documentation. Do not merge or deploy.' }}
 
     steps:
       - name: Check out Product Factory control repository
@@ -92,8 +92,8 @@ jobs:
       - name: Check out target product repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          repository: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-          ref: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+          repository: ${{ env.TARGET_REPO }}
+          ref: ${{ env.BASE_BRANCH }}
           token: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
           path: target
           fetch-depth: 0
@@ -292,8 +292,8 @@ jobs:
         id: verify_candidate
         uses: ./factory/.github/actions/product-factory-verify
         with:
-          target_repo: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-          base_branch: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+          target_repo: ${{ env.TARGET_REPO }}
+          base_branch: ${{ env.BASE_BRANCH }}
           github_token: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
           candidate_artifact: candidate-0
           verification_artifact: verification-0
@@ -304,8 +304,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
-      TARGET_REPO: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-      BASE_BRANCH: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+      TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
+      BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
     steps:
       - name: Check out Product Factory control repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
@@ -315,8 +315,8 @@ jobs:
       - name: Check out target product repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          repository: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-          ref: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+          repository: ${{ env.TARGET_REPO }}
+          ref: ${{ env.BASE_BRANCH }}
           token: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
           path: target
           fetch-depth: 0
@@ -399,8 +399,8 @@ jobs:
         id: verify_candidate
         uses: ./factory/.github/actions/product-factory-verify
         with:
-          target_repo: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-          base_branch: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+          target_repo: ${{ env.TARGET_REPO }}
+          base_branch: ${{ env.BASE_BRANCH }}
           github_token: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
           candidate_artifact: candidate-1
           verification_artifact: verification-1
@@ -411,8 +411,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
-      TARGET_REPO: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-      BASE_BRANCH: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+      TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
+      BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
     steps:
       - name: Check out Product Factory control repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
@@ -422,8 +422,8 @@ jobs:
       - name: Check out target product repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          repository: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-          ref: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+          repository: ${{ env.TARGET_REPO }}
+          ref: ${{ env.BASE_BRANCH }}
           token: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
           path: target
           fetch-depth: 0
@@ -506,8 +506,8 @@ jobs:
         id: verify_candidate
         uses: ./factory/.github/actions/product-factory-verify
         with:
-          target_repo: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-          base_branch: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+          target_repo: ${{ env.TARGET_REPO }}
+          base_branch: ${{ env.BASE_BRANCH }}
           github_token: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
           candidate_artifact: candidate-2
           verification_artifact: verification-2
@@ -522,16 +522,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      TARGET_REPO: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-      TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'factory/elite-estate-rc3' }}
-      BASE_BRANCH: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
-      OBJECTIVE: ${{ github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality.' }}
+      TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
+      TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc3' }}
+      BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+      OBJECTIVE: ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality.' }}
     steps:
       - name: Check out target product repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
-          repository: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-          ref: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+          repository: ${{ env.TARGET_REPO }}
+          ref: ${{ env.BASE_BRANCH }}
           token: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
           path: target
           fetch-depth: 0
