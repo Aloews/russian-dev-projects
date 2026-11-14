@@ -113,14 +113,14 @@ GitHub OAuth sign-in to a hosting vendor is not equivalent to granting the Hub t
 
 Branch: `feat/ush-autonomous-product-factory`, PR #21 (draft, retargeted to `main`; includes the provider-adapter work previously proposed in PR #20).
 - Railway Cloud Agent Tasks have been removed from the Product Factory runtime. Product Factory uses GitHub Actions runners and Starimg; Railway remains only an optional hosting-provider adapter in the Universal Service Hub.
-- Workflow: `.github/workflows/product-factory.yml`. Start with `workflow_dispatch`, or comment exactly `/factory run` as repository owner to start the default AUREL objective.
+- Workflow: `.github/workflows/product-factory.yml`. Start with `workflow_dispatch`, or comment exactly `/factory run` as repository owner to start the default AUREL objective. The control repo is public, so private target repos are blocked while patch/report artifacts are stored there.
 - Primary model configured: Claude Fable 5.2 through the Starimg Anthropic Messages endpoint. Live endpoint/tool-call compatibility has not yet been proven.
 - Read-only specialists: Opus 5.5 architecture/code review, Sonnet 5.5 security/privacy, Haiku 5.5 product/user-journey review.
 - Agent, verification and publication run on separate ephemeral jobs. The model gets file tools only; it cannot run shell, network, Git push, GitHub API, deployment or production-data tools. It cannot modify `.github/workflows/**` or `.github/actions/**`.
 - Verification jobs execute Rust formatting/Clippy/tests/release build, npm install/audit/lint/tests/build, required Playwright browser E2E and production API Docker build. They receive neither the Starimg key nor a write token in the test process environment.
 - Up to two repair cycles use the actual failed verification report. A fresh publication job receives only the verified patch artifact, rechecks the target and base branch SHAs, then opens/updates a PR. No target PR is auto-merged or deployed.
 - Required Actions secrets: `STARIMG_API_KEY` and target-scoped `PRODUCT_FACTORY_GITHUB_TOKEN` with Contents read/write and Pull requests read/write. Optional variables: `STARIMG_ANTHROPIC_BASE_URL`, `STARIMG_FABLE_MODEL`.
-- CI validates the workflow, composite action metadata and verification script. The exact final head still needs a complete green CI run.
+- CI validates the workflow, composite action metadata and verification script. The exact final head still needs a complete green CI run. Private product repositories require moving the control plane and artifact storage to a private repository first.
 - No live Starimg invocation has been made; no agent task has yet produced a candidate PR in `Aloews/full`.
 - PR #20 remains open as the earlier provider-adapter proposal. PR #21 contains those provider changes plus the Product Factory; close #20 as superseded after #21 is integrated.
 - First target: `Aloews/full`, working branch `factory/elite-estate`, PR base `foundation/luxury-estate-platform`.
