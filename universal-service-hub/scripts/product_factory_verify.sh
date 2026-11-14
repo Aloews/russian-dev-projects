@@ -43,7 +43,7 @@ if [[ -f "$ROOT/package-lock.json" && -f "$ROOT/package.json" ]]; then
     run_gate "Frontend lint" bash -c 'cd "$1" && npm run lint' _ "$ROOT"
   fi
   if node -e 'process.exit(require(process.argv[1]).scripts?.test ? 0 : 1)' "$ROOT/package.json"; then
-    run_gate "Frontend tests" bash -c 'cd "$1" && npm test --if-present' _ "$ROOT"
+    run_gate "Frontend tests" bash -c 'cd "$1" && npm run test --if-present' _ "$ROOT"
   fi
   if node -e 'process.exit(require(process.argv[1]).scripts?.build ? 0 : 1)' "$ROOT/package.json"; then
     run_gate "Frontend production build" bash -c 'cd "$1" && npm run build' _ "$ROOT"
