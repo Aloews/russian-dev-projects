@@ -60,6 +60,7 @@ jobs:
         env:
           STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
           PRODUCT_FACTORY_GITHUB_TOKEN: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
         run: |
           set -Eeuo pipefail
           [[ "$TARGET_REPO" =~ ^Aloews/[A-Za-z0-9._-]+$ ]] || { echo "TARGET_REPO must be an owned Aloews repository" >&2; exit 2; }
@@ -72,6 +73,8 @@ jobs:
           test -n "$PRODUCT_FACTORY_GITHUB_TOKEN" || { echo "Missing Actions secret PRODUCT_FACTORY_GITHUB_TOKEN (fine-grained token for the target repository: Contents read/write and Pull requests read/write)" >&2; exit 2; }
           command -v git
           command -v gh
+          PUSH_PERMISSION="$(gh api "repos/$TARGET_REPO" --jq '.permissions.push // false')"
+          [[ "$PUSH_PERMISSION" == "true" ]] || { echo "GitHub token lacks Contents write access to $TARGET_REPO" >&2; exit 2; }
 
       - name: Check out target product repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
@@ -92,7 +95,7 @@ jobs:
           cd target
           git rev-parse HEAD > "$RUNNER_TEMP/product-factory-base-branch.sha"
           AUTH="$(printf 'x-access-token:%s' "$PRODUCT_FACTORY_GITHUB_TOKEN" | base64 -w0)"
-          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" fetch origin "$TARGET_BRANCH" || true
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" fetch origin "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH" || true
           if git show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"; then
             git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
           else
