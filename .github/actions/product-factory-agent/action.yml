@@ -75,13 +75,17 @@ runs:
                 "Write(./.git/**)",
                 "Write(./.claude/**)",
                 "Write(./.mcp.json)",
+                "Write(./.github/workflows/**)",
+                "Write(./.github/actions/**)",
                 "Edit(./.env)",
                 "Edit(./.env.*)",
                 "Edit(./**/.env)",
                 "Edit(./**/.env.*)",
                 "Edit(./.git/**)",
                 "Edit(./.claude/**)",
-                "Edit(./.mcp.json)"
+                "Edit(./.mcp.json)",
+                "Edit(./.github/workflows/**)",
+                "Edit(./.github/actions/**)"
               ],
               "blockReadsOutsideWorkingDirectories": true,
               "blockWritesOutsideWorkingDirectories": true
