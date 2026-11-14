@@ -16,7 +16,7 @@ runs:
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ~/.ollama/models
-        key: ollama-qwen2.5-coder-3b-v1-\${{ runner.os }}
+        key: ollama-qwen2.5-coder-3b-v1-${{ runner.os }}
 
     - name: Install pinned Caveman skill source
       shell: bash
@@ -59,10 +59,10 @@ runs:
     - name: Generate bounded patch with Qwen
       shell: bash
       env:
-        TARGET_WORKDIR: \${{ github.workspace }}/target
-        OBJECTIVE: \${{ inputs.objective }}
+        TARGET_WORKDIR: ${{ github.workspace }}/target
+        OBJECTIVE: ${{ inputs.objective }}
         OLLAMA_MODEL: qwen2.5-coder:3b
-        CAVEMAN_SKILL_PATH: \${{ runner.temp }}/caveman/skills/caveman/SKILL.md
+        CAVEMAN_SKILL_PATH: ${{ runner.temp }}/caveman/skills/caveman/SKILL.md
       run: python3 "$GITHUB_ACTION_PATH/../../scripts/qwen_local_agent.py"
 
     - name: Create candidate patch
@@ -95,10 +95,10 @@ runs:
     - name: Upload candidate patch
       uses: actions/upload-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
-        name: \${{ inputs.artifact_name }}
+        name: ${{ inputs.artifact_name }}
         path: |
-          \${{ runner.temp }}/candidate.patch
-          \${{ runner.temp }}/base.sha
-          \${{ runner.temp }}/base-branch.sha
+          ${{ runner.temp }}/candidate.patch
+          ${{ runner.temp }}/base.sha
+          ${{ runner.temp }}/base-branch.sha
         if-no-files-found: error
         retention-days: 30
