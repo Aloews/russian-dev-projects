@@ -71,7 +71,7 @@ Elite Estate acceptance requires real end-to-end journeys, cross-tenant isolatio
 
 The GitHub Actions workflow `.github/workflows/product-factory.yml` invokes the Railway Cloud Agent Tasks API. Required repository secrets:
 - `RAILWAY_API_TOKEN`: account/workspace token authorized to dispatch Cloud Agent Tasks.
-- `RAILWAY_PROJECT_ID` and `RAILWAY_ENVIRONMENT_ID`: isolated agent environment IDs.
+- Project and environment IDs are pinned to the owner-authorized existing Railway agent execution environment in the workflow; they are not secrets.
 - Optional `PRODUCT_FACTORY_WEBHOOK_SECRET` is reserved for a future authenticated webhook receiver.
 
 The token is used only by the workflow and is never written to repository files. The workflow refuses to start if required credentials or target values are missing. Railway documents that new agents incur normal agent costs; keep concurrency and repair cycles bounded.
