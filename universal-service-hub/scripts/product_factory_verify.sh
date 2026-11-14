@@ -31,9 +31,9 @@ run_gate() {
 
 if [[ -f "$ROOT/Cargo.toml" ]]; then
   run_gate "Rust formatting" bash -c 'cd "$1" && cargo fmt --all -- --check' _ "$ROOT"
-  run_gate "Rust Clippy" bash -c 'cd "$1" && cargo clippy --workspace --all-targets -- -D warnings' _ "$ROOT"
-  run_gate "Rust tests" bash -c 'cd "$1" && cargo test --workspace' _ "$ROOT"
-  run_gate "Rust release build" bash -c 'cd "$1" && cargo build --release --workspace' _ "$ROOT"
+  run_gate "Rust Clippy" bash -c 'cd "$1" && cargo clippy --workspace --all-targets --locked -- -D warnings' _ "$ROOT"
+  run_gate "Rust tests" bash -c 'cd "$1" && cargo test --workspace --locked' _ "$ROOT"
+  run_gate "Rust release build" bash -c 'cd "$1" && cargo build --release --workspace --locked' _ "$ROOT"
 fi
 
 if [[ -f "$ROOT/package-lock.json" && -f "$ROOT/package.json" ]]; then
