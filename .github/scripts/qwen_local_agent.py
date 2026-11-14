@@ -251,37 +251,37 @@ def main():
     reality_path = os.environ.get("REALITY_FIRST_SKILL_PATH", "")
     if reality_path:
         try:
-            role_system += "\\n\\n" + Path(reality_path).read_text(encoding="utf-8")[:10000]
+            role_system += "\n\n" + Path(reality_path).read_text(encoding="utf-8")[:10000]
         except (OSError, UnicodeError):
             print("::error::Reality-First Business skill could not be loaded.")
             return 2
     for role_name, role_task in role_specs:
         try:
             finding = ask_ollama([
-                {"role": "system", "content": role_system + "\\n\\nROLE: " + role_name + ". " + role_task},
-                {"role": "user", "content": "OBJECTIVE:\\n" + task + "\\n\\nREPOSITORY EVIDENCE:\\n" + context},
+                {"role": "system", "content": role_system + "\n\nROLE: " + role_name + ". " + role_task},
+                {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context},
             ], max_predict=850)
         except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
             print(f"::error::Qwen {role_name} role failed: {type(exc).__name__}: {exc}")
             return 3
-        role_findings.append("## " + role_name.title() + "\\n" + finding[:3500])
+        role_findings.append("## " + role_name.title() + "\n" + finding[:3500])
         print("Qwen role completed: " + role_name)
     report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
-        "# Qwen2.5-Coder 3B multi-role review\\n\\n"
-        + "OBJECTIVE: " + task + "\\n\\n"
-        + "\\n\\n".join(role_findings) + "\\n",
+        "# Qwen2.5-Coder 3B multi-role review\n\n"
+        + "OBJECTIVE: " + task + "\n\n"
+        + "\n\n".join(role_findings) + "\n",
         encoding="utf-8",
     )
     implementation_system = system + (
-        "\\n\\nYou are the single implementation role. Reconcile the architecture, product, security and QA findings below. "
-        "Do not implement unverified assumptions. Produce only the smallest coherent source changes that satisfy the objective.\\n\\n"
-        + "\\n\\n".join(role_findings)
+        "\n\nYou are the single implementation role. Reconcile the architecture, product, security and QA findings below. "
+        "Do not implement unverified assumptions. Produce only the smallest coherent source changes that satisfy the objective.\n\n"
+        + "\n\n".join(role_findings)
     )
     messages = [
         {"role": "system", "content": implementation_system},
-        {"role": "user", "content": "OBJECTIVE:\\n" + task + "\\n\\nREPOSITORY EVIDENCE:\\n" + context + "\\n\\nProduce minimal structured edits only, following the JSON schema."},
+        {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context + "\n\nProduce minimal structured edits only, following the JSON schema."},
     ]
     tracked_set = set(tracked)
     for attempt in range(3):
@@ -306,13 +306,13 @@ def main():
     diff = git("diff").stdout[:16000]
     try:
         qa_review = ask_ollama([
-            {"role": "system", "content": role_system + "\\n\\nYou are the independent post-change QA reviewer. Do not edit files. Return blockers, regressions, missing tests and exact file paths. If none, state 'BLOCKERS: none'."},
-            {"role": "user", "content": "OBJECTIVE:\\n" + task + "\\n\\nIMPLEMENTATION DIFF:\\n" + diff},
+            {"role": "system", "content": role_system + "\n\nYou are the independent post-change QA reviewer. Do not edit files. Return blockers, regressions, missing tests and exact file paths. If none, state 'BLOCKERS: none'."},
+            {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nIMPLEMENTATION DIFF:\n" + diff},
         ], max_predict=1000)
     except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
         qa_review = "QA review unavailable: " + type(exc).__name__
     with report_path.open("a", encoding="utf-8") as report:
-        report.write("\\n\\n## Independent Qwen QA review\\n\\n" + qa_review[:5000] + "\\n")
+        report.write("\n\n## Independent Qwen QA review\n\n" + qa_review[:5000] + "\n")
     print("Qwen multi-role team completed: architecture, product, security, implementation and QA")
     changed = set(git("diff", "--name-only").stdout.splitlines())
     changed.update(git("ls-files", "--others", "--exclude-standard").stdout.splitlines())
