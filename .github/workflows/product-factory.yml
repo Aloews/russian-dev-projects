@@ -1,8 +1,9 @@
 name: Autonomous Product Factory
 
 on:
-  push:
-    branches: ["feat/ush-autonomous-product-factory"]
+  pull_request:
+    branches: ["feat/ush-provider-api-adapters-on-main"]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       target_repo:
