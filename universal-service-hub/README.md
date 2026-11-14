@@ -1,5 +1,7 @@
 # Universal Service Hub
 
+[Project map](./docs/MAP.md) — architecture, operating contract and agent-toolchain status.
+
 A provider-neutral control plane for the user's applications. It is designed to discover, register, evaluate and route workloads across interchangeable infrastructure and AI providers.
 
 ## Current status
