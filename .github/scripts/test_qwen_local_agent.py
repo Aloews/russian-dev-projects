@@ -46,21 +46,40 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
-    def test_full_file_replacement_with_empty_old_is_bounded(self):
+    def test_similar_full_file_replacement_with_empty_old_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT
             try:
                 agent.ROOT = Path(directory)
                 source = agent.ROOT / "src/main.py"
                 source.parent.mkdir(parents=True)
-                source.write_text("A" * 600, encoding="utf-8")
-                replacement = "B" * 400
+                original = "def get_value():\\n    return 1\\n\\n"
+                source.write_text(original, encoding="utf-8")
+                replacement = original.replace("return 1", "return 2") + "# verified\\n"
                 changed = agent.apply_edits(
                     [{"path": "src/main.py", "old": "", "new": replacement}],
                     {"src/main.py"},
                 )
                 self.assertEqual(changed, ["src/main.py"])
                 self.assertEqual(source.read_text(encoding="utf-8"), replacement)
+            finally:
+                agent.ROOT = previous_root
+
+    def test_unrelated_full_file_replacement_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "src/main.py"
+                source.parent.mkdir(parents=True)
+                original = "A" * 600
+                source.write_text(original, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "substantially similar"):
+                    agent.apply_edits(
+                        [{"path": "src/main.py", "old": "", "new": "B" * 400}],
+                        {"src/main.py"},
+                    )
+                self.assertEqual(source.read_text(encoding="utf-8"), original)
             finally:
                 agent.ROOT = previous_root
 
