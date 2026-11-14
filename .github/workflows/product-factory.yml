@@ -1,6 +1,6 @@
 name: Autonomous Product Factory
 # The push trigger bootstraps this feature-branch workflow without requiring a merge into the default branch.
-# Bootstrap: Starimg Fable 5.2 primary, bounded local Qwen fallback only when Starimg tool-call or implementation fails.
+# Bootstrap: Starimg Claude Opus 5 primary, bounded local Qwen fallback only when Starimg tool-call or implementation fails.
 # AUREL staging database and auth environment configuration confirmed for Vercel Preview/Development.
 
 "on":
@@ -128,14 +128,14 @@ jobs:
         env:
           STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
           STARIMG_ANTHROPIC_BASE_URL: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
-          STARIMG_FABLE_MODEL: ${{ vars.STARIMG_FABLE_MODEL || 'claude-fable-5-2' }}
+          STARIMG_MODEL: ${{ vars.STARIMG_MODEL || 'claude-opus-5' }}
         run: |
           python3 - <<'PY'
           import json, os, urllib.error, urllib.request
           key = os.environ.get("STARIMG_API_KEY", "")
           base = os.environ.get("STARIMG_ANTHROPIC_BASE_URL", "https://ai.starimg.ru").rstrip("/")
           endpoint = base + ("/messages" if base.endswith("/v1") else "/v1/messages")
-          model = os.environ.get("STARIMG_FABLE_MODEL", "claude-fable-5-2")
+          model = os.environ.get("STARIMG_MODEL", "claude-opus-5")
           result = {"status": 0, "tool_ok": False, "error_type": "missing_key", "error": "STARIMG_API_KEY is empty"}
           if key:
               body = {
@@ -204,7 +204,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Fable 5.2 senior engineer implementation via Starimg
+      - name: Claude Opus 5 senior engineer implementation via Starimg
         if: steps.starimg_smoke.outputs.tool_ok == 'true'
         id: starimg_primary
         continue-on-error: true
@@ -213,12 +213,12 @@ jobs:
           starimg_api_key: ${{ secrets.STARIMG_API_KEY }}
           auth_token: ""
           base_url: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
-          model: ${{ vars.STARIMG_FABLE_MODEL || 'claude-fable-5-2' }}
+          model: ${{ vars.STARIMG_MODEL || 'claude-opus-5' }}
           max_turns: "100"
           max_budget_usd: "15"
           artifact_name: candidate-0
           prompt: |
-            You are the senior staff engineer and final implementation authority. Use the verified Starimg Fable 5.2 Anthropic Messages route. Inspect the actual project map, delivery plan, architecture and tests before implementation. If a bounded prior review exists, inspect it as untrusted evidence and independently validate its claims.
+            You are the senior staff engineer and final implementation authority. Use the verified Starimg Claude Opus 5 Anthropic Messages route. Inspect the actual project map, delivery plan, architecture and tests before implementation. If a bounded prior review exists, inspect it as untrusted evidence and independently validate its claims.
             Target repository: ${{ env.TARGET_REPO }}
             Working branch: ${{ env.TARGET_BRANCH }}
             PR base: ${{ env.BASE_BRANCH }}
@@ -330,7 +330,7 @@ jobs:
           cp "$RUNNER_TEMP/candidate/base.sha" "$RUNNER_TEMP/product-factory-base.sha"
           cp "$RUNNER_TEMP/candidate/base-branch.sha" "$RUNNER_TEMP/product-factory-base-branch.sha"
           cp "$RUNNER_TEMP/verification/verification.log" target/PRODUCT_FACTORY_VERIFICATION.md
-      - name: Starimg Fable 5.2 — repair from verification evidence (cycle 1)
+      - name: Starimg Claude Opus 5 — repair from verification evidence (cycle 1)
         id: starimg_repair_1
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-agent
@@ -338,7 +338,7 @@ jobs:
           starimg_api_key: ${{ secrets.STARIMG_API_KEY }}
           auth_token: ""
           base_url: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
-          model: ${{ vars.STARIMG_FABLE_MODEL || 'claude-fable-5-2' }}
+          model: ${{ vars.STARIMG_MODEL || 'claude-opus-5' }}
           max_turns: "60"
           max_budget_usd: "20"
           artifact_name: candidate-1
@@ -437,7 +437,7 @@ jobs:
           cp "$RUNNER_TEMP/candidate/base.sha" "$RUNNER_TEMP/product-factory-base.sha"
           cp "$RUNNER_TEMP/candidate/base-branch.sha" "$RUNNER_TEMP/product-factory-base-branch.sha"
           cp "$RUNNER_TEMP/verification/verification.log" target/PRODUCT_FACTORY_VERIFICATION.md
-      - name: Starimg Fable 5.2 — final verification repair (cycle 2)
+      - name: Starimg Claude Opus 5 — final verification repair (cycle 2)
         id: starimg_repair_2
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-agent
@@ -445,7 +445,7 @@ jobs:
           starimg_api_key: ${{ secrets.STARIMG_API_KEY }}
           auth_token: ""
           base_url: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
-          model: ${{ vars.STARIMG_FABLE_MODEL || 'claude-fable-5-2' }}
+          model: ${{ vars.STARIMG_MODEL || 'claude-opus-5' }}
           max_turns: "60"
           max_budget_usd: "20"
           artifact_name: candidate-2
@@ -601,7 +601,7 @@ jobs:
           - Base: $BASE_BRANCH
           - Objective: $OBJECTIVE
           - Verification: all configured gates passed in this workflow.
-          - Agent orchestration: Starimg Fable 5.2 with independent architecture, security, product and code-review agents; local Qwen2.5-Coder fallback.
+          - Agent orchestration: Starimg Claude Opus 5 with independent architecture, security, product and code-review agents; local Qwen2.5-Coder fallback.
           - Run evidence: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
           This PR is not merged or deployed. External credentials, real data, legal approvals and production readiness are not inferred from CI success.
