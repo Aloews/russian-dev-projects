@@ -8,6 +8,7 @@ name: Autonomous Product Factory
     branches:
       - main
       - feat/ush-autonomous-product-factory
+      - fix/factory-starimg-primary
     paths:
       - .github/workflows/product-factory.yml
       - .github/actions/product-factory-agent/**
@@ -50,7 +51,7 @@ jobs:
   implement:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/ush-autonomous-product-factory')) ||
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/ush-autonomous-product-factory' || github.ref == 'refs/heads/fix/factory-starimg-primary')) ||
       (github.event_name == 'issue_comment' &&
        github.actor == 'Aloews' &&
        github.event.comment.body == '/factory run')
