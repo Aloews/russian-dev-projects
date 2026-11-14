@@ -33,15 +33,16 @@ Model IDs are explicit. A missing model must stop that role; no silent model sub
 
 Review agents are read-only by instruction. Only the implementation agent writes. Work is serialized to avoid concurrent branch writers.
 
-## Durable state and evidence
+## Run evidence and durability
 
 - Every product has one authoritative `docs/MAP.md` (or an explicitly configured equivalent).
-- Each run records repository, branch, objective, model IDs, Railway task IDs, session IDs, timestamps, phase, candidate SHA, PR URL, CI run IDs, review findings and unresolved risks.
+- The current workflow stores each role's Railway task response, model, task ID and result in a 14-day GitHub Actions artifact; the final project map and PR must retain the durable decisions and delivery evidence.
+- This initial workflow does not yet persist agent-run state in the Hub database. A database-backed run registry, policy engine and public orchestration API remain a later implementation milestone.
 - Prompts and generated content are not copied into general logs. Secrets never enter prompts, source files, PRs or artifacts.
 - Agents use stable Railway conversation keys per project and role so the workspace can be resumed; each run must fetch the latest remote branch before acting.
-- Railway task webhooks are hints, not the source of truth. The orchestrator polls the task API and verifies terminal results.
+- Railway task webhooks are hints, not the source of truth. The runner polls the task API and verifies terminal results.
 - Every task dispatch uses an idempotency key. A timeout must not create duplicate billable tasks.
-- Agent count, review cycles, task timeouts and per-run spend ceilings are bounded.
+- The first invocation starts at most four persistent specialist agents. Review/repair cycles are capped at two. Railway bills new agent creation and normal agent compute; configure a project-specific spend limit before repeated runs.
 
 ## Safety and autonomy
 
@@ -75,4 +76,4 @@ The GitHub Actions workflow `.github/workflows/product-factory.yml` invokes the 
 
 The token is used only by the workflow and is never written to repository files. The workflow refuses to start if required credentials or target values are missing. Railway documents that new agents incur normal agent costs; keep concurrency and repair cycles bounded.
 
-This workflow is the execution layer; the Hub remains the durable registry, policy engine and long-term orchestration API. A run is not considered complete until its final evidence is recorded and the product's release gates pass.
+This workflow is the first execution layer. The Hub's database-backed agent-run registry, policy engine and long-term orchestration API are not implemented yet. A run is not considered complete until its final evidence is recorded and the product's release gates pass.
