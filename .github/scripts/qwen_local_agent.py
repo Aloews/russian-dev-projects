@@ -171,6 +171,28 @@ def apply_edits(edits, tracked):
         target.write_text(content, encoding="utf-8")
     return sorted(staged)
 
+
+def ask_ollama(messages, format_schema=None, max_predict=1200):
+    payload = {
+        "model": MODEL,
+        "stream": False,
+        "messages": messages,
+        "options": {"temperature": 0.1, "num_ctx": 12288, "num_predict": max_predict},
+    }
+    if format_schema is not None:
+        payload["format"] = format_schema
+    request = urllib.request.Request(
+        OLLAMA_URL, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=1800) as response:
+        data = json.loads(response.read())
+    answer = data.get("message", {}).get("content")
+    if not isinstance(answer, str) or not answer.strip():
+        raise ValueError("Qwen returned an empty or invalid response")
+    return answer
+
+
 def main():
     if not ROOT.is_dir() or not (ROOT / ".git").exists():
         print("::error::Target working tree is missing.")
@@ -214,26 +236,59 @@ def main():
         system += "\n\nApply this Reality-First Business skill as a hard execution standard:\n" + reality_skill
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
+    role_specs = [
+        ("architecture", "Inspect architecture, boundaries, dependencies, failure modes and the smallest safe vertical slice. Return evidence-backed findings only."),
+        ("product", "Inspect product intent, user journeys, UX states and measurable acceptance criteria. Do not invent customers, demand or market validation."),
+        ("security", "Inspect authentication, authorization, tenancy, secrets, PII, input validation, SSRF, supply-chain and abuse risks. Return only evidence-backed risks."),
+        ("qa", "Inspect tests and implementation risks. Identify missing regression, integration and end-to-end coverage. Do not claim tests ran."),
+    ]
+    role_findings = []
+    role_system = (
+        "You are a read-only specialist in a multi-agent software delivery team. "
+        "Do not propose unsupported facts or edit files. Distinguish verified evidence, assumptions and unknowns. "
+        "Return concise findings with file paths and severity."
+    )
+    reality_path = os.environ.get("REALITY_FIRST_SKILL_PATH", "")
+    if reality_path:
+        try:
+            role_system += "\\n\\n" + Path(reality_path).read_text(encoding="utf-8")[:10000]
+        except (OSError, UnicodeError):
+            print("::error::Reality-First Business skill could not be loaded.")
+            return 2
+    for role_name, role_task in role_specs:
+        try:
+            finding = ask_ollama([
+                {"role": "system", "content": role_system + "\\n\\nROLE: " + role_name + ". " + role_task},
+                {"role": "user", "content": "OBJECTIVE:\\n" + task + "\\n\\nREPOSITORY EVIDENCE:\\n" + context},
+            ], max_predict=850)
+        except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
+            print(f"::error::Qwen {role_name} role failed: {type(exc).__name__}: {exc}")
+            return 3
+        role_findings.append("## " + role_name.title() + "\\n" + finding[:3500])
+        print("Qwen role completed: " + role_name)
+    report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        "# Qwen2.5-Coder 3B multi-role review\\n\\n"
+        + "OBJECTIVE: " + task + "\\n\\n"
+        + "\\n\\n".join(role_findings) + "\\n",
+        encoding="utf-8",
+    )
+    implementation_system = system + (
+        "\\n\\nYou are the single implementation role. Reconcile the architecture, product, security and QA findings below. "
+        "Do not implement unverified assumptions. Produce only the smallest coherent source changes that satisfy the objective.\\n\\n"
+        + "\\n\\n".join(role_findings)
+    )
     messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context + "\n\nProduce minimal structured edits only, following the JSON schema."},
+        {"role": "system", "content": implementation_system},
+        {"role": "user", "content": "OBJECTIVE:\\n" + task + "\\n\\nREPOSITORY EVIDENCE:\\n" + context + "\\n\\nProduce minimal structured edits only, following the JSON schema."},
     ]
     tracked_set = set(tracked)
     for attempt in range(3):
-        payload = {
-            "model": MODEL, "stream": False, "messages": messages,
-            "format": EDIT_SCHEMA,
-            "options": {"temperature": 0.1, "num_ctx": 12288, "num_predict": 4096},
-        }
-        request = urllib.request.Request(
-            OLLAMA_URL, data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-        )
         try:
-            with urllib.request.urlopen(request, timeout=1800) as response:
-                answer = json.loads(response.read())["message"]["content"]
+            answer = ask_ollama(messages, format_schema=EDIT_SCHEMA, max_predict=4096)
         except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
-            print(f"::error::Qwen inference failed: {type(exc).__name__}: {exc}")
+            print(f"::error::Qwen implementation role failed: {type(exc).__name__}: {exc}")
             return 3
         try:
             response_json = json.loads(answer)
@@ -248,6 +303,17 @@ def main():
             if attempt == 2:
                 print("::error::Qwen could not produce valid structured edits: " + error)
                 return 4
+    diff = git("diff").stdout[:16000]
+    try:
+        qa_review = ask_ollama([
+            {"role": "system", "content": role_system + "\\n\\nYou are the independent post-change QA reviewer. Do not edit files. Return blockers, regressions, missing tests and exact file paths. If none, state 'BLOCKERS: none'."},
+            {"role": "user", "content": "OBJECTIVE:\\n" + task + "\\n\\nIMPLEMENTATION DIFF:\\n" + diff},
+        ], max_predict=1000)
+    except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
+        qa_review = "QA review unavailable: " + type(exc).__name__
+    with report_path.open("a", encoding="utf-8") as report:
+        report.write("\\n\\n## Independent Qwen QA review\\n\\n" + qa_review[:5000] + "\\n")
+    print("Qwen multi-role team completed: architecture, product, security, implementation and QA")
     changed = set(git("diff", "--name-only").stdout.splitlines())
     changed.update(git("ls-files", "--others", "--exclude-standard").stdout.splitlines())
     changed.discard("PRODUCT_FACTORY_VERIFICATION.md")
