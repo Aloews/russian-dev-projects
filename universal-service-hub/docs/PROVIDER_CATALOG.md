@@ -64,6 +64,15 @@ This catalog defines categories to evaluate. Listing a vendor is not evidence of
 - Cerebras
 - Self-hosted inference (vLLM / Ollama) when economically and operationally justified
 
+## Provider execution and recovery order
+
+1. **Starimg / Fable 5.2** — primary senior implementation and repair agent. Before launch, the workflow sends a real Anthropic Messages tool-call probe; a present key is not considered valid until a funded tool call succeeds.
+2. **Starimg / Claude Opus 5.5** — bounded senior-engineer fallback if Fable is unavailable or fails.
+3. **OpenRouter / Claude Sonnet 4.5** — optional provider fallback through the Anthropic Messages-compatible endpoint `https://openrouter.ai/api`, using `ANTHROPIC_AUTH_TOKEN` (Bearer) and `OPENROUTER_API_KEY`. It is attempted only when the OpenRouter tool-call probe succeeds. Budget ceiling: USD 10.
+4. **Local Ollama / Qwen2.5-Coder 3B** — provider-independent implementation/recovery path. It runs a bounded multi-role engineering pass, requires real source/test changes, validates exact old-text edits, and fails closed on timeouts or documentation-only candidates.
+
+Starimg senior-agent budgets are capped at USD 15 for Fable and USD 10 for Opus; OpenRouter is capped at USD 10. The combined external-agent ceiling is USD 35 per run, excluding the small compatibility probes. A 402 insufficient-balance response is recorded as exhausted provider quota, not misclassified as a tool-protocol defect. The workflow preserves redacted diagnostics as an artifact.
+
 ## Multi-agent engineering roles
 
 | Role | Default executor | Responsibility | Permission boundary |
@@ -79,7 +88,7 @@ This catalog defines categories to evaluate. Listing a vendor is not evidence of
 | Independent security reviewer | Sonnet 5.5 | Security/privacy review | Read-only |
 | Product/user-journey reviewer | Haiku 5.5 | Challenge product scope and usability | Read-only |
 
-Qwen roles are separate sequential sessions using the same local model, not independent model vendors. Fable is the escalation/fixer and must independently inspect the source and test evidence. These are configured roles; each provider/model combination remains unverified until its run produces attributable evidence.
+Qwen roles are a bounded, role-separated local engineering pass using one Qwen2.5-Coder 3B inference session, not six independent model instances or separate vendors. Fable is the escalation/fixer and must independently inspect the source and test evidence. These are configured roles; each provider/model combination remains unverified until its run produces attributable evidence.
 
 ## Source control and delivery
 
