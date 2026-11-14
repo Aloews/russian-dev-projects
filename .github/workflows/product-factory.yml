@@ -90,6 +90,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd target
+          git rev-parse HEAD > "$RUNNER_TEMP/product-factory-base-branch.sha"
           AUTH="$(printf 'x-access-token:%s' "$PRODUCT_FACTORY_GITHUB_TOKEN" | base64 -w0)"
           git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" fetch origin "$TARGET_BRANCH" || true
           if git show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"; then
@@ -206,6 +207,7 @@ jobs:
           git -C target checkout --detach "$BASE_SHA"
           git -C target apply "$RUNNER_TEMP/candidate/candidate.patch"
           cp "$RUNNER_TEMP/candidate/base.sha" "$RUNNER_TEMP/product-factory-base.sha"
+          cp "$RUNNER_TEMP/candidate/base-branch.sha" "$RUNNER_TEMP/product-factory-base-branch.sha"
           cp "$RUNNER_TEMP/verification/verification.log" target/PRODUCT_FACTORY_VERIFICATION.md
       - name: Fable 5.2 — repair from real verification evidence (cycle 1)
         uses: ./factory/.github/actions/product-factory-agent
@@ -411,8 +413,14 @@ jobs:
           cd target
           AUTH="$(printf 'x-access-token:%s' "$PRODUCT_FACTORY_GITHUB_TOKEN" | base64 -w0)"
           BASE_SHA="$(cat "$RUNNER_TEMP/candidate/base.sha")"
+          BASE_BRANCH_SHA="$(cat "$RUNNER_TEMP/candidate/base-branch.sha")"
+          REMOTE_BASE_SHA="$(git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" ls-remote origin "refs/heads/$BASE_BRANCH" | cut -f1)"
+          if [[ "$REMOTE_BASE_SHA" != "$BASE_BRANCH_SHA" ]]; then
+            echo "PR base branch moved during the run; refusing to publish a stale patch." >&2
+            exit 1
+          fi
           git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" fetch origin "$TARGET_BRANCH" || true
-          REMOTE_SHA="$(git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" ls-remote origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
+          REMOTE_SHA="$(git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)"
           if [[ -n "$REMOTE_SHA" ]]; then
             if [[ "$REMOTE_SHA" != "$BASE_SHA" ]]; then
               echo "Target branch moved during the run; refusing to overwrite newer work." >&2
@@ -421,7 +429,7 @@ jobs:
             git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
           else
             CURRENT_BASE_SHA="$(git rev-parse HEAD)"
-            if [[ "$CURRENT_BASE_SHA" != "$BASE_SHA" ]]; then
+            if [[ "$CURRENT_BASE_SHA" != "$BASE_BRANCH_SHA" || "$BASE_SHA" != "$BASE_BRANCH_SHA" ]]; then
               echo "Base branch moved during the run; refusing to publish a stale patch." >&2
               exit 1
             fi
@@ -448,19 +456,25 @@ jobs:
           - Working branch: $TARGET_BRANCH
           - Base: $BASE_BRANCH
           - Objective: $OBJECTIVE
-          - Verification: all configured Rust, frontend and container gates passed in this workflow.
+          - Verification: all configured gates passed in this workflow.
           - Agent orchestration: Starimg / Claude Fable 5.2 with independent architecture, security, product and code-review agents.
           - Run evidence: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
           This PR is not merged or deployed. External credentials, real data, legal approvals and production readiness are not inferred from CI success.
           EOF
           if gh pr view "$TARGET_BRANCH" --repo "$TARGET_REPO" --json number >/dev/null 2>&1; then
-            gh pr edit "$TARGET_BRANCH" --repo "$TARGET_REPO" --title "AUREL: verified Elite Estate delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
+            gh pr edit "$TARGET_BRANCH" --repo "$TARGET_REPO" --title "${TARGET_REPO}: verified product delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
           else
             gh pr create --repo "$TARGET_REPO" --base "$BASE_BRANCH" --head "$TARGET_BRANCH" --title "AUREL: verified Elite Estate delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
           fi
 
   summary:
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'issue_comment' &&
+        github.actor == 'Aloews' &&
+        github.event.comment.body == '/factory run'))
     needs: [implement, verify_0, repair_1, verify_1, repair_2, verify_2, publish]
     if: always()
     runs-on: ubuntu-latest
