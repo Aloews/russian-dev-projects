@@ -41,7 +41,8 @@ runs:
       shell: bash
       run: |
         set -Eeuo pipefail
-        curl -fsSL https://ollama.com/install.sh | sh
+        curl --connect-timeout 10 --max-time 120 -fsSL https://ollama.com/install.sh -o "$RUNNER_TEMP/install-ollama.sh"
+        timeout 180s sh "$RUNNER_TEMP/install-ollama.sh"
         sudo systemctl stop ollama >/dev/null 2>&1 || true
         pkill -x ollama >/dev/null 2>&1 || true
         mkdir -p "$HOME/.ollama/models"
@@ -59,8 +60,8 @@ runs:
           echo "Ollama API did not become ready." >&2
           exit 1
         fi
-        OLLAMA_MODELS="$HOME/.ollama/models" ollama pull qwen2.5-coder:3b
-        OLLAMA_MODELS="$HOME/.ollama/models" ollama show qwen2.5-coder:3b >/dev/null
+        timeout 240s env OLLAMA_MODELS="$HOME/.ollama/models" ollama pull qwen2.5-coder:3b
+        timeout 30s env OLLAMA_MODELS="$HOME/.ollama/models" ollama show qwen2.5-coder:3b >/dev/null
         curl -fsS http://127.0.0.1:11434/api/tags | python3 -c 'import json,sys; d=json.load(sys.stdin); assert any(x.get("name","").startswith("qwen2.5-coder:3b") for x in d.get("models",[])); print("Verified local model: qwen2.5-coder:3b")'
 
     - name: Generate bounded patch with Qwen
