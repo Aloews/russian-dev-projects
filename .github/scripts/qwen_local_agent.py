@@ -102,10 +102,70 @@ def make_context(task, tracked):
         chunks.append("\n--- FAILED VERIFICATION EVIDENCE ---\n" + scrub(verification[:12000]))
     return "\n".join(chunks)
 
-def extract_patch(answer):
-    text = answer.strip()
-    pos = text.find("diff --git ")
-    return text[pos:].rstrip() + "\n" if pos >= 0 else ""
+EDIT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "edits": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_FILES,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "old": {"type": "string", "maxLength": 6000},
+                    "new": {"type": "string", "minLength": 1, "maxLength": 12000},
+                },
+                "required": ["path", "old", "new"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["edits"],
+    "additionalProperties": False,
+}
+
+def apply_edits(edits, tracked):
+    if not isinstance(edits, list) or not edits or len(edits) > MAX_FILES:
+        raise ValueError("model returned no edits or exceeded the edit limit")
+    staged = {}
+    for edit in edits:
+        if not isinstance(edit, dict):
+            raise ValueError("edit item is not an object")
+        path, old, new = edit.get("path"), edit.get("old"), edit.get("new")
+        if not isinstance(path, str) or not isinstance(old, str) or not isinstance(new, str) or not new:
+            raise ValueError("edit is missing path, old or new text")
+        if not allowed(path, tracked):
+            raise ValueError("edit path is outside the source allowlist")
+        target = ROOT / path
+        if target.is_symlink():
+            raise ValueError("symbolic-link edits are not permitted")
+        if path in staged:
+            current = staged[path]
+        elif target.exists():
+            if not target.is_file() or target.stat().st_size > 100000:
+                raise ValueError("existing file is not a bounded regular text file")
+            current = target.read_text(encoding="utf-8")
+        else:
+            current = None
+        if old == "":
+            if current is not None or path in tracked:
+                raise ValueError("new-file edit targets an existing file")
+            current = new
+        else:
+            if current is None:
+                raise ValueError("update edit targets a missing file")
+            if current.count(old) != 1:
+                raise ValueError("old text must match exactly once in " + path)
+            current = current.replace(old, new, 1)
+        if len(current) > 100000 or "\0" in current:
+            raise ValueError("edited file exceeds safe text limits")
+        staged[path] = current
+    for path, content in staged.items():
+        target = ROOT / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    return sorted(staged)
 
 def main():
     if not ROOT.is_dir() or not (ROOT / ".git").exists():
@@ -147,6 +207,7 @@ def main():
     for attempt in range(3):
         payload = {
             "model": MODEL, "stream": False, "messages": messages,
+            "format": EDIT_SCHEMA,
             "options": {"temperature": 0.1, "num_ctx": 12288, "num_predict": 4096},
         }
         request = urllib.request.Request(
@@ -159,32 +220,19 @@ def main():
         except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
             print(f"::error::Qwen inference failed: {type(exc).__name__}: {exc}")
             return 3
-        patch = extract_patch(answer)
-        if not patch:
-            error = "model returned no unified diff"
-        else:
-            paths = [line[6:].strip() for line in patch.splitlines() if line.startswith("+++ b/")]
-            if not paths or len(set(paths)) > MAX_FILES or any(not allowed(p, tracked_set) for p in paths):
-                error = "patch includes restricted paths or exceeds the file limit"
-            elif "GIT binary patch" in patch or "deleted file mode" in patch:
-                error = "binary patches and file deletions are not permitted"
-            else:
-                checked = git("apply", "--recount", "--check", "--", check=False, input_text=patch)
-                if checked.returncode:
-                    error = checked.stderr[-1200:] or "git apply --check rejected the patch"
-                else:
-                    applied = git("apply", "--recount", "--", check=False, input_text=patch)
-                    if applied.returncode:
-                        error = applied.stderr[-1200:] or "git apply rejected the patch"
-                    else:
-                        break
-        messages.extend([
-            {"role": "assistant", "content": answer[:12000]},
-            {"role": "user", "content": "Patch rejected: " + error + ". Return a corrected unified git diff only."},
-        ])
-        if attempt == 2:
-            print("::error::Qwen could not produce a valid patch: " + error)
-            return 4
+        try:
+            response_json = json.loads(answer)
+            apply_edits(response_json.get("edits"), tracked_set)
+            break
+        except (ValueError, OSError, UnicodeError, json.JSONDecodeError) as exc:
+            error = str(exc)[:1000]
+            messages.extend([
+                {"role": "assistant", "content": answer[:12000]},
+                {"role": "user", "content": "The structured edit was rejected: " + error + ". Return corrected JSON with exact old text from the provided files."},
+            ])
+            if attempt == 2:
+                print("::error::Qwen could not produce valid structured edits: " + error)
+                return 4
     changed = set(git("diff", "--name-only").stdout.splitlines())
     changed.update(git("ls-files", "--others", "--exclude-standard").stdout.splitlines())
     changed.discard("PRODUCT_FACTORY_VERIFICATION.md")
