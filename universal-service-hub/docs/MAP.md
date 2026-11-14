@@ -67,7 +67,7 @@ Branch: `feat/ush-provider-api-adapters-final-v2`, layered on the latest observe
 - GitHub Actions uses isolated agent, verification, repair and publication jobs. Only a candidate that passes the configured verification gates can be published as a PR. No automatic merge or production deployment.
 - The Qwen editor now supplies bounded existing-file context on a rejected new-file edit, rejects symlink path escapes, and has regression coverage for both cases.
 - The workflow prevents new runs from cancelling an active product build; the initial local Qwen fallback has a bounded 40-minute step and a 20-minute inference timeout.
-- Latest control-plane head: `d3f24c9e6931211044462feb175ca9b21cf61bf1`. Control-plane CI run #832 is in progress; Qwen safety tests, workflow/actionlint validation, composite action metadata and Rust format have passed so far.
+- Provider-routing correction is being validated in branch `fix/factory-starimg-primary`; exact-head CI and the live Starimg tool-call probe are pending.
 - Product Factory output is not yet evidenced: no candidate artifact, isolated verification report or AUREL delivery PR has been confirmed. Do not mark the factory operational until these artifacts exist.
 - PR #20 is superseded by PR #21 and must not be merged independently.
 
@@ -152,7 +152,7 @@ This is the primary operating objective of the Universal Service Hub and Product
 
 3. **Implement the product**
    - Build the actual user-facing product and required backend, data, integrations and operational paths—not only scaffolding, placeholder screens, mock data, agent configuration or documentation.
-   - Use specialist agents for bounded work; keep one authoritative writer per branch. Escalate difficult or repeated failures to the OpenRouter primary model and independent reviewers.
+   - Use specialist agents for bounded work; keep one authoritative writer per branch. Escalate difficult or repeated failures to Starimg `claude-opus-5` and independent reviewers.
    - Use real provider integrations in the implementation. Mocks are permitted for isolated unit tests only and must never be presented as evidence of live integration.
    - Commit coherent increments to an isolated branch. Preserve existing production data and services.
 
@@ -198,9 +198,9 @@ If a product has no applicable authentication, persistence, payment or external 
 ### Autonomous recovery and escalation
 
 - A failed stage returns the task to the responsible agent with the exact error, logs and failed acceptance criterion. The coordinator must diagnose, change the implementation and rerun the failed stage plus impacted regression checks.
-- Do not rerun unchanged failing jobs indefinitely. After two unsuccessful attempts with the same failure signature, change the approach/provider/model or isolate a minimal reproduction and route the exact failure evidence to OpenRouter Sonnet or the Qwen fallback.
+- Do not rerun unchanged failing jobs indefinitely. After two unsuccessful attempts with the same failure signature, change the approach/provider/model or isolate a minimal reproduction and route the exact failure evidence to Starimg Opus 5 or the Qwen fallback.
 - If OpenRouter fails, capture sanitized provider request/response metadata and tool-call protocol errors, then use the bounded Qwen fallback. Never claim model compatibility from secret presence or HTTP reachability alone.
-- Use Qwen 2.5 Coder 3B for bounded specialist analysis and structured edits; validate every edit and test the resulting code. OpenRouter Sonnet owns primary implementation and evidence-based repair. Independent architecture, security and product reviewers challenge behavior; their roles are not proof of successful execution.
+- Use Qwen 2.5 Coder 3B for bounded specialist analysis and structured edits; validate every edit and test the resulting code. Starimg Opus 5 owns primary implementation and evidence-based repair. Independent architecture, security and product reviewers challenge behavior; their roles are not proof of successful execution.
 - Preserve artifacts for each run: task brief, decision record, candidate commit, diff, build output, test results, live smoke-test evidence, provider/model identity (without secrets), runtime URL and handover record.
 - Report to the owner only a verified handover or a specific owner-exclusive blocker. Agent chatter, intermediate decisions and routine failure details stay inside the factory and project artifacts.
 
@@ -216,8 +216,8 @@ If a product has no applicable authentication, persistence, payment or external 
 
 ### Product Factory control plane
 - Latest workflow code commit: `5bf142c7d5710b9b94a1a9aa6cfc0cd56650dc34`.
-- CI run #832 for the workflow code commit is in progress. Verified successful steps on this exact head: Qwen Python syntax, Qwen safety regression tests, Product Factory workflow/actionlint validation, composite action metadata and Rust formatting. Rust lint and the remaining suite have not yet completed.
-- The workflow source now contains a Starimg Anthropic Messages tool-call probe and routes implementation plus both repair cycles through `claude-opus-5`; OpenRouter is not used by Product Factory.
+- The earlier acceptance run #74 (`43637640350`) used the obsolete OpenRouter-first workflow and its diagnostic artifact proved `OPENROUTER_API_KEY` was empty; it entered the slow Qwen path. It is not evidence of product delivery.
+- The updated workflow contains a Starimg Anthropic Messages tool-call probe and routes implementation plus both repair cycles through `claude-opus-5`; OpenRouter is not used by Product Factory.
 - A complete Product Factory run, candidate artifact, verification report and target product PR have not yet been confirmed. Do not claim delivery.
 
 ### AUREL staging prerequisites
