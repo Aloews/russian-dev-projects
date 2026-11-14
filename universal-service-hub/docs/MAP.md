@@ -64,8 +64,10 @@ Branch: `feat/ush-provider-api-adapters-final-v2`, layered on the latest observe
 
 - PR #21: provider-neutral Universal Service Hub + Railway-independent Product Factory, branch `feat/ush-autonomous-product-factory`.
 - Exact CI head `f3a6f673f485d65388f5fa24cf54948c8da06b42` passed Rust format/Clippy/tests, Python Ruff/migrations/pytest, Docker build and container smoke test. Later bootstrap-trigger and agent-permission commits are undergoing CI on their new exact head.
-- Product Factory uses GitHub-hosted runners, Starimg Anthropic Messages via Claude Code/Fable 5.2, isolated verification and a separate PR publication job. No Railway Cloud Agent Tasks are required.
-- The 2026-11-14 bootstrap run `43599416331` passed credential preflight and target-repository checkout using the configured Actions secrets. Fable 5.2 action step completed successfully; the local Qwen fallback step was subsequently running and its outcome is not yet verified. This does not prove Starimg tool-call compatibility or successful candidate generation.
+- Product Factory uses GitHub-hosted runners, a bounded local Qwen2.5-Coder 3B multi-role pass, Starimg Anthropic Messages (Fable 5.2 primary, Opus 5.5 fallback), optional OpenRouter Anthropic Messages fallback, isolated verification and a separate PR publication job. No Railway Cloud Agent Tasks are required.
+- A previous run exposed two false-success defects: Qwen could produce a report without source edits, and Fable attempted to clone Caveman into a directory already created by Qwen. Both were fixed. Qwen candidates now require non-document source/test changes and exact old-text edits; the Fable action reuses the verified Caveman checkout.
+- Starimg's current key returned HTTP 402 `insufficient_balance_error` for both Fable 5.2 and Opus 5.5. This is exhausted key allowance, not an API compatibility failure. OpenRouter fallback now probes `OPENROUTER_API_KEY` using the Anthropic Messages API and uses `ANTHROPIC_AUTH_TOKEN` when available.
+- Run `43602951049` produced no candidate: Qwen's source edit was rejected because it treated an existing file as new; Starimg Fable/Opus were skipped after the 402 probes. No PR or product was published. Latest isolated attempt: run `43604172878`, branch `factory/elite-estate-rc3`, currently pending/in progress; its Qwen and OpenRouter outcomes must be checked before any success claim.
 - PR #20 is superseded by PR #21 and must not be merged independently.
 - No AUREL product code has yet been generated or published by Product Factory.
 
