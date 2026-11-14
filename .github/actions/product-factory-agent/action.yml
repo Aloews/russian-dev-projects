@@ -3,8 +3,12 @@ description: Run a constrained Starimg agent session and export a reviewed candi
 
 inputs:
   starimg_api_key:
-    description: Starimg API key
-    required: true
+    description: Anthropic-compatible provider API key (for example Starimg)
+    required: false
+  auth_token:
+    description: Optional bearer token for providers that use ANTHROPIC_AUTH_TOKEN (for example OpenRouter)
+    required: false
+    default: ""
   base_url:
     description: Starimg Anthropic Messages base URL
     required: true
@@ -68,6 +72,7 @@ runs:
       env:
         CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
         ANTHROPIC_BASE_URL: ${{ inputs.base_url }}
+        ANTHROPIC_AUTH_TOKEN: ${{ inputs.auth_token }}
       with:
         anthropic_api_key: ${{ inputs.starimg_api_key }}
         prompt: ${{ inputs.prompt }}
