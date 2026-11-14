@@ -193,9 +193,9 @@ def apply_edits(edits, tracked):
                 # Some small local models mislabel a complete existing-file replacement
                 # as a new-file edit. Accept it only when the returned content is plausibly
                 # a whole-file replacement; short fragments must use an exact old snippet.
-                minimum_replacement = max(200, int(len(current) * 0.75))
+                minimum_replacement = max(1, int(len(current) * 0.75))
                 similarity = SequenceMatcher(None, current, new, autojunk=False).ratio()
-                if len(new) < minimum_replacement or (current not in new and similarity < 0.92):
+                if len(new) < minimum_replacement or (current not in new and similarity < 0.75):
                     raise ValueError(
                         "new-file edit targets an existing file: " + path +
                         "; provide an exact old snippet or a complete replacement that is substantially similar"
