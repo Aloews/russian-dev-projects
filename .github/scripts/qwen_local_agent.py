@@ -56,7 +56,7 @@ def read_text(path):
 
 def scrub(text):
     text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~-]{12,}", r"\1[REDACTED]", text)
-    text = re.sub(r"(?i)((?:api[_-]?key|token|password|secret)\s*[:=]\s*)['\"]?[^\\s'\"]{8,}", r"\1[REDACTED]", text)
+    text = re.sub(r"(?i)((?:api[_-]?key|token|password|secret)\s*[:=]\s*)['\"]?[^\s'\"]{8,}", r"\1[REDACTED]", text)
     return text
 
 def make_context(task, tracked):
