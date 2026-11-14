@@ -442,10 +442,10 @@ jobs:
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-agent
         with:
-          starimg_api_key: ""
-          auth_token: ${{ secrets.OPENROUTER_API_KEY }}
-          base_url: https://openrouter.ai/api
-          model: anthropic/claude-sonnet-4.5
+          starimg_api_key: ${{ secrets.STARIMG_API_KEY }}
+          auth_token: ""
+          base_url: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
+          model: ${{ vars.STARIMG_FABLE_MODEL || 'claude-fable-5-2' }}
           max_turns: "60"
           max_budget_usd: "20"
           artifact_name: candidate-2
