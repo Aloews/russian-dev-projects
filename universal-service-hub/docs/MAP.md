@@ -60,12 +60,14 @@ Branch: `feat/ush-provider-api-adapters-final-v2`, layered on the latest observe
 
 ## Work in progress
 
-Provider verification increment is open as PR #20 on `feat/ush-provider-api-adapters-on-main`.
-- Adds read-only account verification for Northflank, Railway, Cloudflare, Netlify, Render, Fly.io, DigitalOcean, Supabase, Neon and read-only storage/database/Redis probes.
-- Requires CI and review on the exact final PR head before merge.
-- Does not provision resources, deploy workloads, transfer objects or orchestrate queues.
+- PR #21: provider-neutral Universal Service Hub + Railway-independent Product Factory, branch `feat/ush-autonomous-product-factory`.
+- Exact CI head `f3a6f673f485d65388f5fa24cf54948c8da06b42` passed Rust format/Clippy/tests, Python Ruff/migrations/pytest, Docker build and container smoke test. Later bootstrap-trigger and agent-permission commits are undergoing CI on their new exact head.
+- Product Factory uses GitHub-hosted runners, Starimg Anthropic Messages via Claude Code/Fable 5.2, isolated verification and a separate PR publication job. No Railway Cloud Agent Tasks are required.
+- A bootstrap run was attempted on 2026-11-14 and stopped at credential preflight: repository Actions secrets `STARIMG_API_KEY` and `PRODUCT_FACTORY_GITHUB_TOKEN` are not configured. No model request or paid inference occurred. The first real AUREL implementation run remains blocked until both secrets are added.
+- PR #20 is superseded by PR #21 and must not be merged independently.
+- No AUREL product code has yet been generated or published by Product Factory.
 
-Remaining product work after provider verification:
+Remaining platform work after the Product Factory activation:
 - Provider-specific resource management (provision/deploy/scale/logs/rollback) behind explicit approval and dry-run plans.
 - Durable asynchronous jobs, queue adapters, retry/dead-letter policies and idempotent task execution.
 - Per-project/provider budgets, spend ceilings, quotas, usage metering and kill switches.
