@@ -8,6 +8,8 @@ name: universal-service-hub-ci
       - ".github/workflows/product-factory.yml"
       - ".github/actions/product-factory-agent/**"
       - ".github/actions/product-factory-verify/**"
+      - ".github/actions/product-factory-qwen-agent/**"
+      - ".github/scripts/**"
       - ".github/product-factory/agents/**"
   pull_request:
     paths:
@@ -16,6 +18,8 @@ name: universal-service-hub-ci
       - ".github/workflows/product-factory.yml"
       - ".github/actions/product-factory-agent/**"
       - ".github/actions/product-factory-verify/**"
+      - ".github/actions/product-factory-qwen-agent/**"
+      - ".github/scripts/**"
       - ".github/product-factory/agents/**"
 
 permissions:
@@ -51,13 +55,17 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Product Factory shell syntax
-        run: bash -n scripts/product_factory_verify.sh
+        working-directory: .
+        run: bash -n universal-service-hub/scripts/product_factory_verify.sh
+      - name: Product Factory Python agent syntax
+        working-directory: .
+        run: python3 -m py_compile .github/scripts/qwen_local_agent.py
       - name: Product Factory workflow validation
         working-directory: .
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/product-factory.yml
       - name: Product Factory composite action metadata
         working-directory: .
-        run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' .github/actions/product-factory-agent/action.yml .github/actions/product-factory-verify/action.yml
+        run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' .github/actions/product-factory-agent/action.yml .github/actions/product-factory-qwen-agent/action.yml .github/actions/product-factory-verify/action.yml
       - name: Rust format
         run: cargo fmt --all
       - name: Rust lint
