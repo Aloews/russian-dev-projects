@@ -198,7 +198,7 @@ def apply_edits(edits, tracked):
                 if len(new) < minimum_replacement or (current not in new and similarity < 0.92):
                     raise ValueError(
                         "new-file edit targets an existing file: " + path +
-                        "; provide an exact old snippet or a complete, substantially similar replacement"
+                        "; provide an exact old snippet or a complete replacement that is substantially similar"
                     )
                 current = new
             else:
