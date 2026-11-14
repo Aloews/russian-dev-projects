@@ -6,6 +6,8 @@ One provider-neutral control plane for all owned projects. It must route workloa
 
 ## Operating contract
 
+- The authoritative Reality-First Business skill lives at `.github/product-factory/skills/reality-first-business/SKILL.md` and is injected into every implementation and specialist session. Every product project map must reference this standard; agents must separate verified facts, assumptions and unknowns and never infer completion without evidence.
+
 - The owner receives only a verified completion report or a concrete blocker requiring owner-only access or a spending decision.
 - Agents and CI output are internal evidence. The coordinator evaluates failures, edits code, reruns checks and makes implementation decisions autonomously.
 - Never report an action as complete without a commit, successful test/run, or live system evidence appropriate to the claim.
