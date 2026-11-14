@@ -14,7 +14,7 @@ Product Factory runs on GitHub-hosted Ubuntu runners. Railway Cloud Agent Tasks 
 - **Senior implementation authority:** Claude Code running Starimg `claude-opus-5` through the Anthropic Messages endpoint. A forced tool-call smoke test runs before the agent session; Opus owns implementation and verification repairs. Fable is not used in this workflow.
 - **Local Qwen fallback:** Qwen2.5-Coder 3B through Ollama is invoked only when the Starimg tool-call probe or Opus implementation/repair fails. It produces the same bounded candidate artifact consumed by isolated verification.
 - **Independent specialists:** read-only architecture reviewer (Claude Opus 5.5), security/privacy reviewer (Claude Sonnet 5.5), product/user-journey analyst (Claude Haiku 5.5), and independent post-change reviewer (Claude Opus 5.5).
-- **Single writer:** Fable is the only agent allowed to modify product files. Specialist agents receive read-only tools.
+- **Single writer:** Starimg Claude Opus 5 is the only agent allowed to modify product files. Specialist agents receive read-only tools.
 - **Agent isolation:** implementation and repair sessions run on separate ephemeral jobs. The model receives repository file tools only; it has no shell, network, Git push, GitHub API, deployment or production-data tool. The shared Reality-First Business skill is injected into the agent session and every specialist profile. Project-level `.claude` and `.mcp.json` configuration is moved out of the agent workspace for the session and restored byte-for-byte afterward; untrusted project hooks/MCP configuration is not loaded. The model cannot modify `.github/workflows/**` or `.github/actions/**`; those controls are maintained separately.
 - **Verification isolation:** each candidate is applied on a fresh runner. stack-aware checks for Rust, Python, Go, Gradle/Maven and Node, plus browser Playwright E2E for detected browser applications and applicable container builds run without the Starimg key or a write token in the test process environment.
 - **Repair:** up to two bounded repair cycles run on new isolated agent jobs and receive the actual failed verification report. The complete gate set is rerun after each repair; tests are never weakened or skipped to manufacture a pass.
@@ -45,10 +45,10 @@ The earlier OpenRouter diagnostic for run `43637640350` proved `OPENROUTER_API_K
 
 1. Before merge, a change to `.github/workflows/product-factory.yml` on `feat/ush-autonomous-product-factory` starts the bootstrap run. After merge, the owner can use **Autonomous Product Factory** (`workflow_dispatch`) or comment `/factory run` to start the default AUREL task.
 2. The runner validates the repository/branch allowlist and required credentials, checks target write access, fetches the selected branches and records both starting SHAs.
-3. Fable inspects the real code, project map, delivery plan, tests and CI. Architecture, security and product specialists independently challenge scope and acceptance criteria.
-4. Fable implements the bounded increment and requests read-only review of the actual changes. The runner exports a patch artifact; it does not commit or push from the agent job.
+3. Opus inspects the real code, project map, delivery plan, tests and CI. Architecture, security and product specialists independently challenge scope and acceptance criteria.
+4. Opus implements the bounded increment and requests read-only review of the actual changes. The runner exports a patch artifact; it does not commit or push from the agent job.
 5. A fresh verification job applies that patch at the recorded SHA and executes the complete gate set. The report is retained as a 30-day workflow artifact.
-6. If any gate fails, Fable receives the captured report in a new isolated job and may repair. The complete gate set is rerun; at most two repair cycles are allowed.
+6. If any gate fails, Opus receives the captured report in a new isolated job and may repair. The complete gate set is rerun; at most two repair cycles are allowed.
 7. Only a candidate with all gates green reaches the isolated publication job. It rechecks both branch SHAs, pushes the candidate branch and creates or updates a PR. The PR is not merged or deployed.
 8. If no candidate passes, the workflow fails and retains the available verification evidence. It does not publish an unverified candidate.
 
