@@ -128,33 +128,48 @@ jobs:
         continue-on-error: true
         env:
           STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
+          STARIMG_API_KEY_2: ${{ secrets.STARIMG_API_KEY_2 }}
+          STARIMG_API_KEY_3: ${{ secrets.STARIMG_API_KEY_3 }}
+          STARIMG_API_KEY_4: ${{ secrets.STARIMG_API_KEY_4 }}
+          STARIMG_API_KEY_5: ${{ secrets.STARIMG_API_KEY_5 }}
+          STARIMG_API_KEY_6: ${{ secrets.STARIMG_API_KEY_6 }}
+          STARIMG_API_KEY_7: ${{ secrets.STARIMG_API_KEY_7 }}
+          STARIMG_API_KEY_8: ${{ secrets.STARIMG_API_KEY_8 }}
+          STARIMG_API_KEY_9: ${{ secrets.STARIMG_API_KEY_9 }}
+          STARIMG_API_KEY_10: ${{ secrets.STARIMG_API_KEY_10 }}
           STARIMG_ANTHROPIC_BASE_URL: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
           STARIMG_MODEL: ${{ vars.STARIMG_MODEL || 'claude-opus-5' }}
         run: |
           python3 - <<'PY'
           import json, os, urllib.error, urllib.request
-          key = os.environ.get("STARIMG_API_KEY", "")
           base = os.environ.get("STARIMG_ANTHROPIC_BASE_URL", "https://ai.starimg.ru").rstrip("/")
           endpoint = base + ("/messages" if base.endswith("/v1") else "/v1/messages")
           model = os.environ.get("STARIMG_MODEL", "claude-opus-5")
-          result = {"status": 0, "tool_ok": False, "error_type": "missing_key", "error": "STARIMG_API_KEY is empty"}
-          if key:
-              body = {
-                  "model": model,
-                  "max_tokens": 128,
-                  "messages": [{"role": "user", "content": "Call the ping tool exactly once with value STARIMG_TOOL_OK. Do not answer in text."}],
-                  "tools": [{
-                      "name": "ping",
-                      "description": "A harmless compatibility probe. Return the supplied value unchanged.",
-                      "input_schema": {
-                          "type": "object",
-                          "properties": {"value": {"type": "string"}},
-                          "required": ["value"],
-                          "additionalProperties": False
-                      }
-                  }],
-                  "tool_choice": {"type": "tool", "name": "ping"}
-              }
+          keys = [(slot, os.environ.get("STARIMG_API_KEY" if slot == 1 else f"STARIMG_API_KEY_{slot}", "").strip()) for slot in range(1, 11)]
+          configured = [(slot, key) for slot, key in keys if key]
+          result = {
+              "status": 0, "tool_ok": False, "key_slot": None,
+              "keys_tried": [], "attempts": [],
+              "error_type": "missing_key", "error": "No Starimg API key is configured"
+          }
+          body = {
+              "model": model,
+              "max_tokens": 128,
+              "messages": [{"role": "user", "content": "Call the ping tool exactly once with value STARIMG_TOOL_OK. Do not answer in text."}],
+              "tools": [{
+                  "name": "ping",
+                  "description": "A harmless compatibility probe. Return the supplied value unchanged.",
+                  "input_schema": {
+                      "type": "object",
+                      "properties": {"value": {"type": "string"}},
+                      "required": ["value"],
+                      "additionalProperties": False
+                  }
+              }],
+              "tool_choice": {"type": "tool", "name": "ping"}
+          }
+          for slot, key in configured:
+              status, payload = 0, {}
               request = urllib.request.Request(
                   endpoint,
                   data=json.dumps(body).encode("utf-8"),
@@ -176,26 +191,37 @@ jobs:
                   except Exception:
                       payload = {}
               except Exception as error:
-                  status = 0
                   payload = {"error": {"type": type(error).__name__, "message": str(error)[:300]}}
               err = payload.get("error") or {}
               blocks = payload.get("content") or []
-              result = {
+              tool_ok = status == 200 and any(
+                  isinstance(item, dict) and item.get("type") == "tool_use" and item.get("name") == "ping"
+                  for item in blocks
+              )
+              result["keys_tried"].append(slot)
+              result["attempts"].append({
+                  "key_slot": slot,
                   "status": status,
-                  "tool_ok": status == 200 and any(isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "ping" for block in blocks),
-                  "stop_reason": payload.get("stop_reason"),
-                  "content_types": [block.get("type") for block in blocks if isinstance(block, dict)],
-                  "error_type": err.get("type"),
-                  "error": str(err.get("message", ""))[:500]
-              }
+                  "tool_ok": tool_ok,
+                  "error_type": str(err.get("type") or "")[:100]
+              })
+              result.update({
+                  "status": status,
+                  "tool_ok": tool_ok,
+                  "error_type": str(err.get("type") or "")[:100],
+                  "error": str(err.get("message") or "")[:500]
+              })
+              if tool_ok:
+                  result["key_slot"] = slot
+                  break
           path = os.path.join(os.environ["RUNNER_TEMP"], "starimg-diagnostics.json")
           with open(path, "w", encoding="utf-8") as file:
               json.dump(result, file, ensure_ascii=False, indent=2)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write("tool_ok=" + str(result["tool_ok"]).lower() + "\n")
-          print(f"Starimg {model}: HTTP {result['status']}; tool_call={result['tool_ok']}; error={result.get('error_type') or 'none'}")
+              output.write("key_slot=" + str(result["key_slot"] or 0) + "\n")
+          print(f"Starimg {model}: key_slots_tried={result['keys_tried']}; selected_slot={result['key_slot']}; tool_call={result['tool_ok']}; error={result.get('error_type') or 'none'}")
           PY
-
       - name: Preserve redacted Starimg diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -211,7 +237,7 @@ jobs:
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-agent
         with:
-          starimg_api_key: ${{ secrets.STARIMG_API_KEY }}
+          starimg_api_key: ${{ steps.starimg_smoke.outputs.key_slot == '2' && secrets.STARIMG_API_KEY_2 || steps.starimg_smoke.outputs.key_slot == '3' && secrets.STARIMG_API_KEY_3 || steps.starimg_smoke.outputs.key_slot == '4' && secrets.STARIMG_API_KEY_4 || steps.starimg_smoke.outputs.key_slot == '5' && secrets.STARIMG_API_KEY_5 || steps.starimg_smoke.outputs.key_slot == '6' && secrets.STARIMG_API_KEY_6 || steps.starimg_smoke.outputs.key_slot == '7' && secrets.STARIMG_API_KEY_7 || steps.starimg_smoke.outputs.key_slot == '8' && secrets.STARIMG_API_KEY_8 || steps.starimg_smoke.outputs.key_slot == '9' && secrets.STARIMG_API_KEY_9 || steps.starimg_smoke.outputs.key_slot == '10' && secrets.STARIMG_API_KEY_10 || secrets.STARIMG_API_KEY }}
           auth_token: ""
           base_url: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
           model: ${{ vars.STARIMG_MODEL || 'claude-opus-5' }}
