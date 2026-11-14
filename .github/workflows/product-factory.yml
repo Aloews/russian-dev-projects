@@ -40,7 +40,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: factory-test
+          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: aurel_test
         ports:
           - 5432:5432
@@ -54,7 +54,8 @@ jobs:
       TARGET_BRANCH: ${{ inputs.target_branch }}
       BASE_BRANCH: ${{ inputs.base_branch }}
       OBJECTIVE: ${{ inputs.objective }}
-      DATABASE_URL: postgres://postgres:factory-test@127.0.0.1:5432/aurel_test
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/aurel_test
+      TEST_DATABASE_URL: postgres://aurel_app:aurel_test_password@127.0.0.1:5432/aurel_test
 
     steps:
       - name: Check out Product Factory control repository
