@@ -111,18 +111,25 @@ GitHub OAuth sign-in to a hosting vendor is not equivalent to granting the Hub t
 
 ## Autonomous Product Factory increment
 
-Branch: `feat/ush-autonomous-product-factory`.
-- Added `docs/PRODUCT_FACTORY.md`: reusable multi-agent delivery contract, role allocation, review/repair gates, evidence policy and Elite Estate as the first target.
-- Added `scripts/product_factory.sh`: Railway Cloud Agent Tasks GraphQL dispatcher, idempotency keys, persistent per-role conversations, bounded polling, sequential write ownership, independent review and QA, maximum two repair cycles.
-- Added `.github/workflows/product-factory.yml`: manual and PR-update execution with an artifact containing internal agent evidence.
-- Added a CI syntax check for the shell runner.
-- First actual Product Factory run `43578134576` (2026-11-14) reached credential preflight and stopped before dispatch. GitHub Actions logs show `RAILWAY_API_TOKEN`, `RAILWAY_PROJECT_ID` and `RAILWAY_ENVIRONMENT_ID` are all empty. No Fable, Opus, Sonnet or Haiku tasks were dispatched. The Railway connector exposes task listing/status, not direct dispatch; the workflow uses Railway's documented GraphQL task-dispatch API once the three repository secrets are configured.
-- First run is configured for `Aloews/full`, branch `foundation/luxury-estate-platform`, base `main`, and the Elite Estate vertical slice.
-- No PR merge, production deployment, new paid infrastructure, or production-data mutation has been performed by this increment.
+Branch: `feat/ush-autonomous-product-factory`, PR #21 (draft; stacked on PR #20).
+- Replaced Railway Cloud Agent Tasks with a GitHub-hosted Ubuntu runner and Starimg Anthropic-compatible Messages gateway.
+- Workflow `.github/workflows/product-factory.yml` is manual `workflow_dispatch` only; PR updates no longer start paid model runs.
+- Primary model: Claude Fable 5.2. Read-only specialists: Opus 5.5 architecture/code review, Sonnet 5.5 security/privacy, Haiku 5.5 product/user-journey review.
+- The model session is restricted to repository file tools; no shell, Git push, GitHub API, secrets store, deployment or production-data tools. Temporary specialist definitions are removed after each invocation.
+- Separate verification script `scripts/product_factory_verify.sh` runs Rust format/Clippy/tests/release build, npm install/audit/lint/tests/build and the production API Docker build where applicable.
+- The workflow allows at most two repair cycles based on the real verification report; it only publishes a branch and opens/updates a PR after a complete green verification pass.
+- Required GitHub Actions secrets: `STARIMG_API_KEY` and a target-scoped `PRODUCT_FACTORY_GITHUB_TOKEN` with Contents and Pull requests read/write. Optional variables: `STARIMG_ANTHROPIC_BASE_URL` and `STARIMG_FABLE_MODEL`.
+- CI now syntax-checks the verification script and runs actionlint against the Product Factory workflow.
+- This branch has not yet completed a new CI run after the Railway replacement. The prior Railway run failed with an account-level `Agent usage limit reached`; no agent task was started in that attempt.
+- No live Starimg endpoint/tool-call test has been performed from this workflow. A model name in a provider catalogue is not proof of gateway compatibility.
+- First target remains `Aloews/full`, working branch `factory/elite-estate`, PR base `foundation/luxury-estate-platform`.
+- The Product Factory workflow is not manually dispatchable until it is present on the repository default branch. PR #20 and PR #21 must pass their exact-head checks and be integrated before the workflow can be run from Actions.
+- No PR merge, production deployment, new paid hosting resource, or production-data mutation has been performed by this increment.
 
 ### Remaining acceptance gates
-- Verify the shell runner with CI on this branch and validate the workflow YAML.
-- Configure an authorized Railway agent environment and add repository secrets `RAILWAY_API_TOKEN`, `RAILWAY_PROJECT_ID` and `RAILWAY_ENVIRONMENT_ID`.
-- Execute a low-risk first run; verify that all four selected model IDs are accepted and that the Fable agent can access the target repository.
-- Confirm task idempotency, persistent sessions, artifact redaction and review/repair behavior from actual Railway task records.
-- Complete Elite Estate only after the full project-specific release gates pass.
+- Pass CI and actionlint on the exact final PR #21 head SHA; resolve any merge-base conflict with PR #20.
+- Integrate the PR chain so the manual workflow is present on `main`.
+- Verify the two required Actions secrets exist and are scoped correctly without exposing their values.
+- Execute one controlled run to prove Starimg authentication, Messages API tool calling, model IDs, GitHub branch write and PR creation.
+- Inspect the resulting verification artifact and PR head; do not mark the factory operational until all gates are directly evidenced.
+- Complete Elite Estate only after its dedicated database, real identity/JWT issuance, public enquiry controls/retention, licensed supply, jurisdiction, staging E2E and rollback gates pass.
