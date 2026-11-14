@@ -1,0 +1,88 @@
+name: Product Factory verification
+description: Apply a candidate patch in an isolated runner and execute all release-candidate gates
+
+inputs:
+  target_repo:
+    required: true
+  base_branch:
+    required: true
+  github_token:
+    required: true
+  candidate_artifact:
+    required: true
+  verification_artifact:
+    required: true
+
+outputs:
+  passed:
+    description: Whether every configured verification gate passed
+    value: ${{ steps.verify.outcome == 'success' }}
+  repairable:
+    description: Whether the patch applied and verification failed
+    value: ${{ steps.apply_patch.outcome == 'success' && steps.verify.outcome == 'failure' }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out target repository
+      uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      with:
+        repository: ${{ inputs.target_repo }}
+        ref: ${{ inputs.base_branch }}
+        token: ${{ inputs.github_token }}
+        path: target
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Download candidate patch
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: ${{ inputs.candidate_artifact }}
+        path: ${{ runner.temp }}/candidate
+
+    - name: Apply patch at recorded base SHA
+      id: apply_patch
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        BASE_SHA="$(cat "$RUNNER_TEMP/candidate/base.sha")"
+        git -C target checkout --detach "$BASE_SHA"
+        git -C target apply "$RUNNER_TEMP/candidate/candidate.patch"
+        echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+      with:
+        toolchain: stable
+        components: clippy, rustfmt
+
+    - name: Restore Rust build cache
+      uses: Swatinem/rust-cache@f4371d1ec7179bfbd04a82a81e3b3af7f720750f
+      with:
+        workspaces: target -> target
+
+    - name: Install Node.js
+      uses: actions/setup-node@436c65619b12c9e37ff20a4700145cc387898a7d
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: target/package-lock.json
+
+    - name: Run verification gates
+      id: verify
+      continue-on-error: true
+      shell: bash
+      run: |
+        set +e
+        bash factory/universal-service-hub/scripts/product_factory_verify.sh target "$RUNNER_TEMP/verification.log"
+        rc=$?
+        exit "$rc"
+
+    - name: Upload verification report
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ${{ inputs.verification_artifact }}
+        path: ${{ runner.temp }}/verification.log
+        if-no-files-found: ignore
+        retention-days: 30

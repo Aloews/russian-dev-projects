@@ -1,0 +1,254 @@
+name: Product Factory agent session
+description: Run a constrained Starimg agent session and export a reviewed candidate patch
+
+inputs:
+  starimg_api_key:
+    description: Anthropic-compatible provider API key (for example Starimg)
+    required: false
+  auth_token:
+    description: Optional bearer token for providers that use ANTHROPIC_AUTH_TOKEN (for example OpenRouter)
+    required: false
+    default: ""
+  base_url:
+    description: Starimg Anthropic Messages base URL
+    required: true
+  model:
+    description: Primary agent model identifier
+    required: true
+  prompt:
+    description: Product task prompt
+    required: true
+  max_turns:
+    description: Claude Code turn ceiling
+    required: true
+  max_budget_usd:
+    description: Claude Code budget ceiling
+    required: true
+  artifact_name:
+    description: Candidate patch artifact name
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install pinned Caveman 4.1.0
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        CAVEMAN_DIR="$RUNNER_TEMP/caveman"
+        CAVEMAN_COMMIT="1e91f1306d602d4ca23618701b1185575ae1869b"
+        if [[ ! -d "$CAVEMAN_DIR/.git" ]] || [[ "$(git -C "$CAVEMAN_DIR" rev-parse HEAD 2>/dev/null || true)" != "$CAVEMAN_COMMIT" ]]; then
+          rm -rf "$CAVEMAN_DIR"
+          git clone --depth 1 --branch v4.1.0 https://github.com/JuliusBrussee/caveman.git "$CAVEMAN_DIR"
+        fi
+        test "$(git -C "$CAVEMAN_DIR" rev-parse HEAD)" = "$CAVEMAN_COMMIT"
+        test -s "$CAVEMAN_DIR/.claude-plugin/marketplace.json"
+        test -s "$CAVEMAN_DIR/.claude-plugin/plugin.json"
+        test -s "$CAVEMAN_DIR/skills/caveman/SKILL.md"
+        echo "CAVEMAN_SKILL_PATH=$CAVEMAN_DIR/skills/caveman/SKILL.md" >> "$GITHUB_ENV"
+
+    - name: Prepare isolated specialist profiles
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        # Keep repository-owned Claude/MCP configuration out of the agent runtime.
+        # It is preserved byte-for-byte and restored before candidate diff creation.
+        CONFIG_BACKUP="$RUNNER_TEMP/product-factory-target-config"
+        mkdir -p "$CONFIG_BACKUP"
+        if [[ -e target/.claude ]]; then
+          mv target/.claude "$CONFIG_BACKUP/claude"
+          touch "$CONFIG_BACKUP/claude.present"
+        fi
+        if [[ -e target/.mcp.json ]]; then
+          mv target/.mcp.json "$CONFIG_BACKUP/mcp.json"
+          touch "$CONFIG_BACKUP/mcp.present"
+        fi
+        mkdir -p target/.claude/agents target/.claude/skills/reality-first-business
+        cp factory/.github/product-factory/agents/pf-*.md target/.claude/agents/
+        cp factory/.github/product-factory/skills/reality-first-business/SKILL.md target/.claude/skills/reality-first-business/SKILL.md
+
+    - name: Run primary agent and read-only specialists
+      uses: anthropics/claude-code-base-action@4f75da3721f36973e9c08ca6eeadbd3c4648a56c
+      env:
+        CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+        ANTHROPIC_BASE_URL: ${{ inputs.base_url }}
+        ANTHROPIC_AUTH_TOKEN: ${{ inputs.auth_token }}
+      with:
+        anthropic_api_key: ${{ inputs.starimg_api_key }}
+        prompt: ${{ inputs.prompt }}
+        claude_args: >-
+          --model ${{ inputs.model }}
+          --max-turns ${{ inputs.max_turns }}
+          --max-budget-usd ${{ inputs.max_budget_usd }}
+          --permission-mode dontAsk
+          --allowedTools "Read,Write,Edit,Glob,Grep,Agent(pf-architect),Agent(pf-security),Agent(pf-product),Agent(pf-reviewer)"
+        plugin_marketplaces: ${{ runner.temp }}/caveman
+        plugins: caveman@caveman
+        settings: |
+          {
+            "permissions": {
+              "defaultMode": "dontAsk",
+              "allow": [
+                "Read", "Write", "Edit", "Glob", "Grep",
+                "Agent(pf-architect)",
+                "Agent(pf-security)",
+                "Agent(pf-product)",
+                "Agent(pf-reviewer)"
+              ],
+              "deny": [
+                "Read(./.env)",
+                "Read(./.env.local)",
+                "Read(./.env.production)",
+                "Read(./.env.development)",
+                "Read(./.env.test)",
+                "Read(./.env.staging)",
+                "Read(./.env.*.local)",
+                "Read(./**/.env)",
+                "Read(./**/.env.local)",
+                "Read(./**/.env.production)",
+                "Read(./**/.env.development)",
+                "Read(./**/.env.test)",
+                "Read(./**/.env.staging)",
+                "Read(./**/.env.*.local)",
+                "Read(./**/*.pem)",
+                "Read(./**/*.key)",
+                "Read(./.git/**)",
+                "Read(./.mcp.json)",
+                "Read(./.claude/settings.json)",
+                "Read(./.claude/settings.local.json)",
+                "Write(./.env)",
+                "Write(./.env.local)",
+                "Write(./.env.production)",
+                "Write(./.env.development)",
+                "Write(./.env.test)",
+                "Write(./.env.staging)",
+                "Write(./.env.*.local)",
+                "Write(./**/.env)",
+                "Write(./**/.env.local)",
+                "Write(./**/.env.production)",
+                "Write(./**/.env.development)",
+                "Write(./**/.env.test)",
+                "Write(./**/.env.staging)",
+                "Write(./**/.env.*.local)",
+                "Write(./.git/**)",
+                "Write(./.claude/**)",
+                "Write(./.mcp.json)",
+                "Write(./.github/workflows/**)",
+                "Write(./.github/actions/**)",
+                "Edit(./.env)",
+                "Edit(./.env.local)",
+                "Edit(./.env.production)",
+                "Edit(./.env.development)",
+                "Edit(./.env.test)",
+                "Edit(./.env.staging)",
+                "Edit(./.env.*.local)",
+                "Edit(./**/.env)",
+                "Edit(./**/.env.local)",
+                "Edit(./**/.env.production)",
+                "Edit(./**/.env.development)",
+                "Edit(./**/.env.test)",
+                "Edit(./**/.env.staging)",
+                "Edit(./**/.env.*.local)",
+                "Edit(./.git/**)",
+                "Edit(./.claude/**)",
+                "Edit(./.mcp.json)",
+                "Edit(./.github/workflows/**)",
+                "Edit(./.github/actions/**)"
+              ],
+              "blockReadsOutsideWorkingDirectories": true,
+              "blockWritesOutsideWorkingDirectories": true
+            }
+          }
+
+    - name: Emit redacted Claude permission diagnostics
+      if: always()
+      shell: bash
+      run: |
+        python3 - <<'PY'
+        import json, os
+        from pathlib import Path
+        path = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "claude-execution-output.json"
+        if not path.is_file():
+            print("Claude execution file unavailable; no tool-level diagnostic.")
+            raise SystemExit(0)
+        try:
+            messages = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            print("Claude execution file could not be parsed.")
+            raise SystemExit(0)
+        count = 0
+        for message in messages if isinstance(messages, list) else []:
+            if not isinstance(message, dict) or message.get("type") != "result":
+                continue
+            denials = message.get("permission_denials") or []
+            count += len(denials)
+            for error in message.get("errors") or []:
+                print("Claude provider/runtime error: " + str(error)[:400])
+            for denial in denials:
+                if not isinstance(denial, dict):
+                    continue
+                tool = denial.get("tool_name", "unknown")
+                tool_input = denial.get("tool_input") or {}
+                details = []
+                if isinstance(tool_input, dict):
+                    if tool_input.get("subagent_type"):
+                        details.append("subagent=" + str(tool_input["subagent_type"])[:80])
+                    for key in ("file_path", "path"):
+                        if tool_input.get(key):
+                            details.append("file=" + Path(str(tool_input[key])).name[:100])
+                print("Permission denied: " + str(tool)[:80] + (" (" + ", ".join(details) + ")" if details else ""))
+        print("Claude permission denials: " + str(count))
+        PY
+
+    - name: Remove temporary Claude project configuration
+      if: always()
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        CONFIG_BACKUP="$RUNNER_TEMP/product-factory-target-config"
+        rm -rf target/.claude target/.mcp.json
+        if [[ -f "$CONFIG_BACKUP/claude.present" ]]; then
+          mv "$CONFIG_BACKUP/claude" target/.claude
+        fi
+        if [[ -f "$CONFIG_BACKUP/mcp.present" ]]; then
+          mv "$CONFIG_BACKUP/mcp.json" target/.mcp.json
+        fi
+        rm -rf "$CONFIG_BACKUP"
+
+    - name: Create candidate patch
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        cd target
+        rm -f PRODUCT_FACTORY_VERIFICATION.md docs/PRODUCT_FACTORY_QWEN_REVIEW.md
+        git add -A
+        git diff --cached --check
+        if git diff --cached --quiet; then
+          echo "Agent produced no candidate changes." >&2
+          exit 2
+        fi
+        git diff --cached --binary HEAD > "$RUNNER_TEMP/candidate.patch"
+        if git diff --cached --name-only | grep -E '(^|/)\.github/(workflows|actions)/|(^|/)\.env($|\.(local|production|development|test|staging)(\.|$))|(^|/)(id_rsa|id_ed25519|.*\.pem$|.*\.key$|.*\.p12$|.*\.pfx$|.*\.jks$|credentials\.json$)' >/dev/null; then
+          echo "Sensitive file detected in candidate patch." >&2
+          exit 2
+        fi
+        if grep -E -- '-----BEGIN (RSA|EC|OPENSSH|PRIVATE) PRIVATE KEY-----|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{24,}' "$RUNNER_TEMP/candidate.patch" >/dev/null; then
+          echo "Secret-like value detected in candidate patch." >&2
+          exit 2
+        fi
+        cp "$RUNNER_TEMP/product-factory-base.sha" "$RUNNER_TEMP/base.sha"
+        cp "$RUNNER_TEMP/product-factory-base-branch.sha" "$RUNNER_TEMP/base-branch.sha"
+        test -s "$RUNNER_TEMP/candidate.patch"
+        test -s "$RUNNER_TEMP/base.sha"
+        test -s "$RUNNER_TEMP/base-branch.sha"
+
+    - name: Upload candidate patch
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: |
+          ${{ runner.temp }}/candidate.patch
+          ${{ runner.temp }}/base.sha
+          ${{ runner.temp }}/base-branch.sha
+        if-no-files-found: error
+        retention-days: 30
