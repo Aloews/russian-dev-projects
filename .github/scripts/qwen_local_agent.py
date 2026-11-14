@@ -2,6 +2,7 @@
 """Bounded local Qwen fallback for Product Factory. Emits a validated patch; never commits or publishes."""
 import json
 import os
+from difflib import SequenceMatcher
 import re
 import subprocess
 import sys
@@ -192,11 +193,12 @@ def apply_edits(edits, tracked):
                 # Some small local models mislabel a complete existing-file replacement
                 # as a new-file edit. Accept it only when the returned content is plausibly
                 # a whole-file replacement; short fragments must use an exact old snippet.
-                minimum_replacement = max(200, int(len(current) * 0.65))
-                if len(new) < minimum_replacement:
+                minimum_replacement = max(200, int(len(current) * 0.75))
+                similarity = SequenceMatcher(None, current, new, autojunk=False).ratio()
+                if len(new) < minimum_replacement or (current not in new and similarity < 0.92):
                     raise ValueError(
-                        "new-file edit targets an existing file; provide an exact old snippet "
-                        "or a complete replacement of at least " + str(minimum_replacement) + " characters"
+                        "new-file edit targets an existing file: " + path +
+                        "; provide an exact old snippet or a complete, substantially similar replacement"
                     )
                 current = new
             else:
@@ -298,12 +300,12 @@ def main():
     tracked_set = set(tracked)
     validation_error = None
     answer = ""
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             answer = ask_ollama(
                 messages,
                 format_schema=EDIT_SCHEMA,
-                max_predict=2048 if attempt == 0 else 1024,
+                max_predict=2048 if attempt == 0 else (1024 if attempt == 1 else 768),
                 timeout_seconds=1200 if attempt == 0 else 600,
             )
             response_json = json.loads(answer)
@@ -322,17 +324,18 @@ def main():
             return 4
         except (KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
             validation_error = str(exc)[:1000]
-            if attempt == 0:
+            if attempt < 2:
                 existing_file_evidence = rejected_existing_file_context(answer)
                 messages.extend([
                     {"role": "assistant", "content": answer[:10000]},
                     {"role": "user", "content": (
                         "Your previous JSON edit was rejected: " + validation_error + ". "
-                        "Correct the JSON. For an existing file, old must be an exact unique non-empty snippet copied from that file; "
-                        "never mark an existing path as a new file. Use old='' only for a path that is confirmed absent. "
-                        "Do not overwrite or recreate existing files. "
+                        "This is a strict correction attempt. For every path shown below as an existing file, old MUST be a non-empty exact unique snippet copied verbatim from that file. "
+                        "Never use old='' for an existing or tracked path unless the proposed complete replacement preserves at least 92 percent of the existing file. "
+                        "If you cannot produce an exact replacement, omit that file and choose a different existing source/test file. "
+                        "Do not recreate, truncate or overwrite existing files. Keep the patch minimal. "
                         + existing_file_evidence
-                        + "\\nReturn only the corrected JSON schema."
+                        + "\\nReturn only corrected JSON matching the schema."
                     )},
                 ])
                 continue
