@@ -59,9 +59,9 @@ This section is shared across the active project maps. A repository entry is not
 ### Installation status — 2026-11-14
 | Integration | Documentation | Active runtime |
 |---|---|---|
-| Caveman | Recorded here | Not verified |
-| codebase-memory-mcp | Recorded here | Not installed/indexed on a persistent supported host |
-| Spotify Portal / shunt | Recorded here | Not connected; Portal auth and AiKA readiness not established |
+| Caveman | Project skill at `.agents/skills/caveman/SKILL.md` | Included in this PR; runtime discovery/activation not yet verified |
+| codebase-memory-mcp | Pinned project config `.mcp.json` (`0.12.1`) | MCP startup and indexing not yet verified on a persistent host |
+| Spotify Portal / shunt | Setup instructions recorded here | Not installed/connected; Portal authentication and AiKA readiness not established |
 
 
 ## Autonomous Product Factory (in progress; not merged)
