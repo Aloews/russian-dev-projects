@@ -147,7 +147,7 @@ jobs:
 
             You may use only Read, Write, Edit, Glob, Grep and Agent tools. Do not use shell, network, credentials, Git push, GitHub API, deployment, merge or production data. Verification runs later in separate isolated jobs. Never claim tests passed unless the workflow verification report proves it.
 
-            Preserve the target repository's actual architecture, languages, frameworks, security boundaries and tenancy model; do not impose another project's stack. Never fabricate real-world data, customers, partners, valuations, evidence, licensing or legal approvals. Update docs/MAP.md and the delivery plan with implemented behavior and explicit remaining blockers. Do not modify .github/workflows/** or .github/actions/**; the delivery pipeline is controlled separately. Do not write explanatory function descriptions into production-facing code.
+            Preserve the target repository's actual architecture, languages, frameworks, security boundaries and tenancy model; do not impose another project's stack. Never fabricate real-world data, customers, partners, valuations, evidence, licensing or legal approvals. Update docs/MAP.md and the delivery plan with implemented behavior and explicit remaining blockers. Add a concise reference to the injected Reality-First Business engineering standard in docs/MAP.md. Do not modify .github/workflows/** or .github/actions/**; the delivery pipeline is controlled separately. Do not write explanatory function descriptions into production-facing code.
 
             Finish with all intended source, test and documentation changes saved in the working tree. Do not commit, push, open a PR, merge or deploy; the workflow owns publication after verification.
 
