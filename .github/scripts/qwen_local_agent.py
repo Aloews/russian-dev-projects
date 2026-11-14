@@ -130,6 +130,35 @@ EDIT_SCHEMA = {
     "additionalProperties": False,
 }
 
+def rejected_existing_file_context(answer):
+    """Return bounded current-file evidence when the model incorrectly proposes a new file."""
+    try:
+        payload = json.loads(answer)
+    except (TypeError, json.JSONDecodeError):
+        return ""
+    sections = []
+    for edit in payload.get("edits", []) if isinstance(payload, dict) else []:
+        if not isinstance(edit, dict) or edit.get("old") != "":
+            continue
+        path = edit.get("path")
+        if not isinstance(path, str) or not allowed(path, set()):
+            continue
+        target = ROOT / path
+        try:
+            resolved = target.resolve()
+            if not resolved.is_relative_to(ROOT.resolve()) or target.is_symlink() or not target.is_file():
+                continue
+            current = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        sections.append(
+            "\\n--- EXISTING FILE (NOT A NEW FILE): " + path + " ---\\n"
+            + scrub(current[:12000])
+            + ("\\n[FILE CONTENT TRUNCATED]\\n" if len(current) > 12000 else "")
+        )
+    return "\\n".join(sections)
+
+
 def apply_edits(edits, tracked):
     if not isinstance(edits, list) or not edits or len(edits) > MAX_FILES:
         raise ValueError("model returned no edits or exceeded the edit limit")
@@ -143,6 +172,9 @@ def apply_edits(edits, tracked):
         if not allowed(path, tracked):
             raise ValueError("edit path is outside the source allowlist")
         target = ROOT / path
+        resolved_target = target.resolve()
+        if not resolved_target.is_relative_to(ROOT.resolve()):
+            raise ValueError("edit path resolves outside the target repository")
         if target.is_symlink():
             raise ValueError("symbolic-link edits are not permitted")
         if path in staged:
@@ -279,13 +311,16 @@ def main():
         except (KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
             validation_error = str(exc)[:1000]
             if attempt == 0:
+                existing_file_evidence = rejected_existing_file_context(answer)
                 messages.extend([
                     {"role": "assistant", "content": answer[:10000]},
                     {"role": "user", "content": (
                         "Your previous JSON edit was rejected: " + validation_error + ". "
                         "Correct the JSON. For an existing file, old must be an exact unique non-empty snippet copied from that file; "
                         "never mark an existing path as a new file. Use old='' only for a path that is confirmed absent. "
-                        "Do not overwrite or recreate existing files. Return only the corrected JSON schema."
+                        "Do not overwrite or recreate existing files. "
+                        + existing_file_evidence
+                        + "\\nReturn only the corrected JSON schema."
                     )},
                 ])
                 continue
