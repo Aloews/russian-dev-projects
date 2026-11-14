@@ -215,7 +215,7 @@ If a product has no applicable authentication, persistence, payment or external 
 ## Current verified state — 2026-11-14
 
 ### Product Factory control plane
-- Latest workflow code commit: `d3f24c9e6931211044462feb175ca9b21cf61bf1`; latest project-map commit: `82ba520134930507987ba8c9a0dd4dd33982e682`.
+- Latest workflow code commit: `5bf142c7d5710b9b94a1a9aa6cfc0cd56650dc34`.
 - CI run #832 for the workflow code commit is in progress. Verified successful steps on this exact head: Qwen Python syntax, Qwen safety regression tests, Product Factory workflow/actionlint validation, composite action metadata and Rust formatting. Rust lint and the remaining suite have not yet completed.
 - The workflow source contains no Starimg API probe, Fable/Opus model ID, or `STARIMG_API_KEY` dependency. OpenRouter Sonnet 4.5 is the primary; Qwen is the fallback.
 - A complete Product Factory run, candidate artifact, verification report and target product PR have not yet been confirmed. Do not claim delivery.
@@ -226,7 +226,7 @@ If a product has no applicable authentication, persistence, payment or external 
 - `aurel_app` login was verified against database `aurel`. It is neither SUPERUSER nor BYPASSRLS. RLS is enabled and forced on `organizations`, `properties`, `property_evidence`, `property_audit_events` and `property_enquiries`. The app role has no DELETE grants on these tables.
 - A pooled TLS-required Neon connection string for `aurel_app` and a separately generated 48-byte cookie-signing secret were stored as sensitive Vercel environment variables `DATABASE_URL` and `NEON_AUTH_COOKIE_SECRET` for Preview/Development only. No secret values are committed or displayed.
 - Vercel project `aurel-private-property` has a successful preview deployment for AUREL branch commit `d977c1438a4418ee16572fc75f11898ed4340e2d`. This proves the preview build completed, not that database-backed user journeys work. SSO protection remains enabled.
-- AUREL Rust CI for that commit is still building the production container image; its final result has not yet been confirmed.
+- AUREL Rust CI run `43607323635` for that commit completed successfully, including the production container build.
 - AUREL target branch: `foundation/luxury-estate-platform`. Product Factory must create its working branch from the latest base SHA and refuse publication if the base moves during the run.
 
 ### Remaining AUREL release gates
