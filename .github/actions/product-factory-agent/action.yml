@@ -56,7 +56,13 @@ runs:
           {
             "permissions": {
               "defaultMode": "dontAsk",
-              "allow": ["Read", "Write", "Edit", "Glob", "Grep", "Agent(pf-architect,pf-security,pf-product,pf-reviewer)"],
+              "allow": [
+                "Read", "Write", "Edit", "Glob", "Grep",
+                "Agent(pf-architect)",
+                "Agent(pf-security)",
+                "Agent(pf-product)",
+                "Agent(pf-reviewer)"
+              ],
               "deny": [
                 "Read(./.env)",
                 "Read(./.env.local)",
