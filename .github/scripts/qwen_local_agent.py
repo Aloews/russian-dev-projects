@@ -173,7 +173,7 @@ def apply_edits(edits, tracked):
     return sorted(staged)
 
 
-def ask_ollama(messages, format_schema=None, max_predict=1200):
+def ask_ollama(messages, format_schema=None, max_predict=1200, timeout_seconds=480):
     payload = {
         "model": MODEL,
         "stream": False,
@@ -186,7 +186,7 @@ def ask_ollama(messages, format_schema=None, max_predict=1200):
         OLLAMA_URL, data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=480) as response:
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         data = json.loads(response.read())
     answer = data.get("message", {}).get("content")
     if not isinstance(answer, str) or not answer.strip():
@@ -252,21 +252,45 @@ def main():
         {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context + "\n\nProduce a review report and minimal exact structured edits. For existing files, old must be an exact unique snippet. For new files, old must be empty."},
     ]
     tracked_set = set(tracked)
-    try:
-        answer = ask_ollama(messages, format_schema=EDIT_SCHEMA, max_predict=2048)
-        response_json = json.loads(answer)
-        changed_paths = apply_edits(response_json.get("edits"), tracked_set)
-        if not changed_paths:
-            raise ValueError("Qwen returned no source or test edits")
-        source_changes = [path for path in changed_paths if Path(path).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}]
-        if not source_changes:
-            raise ValueError("Qwen returned documentation-only edits")
-        review_text = response_json.get("review")
-        if not isinstance(review_text, str) or len(review_text.strip()) < 80 or "timed out" in review_text.lower():
-            raise ValueError("Qwen review report is missing or contains an execution error")
-    except (urllib.error.URLError, TimeoutError, KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
-        print("::error::Qwen multi-role engineering pass failed: " + type(exc).__name__ + ": " + str(exc)[:1000])
-        return 4
+    validation_error = None
+    answer = ""
+    for attempt in range(2):
+        try:
+            answer = ask_ollama(
+                messages,
+                format_schema=EDIT_SCHEMA,
+                max_predict=2048 if attempt == 0 else 1024,
+                timeout_seconds=480 if attempt == 0 else 180,
+            )
+            response_json = json.loads(answer)
+            changed_paths = apply_edits(response_json.get("edits"), tracked_set)
+            if not changed_paths:
+                raise ValueError("Qwen returned no source or test edits")
+            source_changes = [path for path in changed_paths if Path(path).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}]
+            if not source_changes:
+                raise ValueError("Qwen returned documentation-only edits")
+            review_text = response_json.get("review")
+            if not isinstance(review_text, str) or len(review_text.strip()) < 80 or "timed out" in review_text.lower():
+                raise ValueError("Qwen review report is missing or contains an execution error")
+            break
+        except (TimeoutError, urllib.error.URLError) as exc:
+            print("::error::Qwen inference timed out or could not connect: " + type(exc).__name__ + ": " + str(exc)[:500])
+            return 4
+        except (KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
+            validation_error = str(exc)[:1000]
+            if attempt == 0:
+                messages.extend([
+                    {"role": "assistant", "content": answer[:10000]},
+                    {"role": "user", "content": (
+                        "Your previous JSON edit was rejected: " + validation_error + ". "
+                        "Correct the JSON. For an existing file, old must be an exact unique non-empty snippet copied from that file; "
+                        "never mark an existing path as a new file. Use old='' only for a path that is confirmed absent. "
+                        "Do not overwrite or recreate existing files. Return only the corrected JSON schema."
+                    )},
+                ])
+                continue
+            print("::error::Qwen multi-role engineering pass failed validation: " + validation_error)
+            return 4
     report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
