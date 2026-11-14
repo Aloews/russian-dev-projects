@@ -11,7 +11,7 @@ The first target is AUREL / Elite Estate in `Aloews/full`. Do not start other pr
 Product Factory runs on a GitHub-hosted Ubuntu runner. Railway Cloud Agent Tasks are not used.
 
 - **Orchestrator:** GitHub Actions workflow `.github/workflows/product-factory.yml`; manual `workflow_dispatch` only. PR updates do not trigger paid model runs.
-- **Primary agent:** Claude Code running Claude Fable 5.2 through the Starimg Anthropic-compatible Messages gateway.
+- **Primary agent:** Claude Code running Claude Fable 5.2 configured for the Starimg Anthropic Messages endpoint; live tool-call compatibility is still unverified.
 - **Specialists:** read-only architecture reviewer (Claude Opus 5.5), security/privacy reviewer (Claude Sonnet 5.5), product/user-journey analyst (Claude Haiku 5.5), and independent post-change reviewer (Claude Opus 5.5).
 - **Single writer:** Fable is the only agent allowed to modify product files. Specialist agents receive read-only tools.
 - **Tool boundary:** the model session receives repository file tools only; it has no shell, network, Git push, GitHub API, deployment or production-data tool. This keeps provider credentials and write tokens out of model-accessible shell processes.
