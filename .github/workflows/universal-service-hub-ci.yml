@@ -40,6 +40,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Product Factory shell syntax
+        run: bash -n scripts/product_factory.sh
       - name: Rust format
         run: cargo fmt --all
       - name: Rust lint
