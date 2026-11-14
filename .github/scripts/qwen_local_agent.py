@@ -195,7 +195,7 @@ def apply_edits(edits, tracked):
                 # a whole-file replacement; short fragments must use an exact old snippet.
                 minimum_replacement = max(1, int(len(current) * 0.75))
                 similarity = SequenceMatcher(None, current, new, autojunk=False).ratio()
-                if len(new) < minimum_replacement or (current not in new and similarity < 0.75):
+                if len(new) < minimum_replacement or (current not in new and similarity < 0.92):
                     raise ValueError(
                         "new-file edit targets an existing file: " + path +
                         "; provide an exact old snippet or a complete replacement that is substantially similar"
