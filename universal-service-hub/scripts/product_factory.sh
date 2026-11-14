@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-: "\${RAILWAY_API_TOKEN:?RAILWAY_API_TOKEN is required}"
-: "\${RAILWAY_PROJECT_ID:?RAILWAY_PROJECT_ID is required}"
-: "\${RAILWAY_ENVIRONMENT_ID:?RAILWAY_ENVIRONMENT_ID is required}"
-: "\${TARGET_REPO:?TARGET_REPO is required}"
-: "\${TARGET_BRANCH:?TARGET_BRANCH is required}"
-: "\${BASE_BRANCH:?BASE_BRANCH is required}"
-: "\${OBJECTIVE:?OBJECTIVE is required}"
-: "\${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
+: "${RAILWAY_API_TOKEN:?RAILWAY_API_TOKEN is required}"
+: "${RAILWAY_PROJECT_ID:?RAILWAY_PROJECT_ID is required}"
+: "${RAILWAY_ENVIRONMENT_ID:?RAILWAY_ENVIRONMENT_ID is required}"
+: "${TARGET_REPO:?TARGET_REPO is required}"
+: "${TARGET_BRANCH:?TARGET_BRANCH is required}"
+: "${BASE_BRANCH:?BASE_BRANCH is required}"
+: "${OBJECTIVE:?OBJECTIVE is required}"
+: "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
 
 if [[ ! "$TARGET_REPO" =~ ^Aloews/[A-Za-z0-9._-]+$ ]]; then
   echo "TARGET_REPO must be an owned Aloews repository" >&2
@@ -22,15 +22,15 @@ for value in "$TARGET_BRANCH" "$BASE_BRANCH"; do
 done
 
 API="https://backboard.railway.com/graphql/v2"
-REPORT_DIR="\${REPORT_DIR:-artifacts/product-factory}"
+REPORT_DIR="${REPORT_DIR:-artifacts/product-factory}"
 mkdir -p "$REPORT_DIR"
 
 gql() {
   local payload="$1"
-  curl --silent --show-error --fail-with-body \\
-    --request POST "$API" \\
-    --header "Authorization: Bearer $RAILWAY_API_TOKEN" \\
-    --header "Content-Type: application/json" \\
+  curl --silent --show-error --fail-with-body \
+    --request POST "$API" \
+    --header "Authorization: Bearer $RAILWAY_API_TOKEN" \
+    --header "Content-Type: application/json" \
     --data "$payload"
 }
 
@@ -39,23 +39,30 @@ dispatch_and_wait() {
   local model="$2"
   local effort="$3"
   local prompt="$4"
-  local task_key="\${GITHUB_RUN_ID}-\${role}"
-  local conversation_key="product-factory:\${TARGET_REPO}:\${role}"
-  local agent_name="pf-\${role}"
+  local task_key="${GITHUB_RUN_ID}-${role}"
+  local identity="$role"
+  case "$role" in
+    architect|implementation|repair) identity="fable-lead" ;;
+    architecture-review|code-review-*) identity="opus-review" ;;
+    security-review|qa-*) identity="sonnet-review" ;;
+    research) identity="haiku-research" ;;
+  esac
+  local conversation_key="product-factory:${TARGET_REPO}:${identity}"
+  local agent_name="pf-${identity}"
   local mutation='mutation($input: CloudAgentTaskDispatchInput!) { cloudAgentTaskDispatch(input: $input) { taskId cloudAgentId sessionId status } }'
   local input response task_id cloud_agent_id session_id
-  input=$(jq -n \\
-    --arg project "$RAILWAY_PROJECT_ID" \\
-    --arg environment "$RAILWAY_ENVIRONMENT_ID" \\
-    --arg prompt "$prompt" \\
-    --arg model "$model" \\
-    --arg effort "$effort" \\
-    --arg repo "$TARGET_REPO" \\
-    --arg branch "$TARGET_BRANCH" \\
-    --arg conversation "$conversation_key" \\
-    --arg agent "$agent_name" \\
-    --arg key "$task_key" \\
-    --arg external "product-factory:$TARGET_REPO:$GITHUB_RUN_ID:$role" \\
+  input=$(jq -n \
+    --arg project "$RAILWAY_PROJECT_ID" \
+    --arg environment "$RAILWAY_ENVIRONMENT_ID" \
+    --arg prompt "$prompt" \
+    --arg model "$model" \
+    --arg effort "$effort" \
+    --arg repo "$TARGET_REPO" \
+    --arg branch "$TARGET_BRANCH" \
+    --arg conversation "$conversation_key" \
+    --arg agent "$agent_name" \
+    --arg key "$task_key" \
+    --arg external "product-factory:$TARGET_REPO:$GITHUB_RUN_ID:$role" \
     '{
       projectId:$project,
       environmentId:$environment,
