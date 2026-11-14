@@ -246,7 +246,9 @@ jobs:
         with:
           artifact_name: candidate-0
           objective: |
-            Complete one highest-priority bounded vertical slice for the supplied product objective. Inspect the repository's project map, delivery plan, architecture and tests before choosing a task. Preserve the existing stack and security/tenancy invariants; do not assume Rust or PostgreSQL. Add regression tests for the changed behavior. Never fabricate real-world data, credentials, partners, evidence or approvals. If the full objective is too broad, deliver one coherent, verifiable increment and document remaining blockers.
+            Complete one highest-priority bounded vertical slice for this exact product objective:
+            ${{ env.OBJECTIVE }}
+            Inspect the repository's project map, delivery plan, architecture and tests before choosing a task. Preserve the existing stack and security/tenancy invariants; do not assume Rust or PostgreSQL. Add regression tests for the changed behavior. Never fabricate real-world data, credentials, partners, evidence or approvals. If the full objective is too broad, deliver one coherent, verifiable increment and document remaining blockers.
 
   verify_0:
     needs: implement
