@@ -112,7 +112,7 @@ GitHub OAuth sign-in to a hosting vendor is not equivalent to granting the Hub t
 ## Autonomous Product Factory increment
 
 Branch: `feat/ush-autonomous-product-factory`, PR #21 (draft; stacked on PR #20).
-- Replaced Railway Cloud Agent Tasks with a GitHub-hosted Ubuntu runner and Starimg Anthropic-compatible Messages gateway.
+- Replaced Railway Cloud Agent Tasks with a GitHub-hosted Ubuntu runner and Starimg endpoint configured for Anthropic Messages; live tool-call compatibility remains unverified.
 - Workflow `.github/workflows/product-factory.yml` is manual `workflow_dispatch` only; PR updates no longer start paid model runs.
 - Primary model: Claude Fable 5.2. Read-only specialists: Opus 5.5 architecture/code review, Sonnet 5.5 security/privacy, Haiku 5.5 product/user-journey review.
 - The model session is restricted to repository file tools; no shell, Git push, GitHub API, secrets store, deployment or production-data tools. Temporary specialist definitions are removed after each invocation.
