@@ -1,6 +1,8 @@
 name: Autonomous Product Factory
 
 on:
+  push:
+    branches: ["feat/ush-autonomous-product-factory"]
   workflow_dispatch:
     inputs:
       target_repo:
@@ -39,10 +41,10 @@ jobs:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
       RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
-      TARGET_REPO: ${{ inputs.target_repo }}
-      TARGET_BRANCH: ${{ inputs.target_branch }}
-      BASE_BRANCH: ${{ inputs.base_branch }}
-      OBJECTIVE: ${{ inputs.objective }}
+      TARGET_REPO: ${{ inputs.target_repo || 'Aloews/full' }}
+      TARGET_BRANCH: ${{ inputs.target_branch || 'foundation/luxury-estate-platform' }}
+      BASE_BRANCH: ${{ inputs.base_branch || 'main' }}
+      OBJECTIVE: ${{ inputs.objective || 'Complete the Elite Estate vertical slice end-to-end in Rust, verify it, and open/update a PR. Do not merge or deploy production.' }}
       GITHUB_RUN_ID: ${{ github.run_id }}
       REPORT_DIR: artifacts/product-factory
     steps:
