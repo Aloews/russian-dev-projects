@@ -14,8 +14,8 @@ Product Factory runs on GitHub-hosted Ubuntu runners. Railway Cloud Agent Tasks 
 - **Primary agent:** Claude Code running Claude Fable 5.2 configured for the Starimg Anthropic Messages endpoint; live tool-call compatibility is still unverified.
 - **Specialists:** read-only architecture reviewer (Claude Opus 5.5), security/privacy reviewer (Claude Sonnet 5.5), product/user-journey analyst (Claude Haiku 5.5), and independent post-change reviewer (Claude Opus 5.5).
 - **Single writer:** Fable is the only agent allowed to modify product files. Specialist agents receive read-only tools.
-- **Agent isolation:** implementation and repair sessions run on separate ephemeral jobs. The model receives repository file tools only; it has no shell, network, Git push, GitHub API, deployment or production-data tool. Project-level `.claude` and `.mcp.json` configuration is moved out of the agent workspace for the session and restored byte-for-byte afterward; untrusted project hooks/MCP configuration is not loaded. The model cannot modify `.github/workflows/**` or `.github/actions/**`; those controls are maintained separately.
-- **Verification isolation:** each candidate is applied on a fresh runner. Rust formatting, Clippy with warnings denied, workspace tests, release build, npm install/audit/lint/tests/build, required Playwright browser E2E and the production API Docker build run without the Starimg key or a write token in the test process environment.
+- **Agent isolation:** implementation and repair sessions run on separate ephemeral jobs. The model receives repository file tools only; it has no shell, network, Git push, GitHub API, deployment or production-data tool. The shared Reality-First Business skill is injected into the agent session and every specialist profile. Project-level `.claude` and `.mcp.json` configuration is moved out of the agent workspace for the session and restored byte-for-byte afterward; untrusted project hooks/MCP configuration is not loaded. The model cannot modify `.github/workflows/**` or `.github/actions/**`; those controls are maintained separately.
+- **Verification isolation:** each candidate is applied on a fresh runner. stack-aware checks for Rust, Python, Go, Gradle/Maven and Node, plus browser Playwright E2E for detected browser applications and applicable container builds run without the Starimg key or a write token in the test process environment.
 - **Repair:** up to two bounded repair cycles run on new isolated agent jobs and receive the actual failed verification report. The complete gate set is rerun after each repair; tests are never weakened or skipped to manufacture a pass.
 - **Publication isolation:** a separate fresh job receives only the verified patch artifact and the write token. It does not execute project code, package scripts or tests. It checks both the target branch SHA and PR base SHA before applying the patch, disables Git hooks, then creates or updates a PR. An existing working branch must already contain the current PR base; stale branches are rejected rather than silently rebased.
 - **Release:** no automatic merge, production deployment, DNS change, paid infrastructure provisioning or production-data mutation.
@@ -34,7 +34,7 @@ Optional repository Actions variables:
 - `STARIMG_ANTHROPIC_BASE_URL`: gateway base URL. Defaults to `https://ai.starimg.ru`; verify the exact endpoint path and Anthropic Messages compatibility against the current Starimg account documentation.
 - `STARIMG_FABLE_MODEL`: defaults to `claude-fable-5-2`.
 
-A model name in a catalogue is not proof that the selected gateway endpoint supports Messages API tool calls. The current run is the first real integration test. A green action step alone is not proof of a valid model response or working tool calls; inspect the redacted provider result, candidate artifact and verification output before declaring compatibility. Do not silently substitute a model or provider.
+A model name in a catalogue is not proof that the selected gateway endpoint supports Messages API tool calls. Run 43599416331 passed credential preflight, target write permission and checkout. Fable's action step concluded success but its outcome triggered the Qwen fallback; the Qwen step was still running at last inspection. A green action conclusion alone is not proof of a valid model response or working tool calls; inspect the redacted provider result, candidate artifact and verification output before declaring compatibility. Do not silently substitute a model or provider.
 
 ## Current activation blocker
 
@@ -80,6 +80,10 @@ The factory may implement jurisdiction-neutral foundations while owner-only lega
 - Agents may work only in allowlisted `Aloews/*` repositories and the selected working branch.
 - No agent may merge, deploy production, alter production data, rotate credentials, change DNS, provision paid infrastructure or change billing.
 - A run is not complete until the final PR head has green verification evidence and all product-specific release gates are satisfied.
+
+## Product-agnostic verification
+
+The target repository and objective are selected through workflow inputs. Agents infer the stack and domain from the actual project map and source; they must not impose AUREL's Rust/PostgreSQL architecture on other products. Current automated verification covers Rust, Python, Go, Gradle/Maven and Node projects. Playwright is required when a browser application is detected; non-browser Node services are not forced to install a browser stack. Other ecosystems require an explicit verifier adapter before the factory may claim coverage. The first acceptance target remains AUREL, but the orchestration and provider registry are shared.
 
 ## Cost and runtime limits
 
