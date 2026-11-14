@@ -53,9 +53,9 @@ class QwenEditSafetyTests(unittest.TestCase):
                 agent.ROOT = Path(directory)
                 source = agent.ROOT / "src/main.py"
                 source.parent.mkdir(parents=True)
-                source.write_text("VALUE = 1\\n", encoding="utf-8")
+                source.write_text("VALUE = 1\n", encoding="utf-8")
                 answer = json.dumps({
-                    "edits": [{"path": "src/main.py", "old": "", "new": "VALUE = 2\\n"}]
+                    "edits": [{"path": "src/main.py", "old": "", "new": "VALUE = 2\n"}]
                 })
                 context = agent.rejected_existing_file_context(answer)
                 self.assertIn("EXISTING FILE (NOT A NEW FILE)", context)
@@ -72,7 +72,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                 (agent.ROOT / "src/escape").symlink_to(Path(outside), target_is_directory=True)
                 with self.assertRaises(ValueError):
                     agent.apply_edits(
-                        [{"path": "src/escape/pwn.py", "old": "", "new": "VALUE = 1\\n"}],
+                        [{"path": "src/escape/pwn.py", "old": "", "new": "VALUE = 1\n"}],
                         set(),
                     )
                 self.assertFalse((Path(outside) / "pwn.py").exists())
