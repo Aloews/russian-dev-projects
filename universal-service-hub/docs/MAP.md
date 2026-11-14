@@ -149,3 +149,83 @@ Branch: `feat/ush-autonomous-product-factory`, PR #21 (draft, retargeted to `mai
 - The Qwen team, Fable senior engineer and subsequent repair cycles feed the same isolated verification, evidence-driven repair and PR publication pipeline. No merge or production deploy is automatic.
 - The model is installed per ephemeral runner, not as a persistent Railway process. Current run must prove fallback execution before marking Qwen active.
 - codebase-memory-mcp and Spotify Portal are not installed: this runtime has no persistent supported MCP host or authenticated Portal/AiKA session. Do not claim otherwise.
+
+## Mandatory end-to-end product delivery contract
+
+This is the primary operating objective of the Universal Service Hub and Product Factory. The factory exists to deliver working products, not merely connect providers, configure agents, generate plans, open PRs or produce status reports.
+
+**Required lifecycle — every product request must pass all six stages in order:**
+
+1. **Receive and normalize the task**
+   - Capture the user's goal, intended users, problem, constraints and expected outcome.
+   - Resolve routine product, architecture, stack, provider and implementation decisions autonomously.
+   - Ask the owner only for genuinely owner-exclusive decisions: legal identity/authorization, credentials that cannot be accessed through approved integrations, irreversible production actions, or a material spending approval.
+   - Convert the request into a product brief, explicit scope, non-goals, acceptance criteria and a testable definition of done.
+
+2. **Design the product**
+   - Inspect the target repository, existing services, project map, connected integrations, current deployment and constraints before changing anything.
+   - Produce the smallest coherent product architecture and implementation plan that can satisfy the user outcome.
+   - Select the stack and infrastructure from verified, interchangeable providers. Check actual account access, limits, pricing and regional constraints; a catalog entry or configured secret is not proof of a working integration.
+   - Design data model, authentication/authorization, privacy, security, observability, failure handling and migration/rollback before implementation where relevant.
+   - Record decisions and acceptance criteria in the target project's map. Do not ask the owner to approve ordinary engineering choices.
+
+3. **Implement the product**
+   - Build the actual user-facing product and required backend, data, integrations and operational paths—not only scaffolding, placeholder screens, mock data, agent configuration or documentation.
+   - Use specialist agents for bounded work; keep one authoritative writer per branch. Escalate difficult or repeated failures to Fable 5.2 and independent reviewers.
+   - Use real provider integrations in the implementation. Mocks are permitted for isolated unit tests only and must never be presented as evidence of live integration.
+   - Commit coherent increments to an isolated branch. Preserve existing production data and services.
+
+4. **Build and launch an executable candidate**
+   - Install dependencies, compile/build all required components, apply migrations to an isolated test/staging database and start the complete application in a clean environment.
+   - Create and configure the required preview/staging resources using already authorized integrations. Prefer free/low-cost alternatives where fit and verified limits allow.
+   - Resolve build, startup, configuration, secrets, networking and migration failures autonomously.
+   - A PR, successful compilation, generated source files or a green lint job alone is not a launched product.
+
+5. **Verify the running product**
+   - Test the actual running candidate by URL/API, not only source inspection.
+   - Run unit, integration, migration, API contract, browser/E2E, authentication/authorization, security and regression checks appropriate to the product.
+   - Exercise the critical user journey from entry point through the core value-producing action to persisted/retrievable result.
+   - Verify real external dependencies with authorized live smoke tests; record which providers/models were actually exercised and which remain unverified.
+   - Check logs, readiness/health, error paths, privacy/secret leakage, performance basics and rollback/recovery.
+   - Review the exact immutable candidate commit and test evidence independently. If any required gate fails, fix and rerun; do not relabel a failure as a warning or bypass required tests.
+
+6. **Hand over a usable product**
+   - Deliver a working preview/staging URL or other directly runnable artifact, the exact source repository and commit/PR, and the verified core user journey.
+   - Supply only the minimum operating instructions the owner needs: how to open/use it, test access where safely provisioned, known limitations, operational status and how to report an issue.
+   - State precisely what is live, what is staging, what is verified, what is not verified and any remaining owner-only blocker.
+   - Do not claim "ready", "complete", "deployed" or "working" without direct evidence from the running candidate.
+   - The handover is incomplete if the only deliverables are a PR, code diff, design, plan, CI result, agent report or list of configured services.
+
+### Definition of done — product-level, not agent-level
+
+A product is complete for handover only when all applicable conditions below are evidenced on the same candidate revision:
+
+- [ ] The original user task is mapped to a concrete product brief and measurable acceptance criteria.
+- [ ] The core product experience is implemented; no critical flow is a placeholder or mock.
+- [ ] Required backend, database, authentication and external integrations are configured and actually connected.
+- [ ] A clean build succeeds and the application starts in an isolated preview/staging environment.
+- [ ] A reachable URL or directly runnable deliverable is provided.
+- [ ] The critical end-to-end user journey succeeds against the running application and persists/returns real data as intended.
+- [ ] Required automated tests, browser E2E and security checks pass on the exact candidate SHA.
+- [ ] Independent QA/review examines the exact candidate diff and runtime evidence.
+- [ ] Secrets, personal data and production data are protected; no credentials appear in source, logs or handover.
+- [ ] Known limitations, operational dependencies and recovery/rollback steps are recorded.
+- [ ] The owner receives the product URL/artifact, source/PR reference, verification summary and minimal usage instructions.
+
+If a product has no applicable authentication, persistence, payment or external integration, explicitly mark that criterion "not applicable" with a reason; never silently skip it.
+
+### Autonomous recovery and escalation
+
+- A failed stage returns the task to the responsible agent with the exact error, logs and failed acceptance criterion. The coordinator must diagnose, change the implementation and rerun the failed stage plus impacted regression checks.
+- Do not rerun unchanged failing jobs indefinitely. After two unsuccessful attempts with the same failure signature, change the approach/provider/model or isolate a minimal reproduction and escalate to Fable 5.2.
+- If Fable fails, capture the sanitized provider request/response metadata and tool-call protocol error, then use a verified compatible Starimg model or another authorized provider. Never claim model compatibility from secret presence or HTTP reachability alone.
+- Use Qwen 2.5 Coder 3B for bounded specialist analysis and structured edits; validate every edit and test the resulting code. Fable 5.2 owns difficult repairs and final engineering reconciliation. Opus/Sonnet/Haiku or other independent reviewers challenge architecture, security and product behavior; their roles are not proof of successful execution.
+- Preserve artifacts for each run: task brief, decision record, candidate commit, diff, build output, test results, live smoke-test evidence, provider/model identity (without secrets), runtime URL and handover record.
+- Report to the owner only a verified handover or a specific owner-exclusive blocker. Agent chatter, intermediate decisions and routine failure details stay inside the factory and project artifacts.
+
+### Safety and release boundary
+
+- Autonomous implementation, isolated builds, tests and preview/staging deployment are expected within already authorized accounts and budgets.
+- Production deployment, paid resource creation beyond an explicitly approved budget, DNS/domain changes, billing changes, irreversible migrations and production-data mutation remain gated by explicit owner authorization and a rollback plan.
+- Never reuse credentials or production data from Sherlock Scholes, Novel Forge or another project. Use project-scoped identities and secrets.
+- The factory must prefer delivering a verified working preview over leaving the task as an untested PR, while preserving the production safety boundary.
