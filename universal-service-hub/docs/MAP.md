@@ -62,16 +62,16 @@ Branch: `feat/ush-provider-api-adapters-final-v2`, layered on the latest observe
 
 ## Work in progress
 
-- PR #21: provider-neutral Universal Service Hub + Railway-independent Product Factory, branch `feat/ush-autonomous-product-factory`.
-- Exact CI head `f3a6f673f485d65388f5fa24cf54948c8da06b42` passed Rust format/Clippy/tests, Python Ruff/migrations/pytest, Docker build and container smoke test. Later bootstrap-trigger and agent-permission commits are undergoing CI on their new exact head.
-- Product Factory uses GitHub-hosted runners, a bounded local Qwen2.5-Coder 3B multi-role pass, Starimg Anthropic Messages (Fable 5.2 primary, Opus 5.5 fallback), optional OpenRouter Anthropic Messages fallback, isolated verification and a separate PR publication job. No Railway Cloud Agent Tasks are required.
-- A previous run exposed two false-success defects: Qwen could produce a report without source edits, and Fable attempted to clone Caveman into a directory already created by Qwen. Both were fixed. Qwen candidates now require non-document source/test changes and exact old-text edits; the Fable action reuses the verified Caveman checkout.
-- Starimg's current key returned HTTP 402 `insufficient_balance_error` for both Fable 5.2 and Opus 5.5. This is exhausted key allowance, not an API compatibility failure. OpenRouter fallback now probes `OPENROUTER_API_KEY` using the Anthropic Messages API and uses `ANTHROPIC_AUTH_TOKEN` when available.
-- Run `43602951049` produced no candidate: Qwen's source edit was rejected because it treated an existing file as new; Starimg Fable/Opus were skipped after the 402 probes. No PR or product was published. Latest isolated attempt: run `43604172878`, branch `factory/elite-estate-rc3`, currently pending/in progress; its Qwen and OpenRouter outcomes must be checked before any success claim.
+- PR #21: provider-neutral Universal Service Hub + Railway-independent Product Factory, branch `feat/ush-autonomous-product-factory`, draft and not merged.
+- Product Factory now runs without Starimg/Fable. OpenRouter Claude Sonnet 4.5 is the primary implementation and verification-repair model after a live Anthropic tool-call probe; local Qwen2.5-Coder 3B is the fallback.
+- GitHub Actions uses isolated agent, verification, repair and publication jobs. Only a candidate that passes the configured verification gates can be published as a PR. No automatic merge or production deployment.
+- The Qwen editor now supplies bounded existing-file context on a rejected new-file edit, rejects symlink path escapes, and has regression coverage for both cases.
+- The workflow prevents new runs from cancelling an active product build and allows 25 minutes for each local Qwen pass.
+- Latest control-plane head: `d3f24c9e6931211044462feb175ca9b21cf61bf1`. Control-plane CI run #832 is in progress; Qwen safety tests, workflow/actionlint validation, composite action metadata and Rust format have passed so far.
+- Product Factory output is not yet evidenced: no candidate artifact, isolated verification report or AUREL delivery PR has been confirmed. Do not mark the factory operational until these artifacts exist.
 - PR #20 is superseded by PR #21 and must not be merged independently.
-- No AUREL product code has yet been generated or published by Product Factory.
 
-Remaining platform work after the Product Factory activation:
+Remaining platform work after the first verified product delivery:
 - Provider-specific resource management (provision/deploy/scale/logs/rollback) behind explicit approval and dry-run plans.
 - Durable asynchronous jobs, queue adapters, retry/dead-letter policies and idempotent task execution.
 - Per-project/provider budgets, spend ceilings, quotas, usage metering and kill switches.
@@ -117,40 +117,19 @@ GitHub OAuth sign-in to a hosting vendor is not equivalent to granting the Hub t
 
 ## Autonomous Product Factory increment
 
-Branch: `feat/ush-autonomous-product-factory`, PR #21 (draft, retargeted to `main`; includes the provider-adapter work previously proposed in PR #20).
-- Railway Cloud Agent Tasks have been removed from the Product Factory runtime. Product Factory uses GitHub Actions runners and Starimg; Railway remains only an optional hosting-provider adapter in the Universal Service Hub.
-- Workflow: `.github/workflows/product-factory.yml`. Supports owner-triggered `workflow_dispatch`, a narrowly scoped feature-branch bootstrap push, and owner-only `/factory run`. Private target repositories are allowed by the current workflow; the control repository and its Actions artifacts are private.
-- Primary model configured: Claude Fable 5.2 through the Starimg Anthropic Messages endpoint. Live endpoint/tool-call compatibility has not yet been proven.
-- Read-only specialists: Opus 5.5 architecture/code review, Sonnet 5.5 security/privacy, Haiku 5.5 product/user-journey review.
-- Agent, verification and publication run on separate ephemeral jobs. The model gets file tools only; it cannot run shell, network, Git push, GitHub API, deployment or production-data tools. It cannot modify `.github/workflows/**` or `.github/actions/**`.
-- Verification jobs execute Rust formatting/Clippy/tests/release build, npm install/audit/lint/tests/build, required Playwright browser E2E and production API Docker build. They receive neither the Starimg key nor a write token in the test process environment.
-- Up to two repair cycles use the actual failed verification report. A fresh publication job receives only the verified patch artifact, rechecks the target and base branch SHAs, then opens/updates a PR. No target PR is auto-merged or deployed.
-- Required Actions secrets: `STARIMG_API_KEY` and target-scoped `PRODUCT_FACTORY_GITHUB_TOKEN` with Contents read/write and Pull requests read/write. The latest run passed the secret-presence and GitHub target write-permission preflight. Optional variables: `STARIMG_ANTHROPIC_BASE_URL`, `STARIMG_FABLE_MODEL`.
-- CI validates the workflow, composite action metadata and verification script. The current exact head is `4e2d9e8577e4fd640f3595479dca57be4640c45d`; run `43599420761` is still in progress, with Rust format and Product Factory shell/workflow/action validation passed and Clippy running at last inspection.
-- A real agent workflow has started. A candidate patch, independent verification report and target PR have not yet been evidenced.
-- PR #20 is the earlier provider-adapter proposal; verify its current status before closing or superseding it.
-- First target: `Aloews/full`, working branch `factory/elite-estate`, PR base `foundation/luxury-estate-platform`.
-- AUREL is not production-ready until its dedicated database, real identity/JWT issuance, public enquiry abuse controls and PII retention, licensed inventory/partners, jurisdiction review, staging E2E and rollback gates pass.
-- No merge of the target product PR, production deployment, paid hosting provisioning, billing change, DNS change or production-data mutation has been performed.
-
-### Remaining acceptance gates
-- Pass CI and actionlint on the exact final PR #21 head SHA; resolve any workflow or composite-action validation errors.
-- Integrate PR #21 into `main`; PR #20 is superseded by the consolidated branch.
-- Confirm the successful credential and target write-access preflight in run `43599416331`; never expose secret values.
-- Execute one controlled run to prove Starimg authentication, Messages API tool calling, Fable model ID, GitHub branch write and PR creation.
-- Inspect the resulting verification artifact and target PR; do not mark the factory operational until all gates are directly evidenced.
-- Complete AUREL's owner-only release gates before any production deployment.
-
-## Agent runtime implementation — 2026-11-14
-
-- Primary implementation agent: Claude Code with Starimg model `claude-fable-5-2`.
-- Caveman plugin 4.1.0 is installed per session from the signed, verified release commit `1e91f1306d602d4ca23618701b1185575ae1869b`. The workflow clones the exact tagged commit, adds its local marketplace and installs `caveman@caveman`; it does not install a moving `main` branch.
-- Local Qwen2.5-Coder 3B runs a sequential multi-role team (architecture, product, security, QA, implementation and independent QA) on GitHub-hosted runners. Its structured edits use exact old-text matches and source-path validation; the evidence report is reviewed by Fable 5.2.
-- Fable 5.2 acts as the senior engineer and problem fixer: it inspects the Qwen review report and actual diff, independently challenges the findings, repairs defects and owns the final candidate. If Qwen fails, Fable can implement directly; if Fable fails, the bounded Qwen fallback is available.
-- Verification now detects Rust, Python, Go, Gradle/Maven and Node projects; browser E2E is required for detected browser apps and not imposed on non-browser Node services. Additional stacks still need explicit verifier adapters before they can be considered covered.
-- The Qwen team, Fable senior engineer and subsequent repair cycles feed the same isolated verification, evidence-driven repair and PR publication pipeline. No merge or production deploy is automatic.
-- The model is installed per ephemeral runner, not as a persistent Railway process. Current run must prove fallback execution before marking Qwen active.
-- codebase-memory-mcp and Spotify Portal are not installed: this runtime has no persistent supported MCP host or authenticated Portal/AiKA session. Do not claim otherwise.
+Branch: `feat/ush-autonomous-product-factory`, PR #21 (draft, base `main`).
+- Railway Cloud Agent Tasks are not used for agent orchestration. Product Factory runs on GitHub Actions; Railway remains an optional hosting-provider adapter.
+- Workflow: `.github/workflows/product-factory.yml`. Supports workflow dispatch, feature-branch bootstrap push and owner-only `/factory run`. Private target repositories are supported with a scoped `PRODUCT_FACTORY_GITHUB_TOKEN`.
+- Primary implementation and repair route: Anthropic-compatible Claude Sonnet 4.5 through OpenRouter. The workflow probes tool-call compatibility before primary invocation.
+- Fallback route: local Qwen2.5-Coder 3B through Ollama on an isolated GitHub-hosted runner. Qwen can create the initial candidate and repair from verification evidence if OpenRouter is unavailable or fails.
+- Starimg and Fable are disabled. `STARIMG_API_KEY` is not required or called by this workflow.
+- Specialist profiles cover architecture, security, product and independent review. The model gets bounded file tools only; no shell, network, credential, Git push, GitHub API, deployment or production-data tools.
+- Verification, repair and publication run in separate jobs. Verification receives neither model-provider keys nor a target-repository write token.
+- Up to two repair cycles use the actual failed verification report. Publication rechecks target and base branch SHAs before creating/updating a PR. No target PR is auto-merged or deployed.
+- Required Actions secret: target-scoped `PRODUCT_FACTORY_GITHUB_TOKEN` with Contents read/write and Pull requests read/write. `OPENROUTER_API_KEY` is optional: if absent or incompatible, the workflow attempts Qwen.
+- The first acceptance target is `Aloews/full`, working branch `factory/elite-estate-rc3`, base `foundation/luxury-estate-platform`.
+- AUREL is not production-ready until real identity/JWT verification, public enquiry abuse controls and PII retention, licensed inventory/partners, jurisdiction review, staging E2E and rollback gates pass.
+- No merge of the target product PR, production deployment, paid hosting provisioning, billing change, DNS change or production-data mutation is permitted by this workflow.
 
 ## Mandatory end-to-end product delivery contract
 
@@ -219,9 +198,9 @@ If a product has no applicable authentication, persistence, payment or external 
 ### Autonomous recovery and escalation
 
 - A failed stage returns the task to the responsible agent with the exact error, logs and failed acceptance criterion. The coordinator must diagnose, change the implementation and rerun the failed stage plus impacted regression checks.
-- Do not rerun unchanged failing jobs indefinitely. After two unsuccessful attempts with the same failure signature, change the approach/provider/model or isolate a minimal reproduction and escalate to Fable 5.2.
-- If Fable fails, capture the sanitized provider request/response metadata and tool-call protocol error, then use a verified compatible Starimg model or another authorized provider. Never claim model compatibility from secret presence or HTTP reachability alone.
-- Use Qwen 2.5 Coder 3B for bounded specialist analysis and structured edits; validate every edit and test the resulting code. Fable 5.2 owns difficult repairs and final engineering reconciliation. Opus/Sonnet/Haiku or other independent reviewers challenge architecture, security and product behavior; their roles are not proof of successful execution.
+- Do not rerun unchanged failing jobs indefinitely. After two unsuccessful attempts with the same failure signature, change the approach/provider/model or isolate a minimal reproduction and route the exact failure evidence to OpenRouter Sonnet or the Qwen fallback.
+- If OpenRouter fails, capture sanitized provider request/response metadata and tool-call protocol errors, then use the bounded Qwen fallback. Never claim model compatibility from secret presence or HTTP reachability alone.
+- Use Qwen 2.5 Coder 3B for bounded specialist analysis and structured edits; validate every edit and test the resulting code. OpenRouter Sonnet owns primary implementation and evidence-based repair. Independent architecture, security and product reviewers challenge behavior; their roles are not proof of successful execution.
 - Preserve artifacts for each run: task brief, decision record, candidate commit, diff, build output, test results, live smoke-test evidence, provider/model identity (without secrets), runtime URL and handover record.
 - Report to the owner only a verified handover or a specific owner-exclusive blocker. Agent chatter, intermediate decisions and routine failure details stay inside the factory and project artifacts.
 
@@ -233,26 +212,27 @@ If a product has no applicable authentication, persistence, payment or external 
 - The factory must prefer delivering a verified working preview over leaving the task as an untested PR, while preserving the production safety boundary.
 
 
-## Agent routing update — 2026-11-14 (no Fable)
+## Current verified state — 2026-11-14
 
-- The Product Factory workflow no longer calls Starimg or Fable and no longer requires `STARIMG_API_KEY`.
-- Primary implementation and up to two verification-repair passes use Anthropic-compatible Claude Sonnet 4.5 through OpenRouter, only after a live tool-call compatibility probe succeeds.
-- Local Qwen2.5-Coder 3B is the fallback for initial candidate generation and verification repair when OpenRouter is absent or fails.
-- Missing OpenRouter credentials must not stop the pipeline from attempting the local Qwen route. A missing provider key is a capability gate, not a fabricated success.
-- Workflow head implementing this routing: `a17c9023464f770ac28e46dd84f4169105aa2c3b`.
-- Required verification: control-plane CI on this exact head, then a complete factory run that produces candidate artifacts, passes isolated verification and publishes a PR for `Aloews/full`. Until those artifacts exist, the factory is not accepted as operational.
+### Product Factory control plane
+- Latest branch head: `d3f24c9e6931211044462feb175ca9b21cf61bf1`.
+- CI run #832 is in progress. Verified successful steps on this exact head: Qwen Python syntax, Qwen safety regression tests, Product Factory workflow/actionlint validation, composite action metadata and Rust formatting. Rust lint and the remaining suite have not yet completed.
+- The workflow source contains no Starimg API probe, Fable/Opus model ID, or `STARIMG_API_KEY` dependency. OpenRouter Sonnet 4.5 is the primary; Qwen is the fallback.
+- A complete Product Factory run, candidate artifact, verification report and target product PR have not yet been confirmed. Do not claim delivery.
 
-## Execution recovery update — 2026-11-14
+### AUREL staging prerequisites
+- Neon project `aurel-production` (`quiet-band-32908169`) exists in `aws-eu-central-1`; default branch `main` (`br-dry-lake-b91cdjc5`) and database `aurel` are ready.
+- Neon Managed Better Auth is active with mandatory email OTP and the organization plugin. The auth base URL and JWKS endpoint are configured for staging.
+- `aurel_app` login was verified against database `aurel`. It is neither SUPERUSER nor BYPASSRLS. RLS is enabled and forced on `organizations`, `properties`, `property_evidence`, `property_audit_events` and `property_enquiries`. The app role has no DELETE grants on these tables.
+- A pooled TLS-required Neon connection string for `aurel_app` and a separately generated 48-byte cookie-signing secret were stored as sensitive Vercel environment variables `DATABASE_URL` and `NEON_AUTH_COOKIE_SECRET` for Preview/Development only. No secret values are committed or displayed.
+- Vercel project `aurel-private-property` has a successful preview deployment for AUREL branch commit `d977c1438a4418ee16572fc75f11898ed4340e2d`. This proves the preview build completed, not that database-backed user journeys work. SSO protection remains enabled.
+- AUREL Rust CI for that commit is still building the production container image; its final result has not yet been confirmed.
+- AUREL target branch: `foundation/luxury-estate-platform`. Product Factory must create its working branch from the latest base SHA and refuse publication if the base moves during the run.
 
-- Latest confirmed control-plane CI before this recovery: run `43604324413` (workflow run #810) passed the complete Rust, Python, migration, Docker and container-smoke suite on its exact commit.
-- Product Factory execution is still not proven. Run `43602951049` reached the Qwen implementation pass, which failed because the model marked an existing source file as a new file (`new-file edit targets an existing file`). The subsequent Starimg probe returned HTTP 402 `insufficient_balance_error` for both Fable 5.2 and Opus 5.5. No candidate artifact or product PR was published.
-- Run `43604172878` was cancelled while Qwen was installing its local model; the run's implementation, verification and publication jobs did not complete. This is consistent with the workflow's previous `cancel-in-progress: true` concurrency policy, which could cancel a long-running agent job when another run entered the same target group.
-- Recovery changes on this branch:
-  - Set Product Factory concurrency to `cancel-in-progress: false` so a newer run queues rather than cancelling the active product build.
-  - Increase both Qwen team and Qwen fallback job-step timeouts from 10 to 25 minutes. The local 3B model runs CPU-only on GitHub-hosted runners and the previous 10-minute ceiling was too tight for model startup plus inference/retry.
-  - When Qwen incorrectly marks an existing path as a new file, include bounded current-file evidence in the corrective retry instead of only repeating the generic validation error.
-  - Reject edits whose resolved filesystem path escapes the target repository through a symlinked parent directory.
-  - Add regression tests for the existing-file retry context and symlink escape rejection.
-- The latest PR head contains these recovery changes. CI and a new end-to-end Product Factory run on the exact recovery head must pass before this platform is considered operational. Starimg balance remains an external blocker unless a funded Starimg key or a separately verified OpenRouter fallback is available.
-- Do not merge PR #21 or claim a completed product from these code changes alone. The first product acceptance target remains `Aloews/full`, branch `factory/elite-estate-rc3`, base `foundation/luxury-estate-platform`.
-- Recovery implementation commit sequence is complete at control-branch head `2d620a96d28d6cb557198c03f4a09e66f9ef9a43` (workflow concurrency/timeout, Qwen retry/path-safety logic and regression tests). The exact recovery head has not yet returned CI or product-run evidence; keep PR #21 in draft until both are verified.
+### Remaining AUREL release gates
+- Implement Next.js route handlers and connect them to the real Neon database.
+- Verify Neon Auth JWTs through JWKS and enforce tenant isolation at the API boundary.
+- Add public enquiry rate limiting, abuse controls, email verification and a retention policy.
+- Run authenticated staging E2E from sign-up through property submission, independent review, public listing and enquiry persistence.
+- Confirm lawful property supply, partner agreements and jurisdiction-specific legal review.
+- Rehearse rollback. Production deployment remains blocked until all release gates pass.
