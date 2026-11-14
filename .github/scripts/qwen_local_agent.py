@@ -31,7 +31,9 @@ def git(*args, check=True, input_text=None):
     )
 
 def allowed(path, tracked):
-    path = path.replace("\\", "/").lstrip("./")
+    path = path.replace("\\", "/")
+    if path.startswith("/") or any(part in (".", "..") for part in path.split("/")):
+        return False
     low = path.lower()
     if not path.startswith(ALLOWED_PREFIXES):
         return False
