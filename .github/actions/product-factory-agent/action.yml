@@ -51,12 +51,12 @@ runs:
           --max-turns ${{ inputs.max_turns }}
           --max-budget-usd ${{ inputs.max_budget_usd }}
           --permission-mode dontAsk
-          --allowedTools "Read,Write,Edit,Glob,Grep,Agent"
+          --allowedTools "Read,Write,Edit,Glob,Grep,Agent(pf-architect,pf-security,pf-product,pf-reviewer)"
         settings: |
           {
             "permissions": {
               "defaultMode": "dontAsk",
-              "allow": ["Read", "Write", "Edit", "Glob", "Grep", "Agent"],
+              "allow": ["Read", "Write", "Edit", "Glob", "Grep", "Agent(pf-architect,pf-security,pf-product,pf-reviewer)"],
               "deny": [
                 "Read(./.env)",
                 "Read(./.env.local)",
