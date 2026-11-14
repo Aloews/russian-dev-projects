@@ -60,6 +60,9 @@ jobs:
       - name: Product Factory Python agent syntax
         working-directory: .
         run: python3 -m py_compile .github/scripts/qwen_local_agent.py
+      - name: Product Factory Qwen safety tests
+        working-directory: .
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - name: Product Factory workflow validation
         working-directory: .
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/product-factory.yml
