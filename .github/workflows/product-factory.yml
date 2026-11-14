@@ -93,10 +93,16 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd target
-          git rev-parse HEAD > "$RUNNER_TEMP/product-factory-base-branch.sha"
           AUTH="$(printf 'x-access-token:%s' "$PRODUCT_FACTORY_GITHUB_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" fetch origin "+refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH"
+          git checkout -B "$BASE_BRANCH" "origin/$BASE_BRANCH"
+          git rev-parse HEAD > "$RUNNER_TEMP/product-factory-base-branch.sha"
           git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" fetch origin "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH" || true
           if git show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"; then
+            git merge-base --is-ancestor "origin/$BASE_BRANCH" "origin/$TARGET_BRANCH" || {
+              echo "Target branch does not contain the current PR base. Rebase it before starting Product Factory." >&2
+              exit 2
+            }
             git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
           else
             git checkout -b "$TARGET_BRANCH"
@@ -125,7 +131,7 @@ jobs:
 
             You may use only Read, Write, Edit, Glob, Grep and Agent tools. Do not use shell, network, credentials, Git push, GitHub API, deployment, merge or production data. Verification runs later in separate isolated jobs. Never claim tests passed unless the workflow verification report proves it.
 
-            Preserve the existing Rust/PostgreSQL architecture and tenant isolation. Never fabricate inventory, customers, partners, valuations, evidence, licensing or legal approvals. Update docs/MAP.md and the delivery plan with implemented behavior and explicit remaining blockers. Do not write explanatory function descriptions into production-facing code.
+            Preserve the existing Rust/PostgreSQL architecture and tenant isolation. Never fabricate inventory, customers, partners, valuations, evidence, licensing or legal approvals. Update docs/MAP.md and the delivery plan with implemented behavior and explicit remaining blockers. Do not modify .github/workflows/** or .github/actions/**; the delivery pipeline is controlled separately. Do not write explanatory function descriptions into production-facing code.
 
             Finish with all intended source, test and documentation changes saved in the working tree. Do not commit, push, open a PR, merge or deploy; the workflow owns publication after verification.
 
