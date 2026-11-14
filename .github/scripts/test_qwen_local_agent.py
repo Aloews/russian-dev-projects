@@ -46,6 +46,61 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+    def test_similar_full_file_replacement_with_empty_old_is_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "src/main.py"
+                source.parent.mkdir(parents=True)
+                original = "def get_value():\\n    return 1\\n\\n" + "# retained content\\n" * 30
+                source.write_text(original, encoding="utf-8")
+                replacement = original.replace("return 1", "return 2") + "# verified\\n"
+                changed = agent.apply_edits(
+                    [{"path": "src/main.py", "old": "", "new": replacement}],
+                    {"src/main.py"},
+                )
+                self.assertEqual(changed, ["src/main.py"])
+                self.assertEqual(source.read_text(encoding="utf-8"), replacement)
+            finally:
+                agent.ROOT = previous_root
+
+    def test_unrelated_full_file_replacement_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "src/main.py"
+                source.parent.mkdir(parents=True)
+                original = "A" * 600
+                source.write_text(original, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "substantially similar"):
+                    agent.apply_edits(
+                        [{"path": "src/main.py", "old": "", "new": "B" * 400}],
+                        {"src/main.py"},
+                    )
+                self.assertEqual(source.read_text(encoding="utf-8"), original)
+            finally:
+                agent.ROOT = previous_root
+
+    def test_short_fragment_cannot_replace_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "src/main.py"
+                source.parent.mkdir(parents=True)
+                original = "A" * 600
+                source.write_text(original, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "complete replacement"):
+                    agent.apply_edits(
+                        [{"path": "src/main.py", "old": "", "new": "B" * 100}],
+                        {"src/main.py"},
+                    )
+                self.assertEqual(source.read_text(encoding="utf-8"), original)
+            finally:
+                agent.ROOT = previous_root
+
     def test_new_file_conflict_context_includes_existing_file(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT
@@ -60,6 +115,23 @@ class QwenEditSafetyTests(unittest.TestCase):
                 context = agent.rejected_existing_file_context(answer)
                 self.assertIn("EXISTING FILE (NOT A NEW FILE)", context)
                 self.assertIn("VALUE = 1", context)
+            finally:
+                agent.ROOT = previous_root
+
+    def test_rejected_existing_file_context_includes_file_after_old_text_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "README.md"
+                source.write_text("# Actual heading\\nActual body\\n", encoding="utf-8")
+                answer = json.dumps({
+                    "edits": [{"path": "README.md", "old": "# Stale heading", "new": "# Updated heading"}]
+                })
+                context = agent.rejected_existing_file_context(answer)
+                self.assertIn("EXISTING FILE (NOT A NEW FILE)", context)
+                self.assertIn("# Actual heading", context)
+                self.assertNotIn("# Stale heading", context)
             finally:
                 agent.ROOT = previous_root
 
