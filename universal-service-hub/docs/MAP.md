@@ -107,3 +107,22 @@ GitHub OAuth sign-in to a hosting vendor is not equivalent to granting the Hub t
 - Backup/restore and rollback procedures are tested.
 - Budget limits and alerting are active before paid services are enabled.
 - No existing project production database or service is modified by Hub onboarding without an isolated, reviewed change.
+
+
+## Autonomous Product Factory increment
+
+Branch: `feat/ush-autonomous-product-factory`.
+- Added `docs/PRODUCT_FACTORY.md`: reusable multi-agent delivery contract, role allocation, review/repair gates, evidence policy and Elite Estate as the first target.
+- Added `scripts/product_factory.sh`: Railway Cloud Agent Tasks GraphQL dispatcher, idempotency keys, persistent per-role conversations, bounded polling, sequential write ownership, independent review and QA, maximum two repair cycles.
+- Added `.github/workflows/product-factory.yml`: manual, repository-scoped execution with an artifact containing internal agent evidence.
+- Added a CI syntax check for the shell runner.
+- The workflow is not yet executed. It requires a Railway API token and a designated project/environment in GitHub Actions secrets. No Railway task has been dispatched from this environment; the connected Railway tools currently expose task listing/status but not the dispatch action.
+- First run is configured for `Aloews/full`, branch `foundation/luxury-estate-platform`, base `main`, and the Elite Estate vertical slice.
+- No PR merge, production deployment, new paid infrastructure, or production-data mutation has been performed by this increment.
+
+### Remaining acceptance gates
+- Verify the shell runner with CI on this branch and validate the workflow YAML.
+- Configure an authorized Railway agent environment and the three GitHub Actions secrets.
+- Execute a low-risk first run; verify that all four selected model IDs are accepted and that the Fable agent can access the target repository.
+- Confirm task idempotency, persistent sessions, artifact redaction and review/repair behavior from actual Railway task records.
+- Complete Elite Estate only after the full project-specific release gates pass.
