@@ -41,7 +41,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Product Factory shell syntax
-        run: bash -n scripts/product_factory.sh
+        run: bash -n scripts/product_factory_verify.sh
+      - name: Product Factory workflow validation
+        working-directory: .
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/product-factory.yml
       - name: Rust format
         run: cargo fmt --all
       - name: Rust lint
