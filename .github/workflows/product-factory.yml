@@ -1,9 +1,6 @@
 name: Autonomous Product Factory
 
 on:
-  pull_request:
-    branches: ["feat/ush-provider-api-adapters-on-main"]
-    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       target_repo:
@@ -12,65 +9,369 @@ on:
         default: Aloews/full
         type: string
       target_branch:
-        description: Existing working branch for the product
+        description: Working branch to create or update
         required: true
-        default: foundation/luxury-estate-platform
+        default: factory/elite-estate
         type: string
       base_branch:
-        description: PR target branch
+        description: Existing product branch used as the PR base
         required: true
-        default: main
+        default: foundation/luxury-estate-platform
         type: string
       objective:
         description: Product outcome to deliver
         required: true
-        default: "Complete the Elite Estate vertical slice end-to-end in Rust, verify it, and open/update a PR. Do not merge or deploy production."
+        default: "Complete the Elite Estate vertical slice to release-candidate quality. Implement real user journeys, security, tests and documentation. Do not merge or deploy."
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: product-factory-${{ inputs.target_repo }}
+  group: product-factory-${{ inputs.target_repo }}-${{ inputs.target_branch }}
   cancel-in-progress: false
 
 jobs:
   product-factory:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: factory-test
+          POSTGRES_DB: aurel_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aurel_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
-      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-      # Reuse the existing Railway project/environment explicitly authorized by the owner.
-      # Agent tasks run in Railway's cloud-agent VM; existing application services are not redeployed.
-      RAILWAY_PROJECT_ID: 0da4e454-1ef6-4b90-8424-141e8dfbcd02
-      RAILWAY_ENVIRONMENT_ID: d880b6be-d0a8-417b-b850-5e13f3237c3d
-      TARGET_REPO: ${{ inputs.target_repo || 'Aloews/full' }}
-      TARGET_BRANCH: ${{ inputs.target_branch || 'foundation/luxury-estate-platform' }}
-      BASE_BRANCH: ${{ inputs.base_branch || 'main' }}
-      OBJECTIVE: ${{ inputs.objective || 'Complete the Elite Estate vertical slice end-to-end in Rust, verify it, and open/update a PR. Do not merge or deploy production.' }}
-      GITHUB_RUN_ID: ${{ github.run_id }}
-      REPORT_DIR: artifacts/product-factory
-    steps:
-      - name: Check out orchestration repository
-        uses: actions/checkout@v4
+      TARGET_REPO: ${{ inputs.target_repo }}
+      TARGET_BRANCH: ${{ inputs.target_branch }}
+      BASE_BRANCH: ${{ inputs.base_branch }}
+      OBJECTIVE: ${{ inputs.objective }}
+      DATABASE_URL: postgres://postgres:factory-test@127.0.0.1:5432/aurel_test
 
-      - name: Validate required credentials and tools
+    steps:
+      - name: Check out Product Factory control repository
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          path: factory
+          persist-credentials: false
+
+      - name: Validate configuration and credentials
+        shell: bash
+        env:
+          STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
+          PRODUCT_FACTORY_GITHUB_TOKEN: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$TARGET_REPO" =~ ^Aloews/[A-Za-z0-9._-]+$ ]] || { echo "TARGET_REPO must be an owned Aloews repository" >&2; exit 2; }
+          [[ "$TARGET_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "Invalid TARGET_BRANCH" >&2; exit 2; }
+          [[ "$BASE_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "Invalid BASE_BRANCH" >&2; exit 2; }
+          [[ "$TARGET_BRANCH" != "$BASE_BRANCH" ]] || { echo "Working and base branches must differ" >&2; exit 2; }
+          test -n "$STARIMG_API_KEY" || { echo "Missing Actions secret STARIMG_API_KEY" >&2; exit 2; }
+          test -n "$PRODUCT_FACTORY_GITHUB_TOKEN" || { echo "Missing Actions secret PRODUCT_FACTORY_GITHUB_TOKEN (fine-grained token for the target repository: Contents read/write and Pull requests read/write)" >&2; exit 2; }
+          command -v git
+          command -v gh
+          command -v cargo
+          command -v npm
+
+      - name: Check out target product repository
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          repository: ${{ inputs.target_repo }}
+          ref: ${{ inputs.base_branch }}
+          token: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare isolated working branch
+        shell: bash
+        env:
+          PRODUCT_FACTORY_GITHUB_TOKEN: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          cd target
+          AUTH="$(printf 'x-access-token:%s' "$PRODUCT_FACTORY_GITHUB_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" fetch origin "$TARGET_BRANCH" || true
+          if git show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"; then
+            git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+          else
+            git checkout -b "$TARGET_BRANCH"
+          fi
+          git status --short
+          git rev-parse HEAD > "$RUNNER_TEMP/product-factory-base.sha"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Install Node.js
+        uses: actions/setup-node@436c65619b12c9e37ff20a4700145cc387898a7d
+        with:
+          node-version: 22
+
+      - name: Prepare read-only specialist agents
         shell: bash
         run: |
           set -Eeuo pipefail
-          command -v curl
-          command -v jq
-          test -n "$RAILWAY_API_TOKEN" || { echo "Missing repository secret RAILWAY_API_TOKEN" >&2; exit 2; }
+          mkdir -p target/.claude/agents
+          cp factory/.github/product-factory/agents/pf-*.md target/.claude/agents/
 
-      - name: Run Fable-led multi-agent product cycle
-        shell: bash
-        run: bash universal-service-hub/scripts/product_factory.sh
-
-      - name: Preserve internal agent evidence
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Fable 5.2 — discover, plan, implement and review
+        id: implementation
+        uses: anthropics/claude-code-base-action@4f75da3721f36973e9c08ca6eeadbd3c4648a56c
+        env:
+          CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+          ANTHROPIC_BASE_URL: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
         with:
-          name: product-factory-${{ github.run_id }}
-          path: artifacts/product-factory/
-          if-no-files-found: warn
-          retention-days: 14
+          anthropic_api_key: ${{ secrets.STARIMG_API_KEY }}
+          prompt: |
+            You are the lead architect and sole implementation engineer for this product run.
+            Target repository: ${{ inputs.target_repo }}
+            Working branch: ${{ inputs.target_branch }}
+            PR base: ${{ inputs.base_branch }}
+            Objective: ${{ inputs.objective }}
+
+            Work autonomously to deliver code, not a proposal or scaffold. First inspect the complete repository, AGENTS.md / CLAUDE.md, docs/MAP.md, delivery plan, current UI, API, migrations, tests and CI configuration. Treat the actual code as truth; docs may be stale.
+
+            Before editing, delegate independent read-only work to pf-architect, pf-security and pf-product. Reconcile their evidence and define acceptance criteria. Implement the highest-value complete vertical slice. After editing, delegate pf-reviewer and pf-security to inspect the actual changed files and diff. Repair every blocking finding you can resolve.
+
+            You may use only Read, Write, Edit, Glob, Grep and Agent tools. Do not attempt shell execution, network access, deployment, merge, credential changes or production data access. The workflow runs real build/test gates separately after your session. Never claim tests passed unless a later verification report proves it.
+
+            Do not read .env files, credentials, private keys or secret stores. Never create fake inventory, customers, partners, prices, valuations, source records or legal approvals. Keep the product's existing Rust/PostgreSQL architecture; Next.js remains presentation-only. Preserve tenant isolation, auditability, evidence provenance and consent requirements.
+
+            Update docs/MAP.md and the delivery plan with durable implementation decisions and explicit remaining blockers. Do not mark external integrations, identity, database provisioning, legal review, staging or production as complete without direct evidence. Do not write explanatory function descriptions into production-facing code.
+
+            Finish by ensuring all intended source, test and documentation changes are saved in the working tree. Do not commit, push, open a PR, merge or deploy; the workflow owns publication after independent verification.
+          claude_args: >-
+            --model ${{ vars.STARIMG_FABLE_MODEL || 'claude-fable-5-2' }}
+            --max-turns 100
+            --max-budget-usd 35
+            --permission-mode dontAsk
+            --allowedTools "Read,Write,Edit,Glob,Grep,Agent"
+          settings: |
+            {
+              "permissions": {
+                "defaultMode": "dontAsk",
+                "allow": ["Read", "Write", "Edit", "Glob", "Grep", "Agent"],
+                "deny": [
+                  "Read(./.env)",
+                  "Read(./.env.*)",
+                  "Read(./**/.env)",
+                  "Read(./**/.env.*)",
+                  "Read(./**/*.pem)",
+                  "Read(./**/*.key)",
+                  "Write(./.env)",
+                  "Write(./.env.*)",
+                  "Edit(./.env)",
+                  "Edit(./.env.*)"
+                ],
+                "blockReadsOutsideWorkingDirectories": true,
+                "blockWritesOutsideWorkingDirectories": true
+              }
+            }
+
+      - name: Remove temporary specialist configuration
+        if: always()
+        shell: bash
+        run: |
+          rm -f target/.claude/agents/pf-architect.md target/.claude/agents/pf-security.md target/.claude/agents/pf-product.md target/.claude/agents/pf-reviewer.md
+          rmdir target/.claude/agents 2>/dev/null || true
+
+      - name: Verify candidate — first pass
+        id: verify_1
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          bash factory/universal-service-hub/scripts/product_factory_verify.sh target "$GITHUB_WORKSPACE/product-factory-verification.log"
+          rc=$?
+          cp "$GITHUB_WORKSPACE/product-factory-verification.log" target/PRODUCT_FACTORY_VERIFICATION.md
+          exit "$rc"
+
+      - name: Prepare specialist agents for repair 1
+        if: steps.verify_1.outcome == 'failure'
+        shell: bash
+        run: |
+          mkdir -p target/.claude/agents
+          cp factory/.github/product-factory/agents/pf-*.md target/.claude/agents/
+
+      - name: Fable 5.2 — repair from real verification evidence (cycle 1)
+        id: repair_1
+        if: steps.verify_1.outcome == 'failure'
+        uses: anthropics/claude-code-base-action@4f75da3721f36973e9c08ca6eeadbd3c4648a56c
+        env:
+          CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+          ANTHROPIC_BASE_URL: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
+        with:
+          anthropic_api_key: ${{ secrets.STARIMG_API_KEY }}
+          prompt: |
+            Repair the candidate using the actual failing checks in PRODUCT_FACTORY_VERIFICATION.md. Inspect the affected source and tests, fix root causes, and add regression coverage. Delegate security review to pf-security and a read-only review to pf-reviewer. Do not weaken, delete or skip failing tests to obtain a green result. Do not claim success; the workflow will rerun all gates. Do not use shell, network, credentials, merge or deployment.
+          claude_args: >-
+            --model ${{ vars.STARIMG_FABLE_MODEL || 'claude-fable-5-2' }}
+            --max-turns 60
+            --max-budget-usd 20
+            --permission-mode dontAsk
+            --allowedTools "Read,Write,Edit,Glob,Grep,Agent"
+          settings: |
+            {
+              "permissions": {
+                "defaultMode": "dontAsk",
+                "allow": ["Read", "Write", "Edit", "Glob", "Grep", "Agent"],
+                "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./**/*.pem)", "Read(./**/*.key)"],
+                "blockReadsOutsideWorkingDirectories": true,
+                "blockWritesOutsideWorkingDirectories": true
+              }
+            }
+
+      - name: Remove temporary specialist configuration after repair 1
+        if: always()
+        shell: bash
+        run: |
+          rm -f target/.claude/agents/pf-architect.md target/.claude/agents/pf-security.md target/.claude/agents/pf-product.md target/.claude/agents/pf-reviewer.md
+          rmdir target/.claude/agents 2>/dev/null || true
+
+      - name: Verify candidate — second pass
+        id: verify_2
+        if: steps.repair_1.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          bash factory/universal-service-hub/scripts/product_factory_verify.sh target "$GITHUB_WORKSPACE/product-factory-verification.log"
+          rc=$?
+          cp "$GITHUB_WORKSPACE/product-factory-verification.log" target/PRODUCT_FACTORY_VERIFICATION.md
+          exit "$rc"
+
+      - name: Prepare specialist agents for repair 2
+        if: steps.verify_2.outcome == 'failure'
+        shell: bash
+        run: |
+          mkdir -p target/.claude/agents
+          cp factory/.github/product-factory/agents/pf-*.md target/.claude/agents/
+
+      - name: Fable 5.2 — repair from real verification evidence (cycle 2)
+        id: repair_2
+        if: steps.verify_2.outcome == 'failure'
+        uses: anthropics/claude-code-base-action@4f75da3721f36973e9c08ca6eeadbd3c4648a56c
+        env:
+          CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+          ANTHROPIC_BASE_URL: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
+        with:
+          anthropic_api_key: ${{ secrets.STARIMG_API_KEY }}
+          prompt: |
+            Make one final bounded repair pass based only on PRODUCT_FACTORY_VERIFICATION.md. Fix root causes, preserve test integrity and ask pf-reviewer and pf-security to inspect the changed files. Do not claim success; the workflow will rerun all gates. Do not use shell, network, credentials, merge or deployment.
+          claude_args: >-
+            --model ${{ vars.STARIMG_FABLE_MODEL || 'claude-fable-5-2' }}
+            --max-turns 60
+            --max-budget-usd 20
+            --permission-mode dontAsk
+            --allowedTools "Read,Write,Edit,Glob,Grep,Agent"
+          settings: |
+            {
+              "permissions": {
+                "defaultMode": "dontAsk",
+                "allow": ["Read", "Write", "Edit", "Glob", "Grep", "Agent"],
+                "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./**/*.pem)", "Read(./**/*.key)"],
+                "blockReadsOutsideWorkingDirectories": true,
+                "blockWritesOutsideWorkingDirectories": true
+              }
+            }
+
+      - name: Remove temporary specialist configuration after repair 2
+        if: always()
+        shell: bash
+        run: |
+          rm -f target/.claude/agents/pf-architect.md target/.claude/agents/pf-security.md target/.claude/agents/pf-product.md target/.claude/agents/pf-reviewer.md
+          rmdir target/.claude/agents 2>/dev/null || true
+
+      - name: Verify candidate — final pass
+        id: verify_3
+        if: steps.repair_2.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          bash factory/universal-service-hub/scripts/product_factory_verify.sh target "$GITHUB_WORKSPACE/product-factory-verification.log"
+          rc=$?
+          cp "$GITHUB_WORKSPACE/product-factory-verification.log" target/PRODUCT_FACTORY_VERIFICATION.md
+          exit "$rc"
+
+      - name: Require an independently verified candidate
+        if: always()
+        shell: bash
+        env:
+          VERIFY_1: ${{ steps.verify_1.outcome }}
+          VERIFY_2: ${{ steps.verify_2.outcome }}
+          VERIFY_3: ${{ steps.verify_3.outcome }}
+        run: |
+          if [[ "$VERIFY_1" == "success" || "$VERIFY_2" == "success" || "$VERIFY_3" == "success" ]]; then
+            echo "At least one complete verification pass succeeded."
+          else
+            echo "No candidate passed all configured verification gates." >&2
+            exit 1
+          fi
+
+      - name: Publish verified branch and create or update PR
+        if: steps.verify_1.outcome == 'success' || steps.verify_2.outcome == 'success' || steps.verify_3.outcome == 'success'
+        shell: bash
+        env:
+          PRODUCT_FACTORY_GITHUB_TOKEN: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          cd target
+          rm -f PRODUCT_FACTORY_VERIFICATION.md
+          git status --short
+          git add -A
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "The agent produced no changes; refusing to open an empty PR." >&2
+            exit 1
+          fi
+          if git diff --cached --name-only | grep -E '(^|/)(\.env($|\.)|id_rsa|id_ed25519|.*\.pem$|.*\.key$|credentials\.json$)' >/dev/null; then
+            echo "Sensitive file detected in staged changes; refusing publication." >&2
+            exit 1
+          fi
+          git config user.name "Product Factory"
+          git config user.email "product-factory@users.noreply.github.com"
+          git commit -m "feat: deliver verified product increment"
+          AUTH="$(printf 'x-access-token:%s' "$PRODUCT_FACTORY_GITHUB_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          cat > "$RUNNER_TEMP/product-factory-pr.md" <<EOF
+          ## Delivery
+          - Target: $TARGET_REPO
+          - Working branch: $TARGET_BRANCH
+          - Base: $BASE_BRANCH
+          - Objective: $OBJECTIVE
+          - Verification: all configured Rust and frontend gates passed in this workflow.
+          - Agent orchestration: Starimg / Claude Fable 5.2 with independent architecture, security, product and code-review agents.
+          - Run evidence: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          This PR is not merged or deployed. External credentials, real data, legal approvals and production readiness are not inferred from CI success.
+          EOF
+          if gh pr view "$TARGET_BRANCH" --repo "$TARGET_REPO" --json number >/dev/null 2>&1; then
+            gh pr edit "$TARGET_BRANCH" --repo "$TARGET_REPO" --title "AUREL: verified Elite Estate delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
+          else
+            gh pr create --repo "$TARGET_REPO" --base "$BASE_BRANCH" --head "$TARGET_BRANCH" --title "AUREL: verified Elite Estate delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
+          fi
+
+      - name: Preserve verification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: product-factory-evidence-${{ github.run_id }}
+          path: |
+            product-factory-verification.log
+            target/PRODUCT_FACTORY_VERIFICATION.md
+          if-no-files-found: ignore
+          retention-days: 30
