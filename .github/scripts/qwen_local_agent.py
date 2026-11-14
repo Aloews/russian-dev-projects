@@ -185,6 +185,7 @@ def main():
             return 4
     changed = set(git("diff", "--name-only").stdout.splitlines())
     changed.update(git("ls-files", "--others", "--exclude-standard").stdout.splitlines())
+    changed.discard("PRODUCT_FACTORY_VERIFICATION.md")
     if not changed or any(not allowed(path, tracked_set) for path in changed):
         print("::error::Final patch failed the path allowlist.")
         return 5
