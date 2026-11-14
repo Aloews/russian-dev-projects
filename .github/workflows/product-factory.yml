@@ -235,7 +235,7 @@ jobs:
               "permissions": {
                 "defaultMode": "dontAsk",
                 "allow": ["Read", "Write", "Edit", "Glob", "Grep", "Agent"],
-                "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./**/*.pem)", "Read(./**/*.key)"],
+                "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./**/.env)", "Read(./**/.env.*)", "Read(./**/*.pem)", "Read(./**/*.key)", "Read(./.git/**)", "Write(./.git/**)", "Edit(./.git/**)", "Write(./**/.env)", "Write(./**/.env.*)", "Edit(./**/.env)", "Edit(./**/.env.*)"],
                 "blockReadsOutsideWorkingDirectories": true,
                 "blockWritesOutsideWorkingDirectories": true
               }
@@ -350,6 +350,7 @@ jobs:
             echo "Sensitive file detected in staged changes; refusing publication." >&2
             exit 1
           fi
+          AUTH="$(printf 'x-access-token:%s' "$PRODUCT_FACTORY_GITHUB_TOKEN" | base64 -w0)"
           START_SHA="$(cat "$RUNNER_TEMP/product-factory-base.sha")"
           REMOTE_SHA="$(git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" ls-remote origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
           if [[ -n "$REMOTE_SHA" && "$REMOTE_SHA" != "$START_SHA" ]]; then
@@ -359,7 +360,6 @@ jobs:
           git config user.name "Product Factory"
           git config user.email "product-factory@users.noreply.github.com"
           git commit -m "feat: deliver verified product increment"
-          AUTH="$(printf 'x-access-token:%s' "$PRODUCT_FACTORY_GITHUB_TOKEN" | base64 -w0)"
           git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" push origin "HEAD:refs/heads/$TARGET_BRANCH"
           cat > "$RUNNER_TEMP/product-factory-pr.md" <<EOF
           ## Delivery
