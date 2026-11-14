@@ -1,6 +1,12 @@
 name: Autonomous Product Factory
+# The push trigger bootstraps this feature-branch workflow without requiring a merge into the default branch.
 
 "on":
+  push:
+    branches:
+      - feat/ush-autonomous-product-factory
+    paths:
+      - .github/workflows/product-factory.yml
   workflow_dispatch:
     inputs:
       target_repo:
@@ -37,6 +43,7 @@ jobs:
   implement:
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/feat/ush-autonomous-product-factory') ||
       (github.event_name == 'issue_comment' &&
        github.actor == 'Aloews' &&
        github.event.comment.body == '/factory run')
@@ -486,6 +493,7 @@ jobs:
     if: >-
       always() &&
       (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/feat/ush-autonomous-product-factory') ||
        (github.event_name == 'issue_comment' &&
         github.actor == 'Aloews' &&
         github.event.comment.body == '/factory run'))
