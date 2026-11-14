@@ -258,6 +258,9 @@ def main():
         changed_paths = apply_edits(response_json.get("edits"), tracked_set)
         if not changed_paths:
             raise ValueError("Qwen returned no source or test edits")
+        source_changes = [path for path in changed_paths if Path(path).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}]
+        if not source_changes:
+            raise ValueError("Qwen returned documentation-only edits")
         review_text = response_json.get("review")
         if not isinstance(review_text, str) or len(review_text.strip()) < 80 or "timed out" in review_text.lower():
             raise ValueError("Qwen review report is missing or contains an execution error")
