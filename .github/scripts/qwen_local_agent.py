@@ -210,7 +210,7 @@ def ask_ollama(messages, format_schema=None, max_predict=1200, timeout_seconds=4
         "model": MODEL,
         "stream": False,
         "messages": messages,
-        "options": {"temperature": 0.1, "num_ctx": 12288, "num_predict": max_predict},
+        "options": {"temperature": 0.1, "num_ctx": 8192, "num_predict": max_predict},
     }
     if format_schema is not None:
         payload["format"] = format_schema
@@ -292,7 +292,7 @@ def main():
                 messages,
                 format_schema=EDIT_SCHEMA,
                 max_predict=2048 if attempt == 0 else 1024,
-                timeout_seconds=480 if attempt == 0 else 180,
+                timeout_seconds=1200 if attempt == 0 else 600,
             )
             response_json = json.loads(answer)
             changed_paths = apply_edits(response_json.get("edits"), tracked_set)
