@@ -290,7 +290,7 @@ jobs:
               "permissions": {
                 "defaultMode": "dontAsk",
                 "allow": ["Read", "Write", "Edit", "Glob", "Grep", "Agent"],
-                "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./**/*.pem)", "Read(./**/*.key)"],
+                "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./**/.env)", "Read(./**/.env.*)", "Read(./**/*.pem)", "Read(./**/*.key)", "Read(./.git/**)", "Write(./.git/**)", "Edit(./.git/**)", "Write(./**/.env)", "Write(./**/.env.*)", "Edit(./**/.env)", "Edit(./**/.env.*)"],
                 "blockReadsOutsideWorkingDirectories": true,
                 "blockWritesOutsideWorkingDirectories": true
               }
