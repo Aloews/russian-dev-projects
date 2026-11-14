@@ -1,5 +1,5 @@
 name: universal-service-hub-ci
-# Exact-head validation for the OpenRouter + Qwen Product Factory; no Starimg/Fable runtime.
+# Exact-head validation for the Starimg Claude Opus 5 + Qwen Product Factory; Fable is not used.
 
 "on":
   push:
