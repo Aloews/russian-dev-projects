@@ -63,6 +63,23 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+    def test_rejected_existing_file_context_includes_file_after_old_text_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "README.md"
+                source.write_text("# Actual heading\\nActual body\\n", encoding="utf-8")
+                answer = json.dumps({
+                    "edits": [{"path": "README.md", "old": "# Stale heading", "new": "# Updated heading"}]
+                })
+                context = agent.rejected_existing_file_context(answer)
+                self.assertIn("EXISTING FILE (NOT A NEW FILE)", context)
+                self.assertIn("# Actual heading", context)
+                self.assertNotIn("# Stale heading", context)
+            finally:
+                agent.ROOT = previous_root
+
     def test_symlink_parent_cannot_escape_repository(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
             previous_root = agent.ROOT
