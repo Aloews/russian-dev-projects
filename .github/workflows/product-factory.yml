@@ -1,5 +1,6 @@
 name: Autonomous Product Factory
 # The push trigger bootstraps this feature-branch workflow without requiring a merge into the default branch.
+# Bootstrap retry after repository credentials were configured (2026-11-14).
 
 "on":
   push:
