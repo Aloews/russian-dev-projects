@@ -140,3 +140,12 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 10. Deployment controllers, staged rollout, synthetic monitoring, rollback and operator dashboard.
 
 See [ARCHITECTURE.md](./docs/ARCHITECTURE.md), [SECURITY.md](./docs/SECURITY.md), [OPERATIONS.md](./docs/OPERATIONS.md), and [INTEGRATION_PLAN.md](./docs/INTEGRATION_PLAN.md).
+
+
+## Autonomous Product Factory
+
+The repository includes a Fable-led multi-agent workflow for delivering owned products through Railway Cloud Agent Tasks. It coordinates architecture, security, research, implementation, independent code review and QA. The execution contract and first target are documented in [PRODUCT_FACTORY.md](./docs/PRODUCT_FACTORY.md).
+
+Run it from GitHub Actions using **Autonomous Product Factory**. It requires repository secrets `RAILWAY_API_TOKEN`, `RAILWAY_PROJECT_ID` and `RAILWAY_ENVIRONMENT_ID`. It starts/reuses four persistent specialist agents (Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5), limits repair cycles to two, stores internal evidence as a short-lived workflow artifact, and never merges or deploys production.
+
+The workflow is not active until those secrets point to an authorized Railway agent environment. A workflow file or a model appearing in the model catalogue is not proof that an agent task has run.
