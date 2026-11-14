@@ -27,12 +27,14 @@ Base repository: `Aloews/russian-dev-projects`
 - PR #5: AI adapters and normalized chat routing — merged 2026-11-13; exact final head `f8a2b7de53647aeaf3aa134868935eaf62a6536e`; GitHub Actions run #107 passed Ruff, PostgreSQL 16 migration smoke test, pytest, Docker build and container smoke test.
 - PR #8: outbound destination checks and durable audit trail — merged 2026-11-13; final head `482e4f4542f8db4900024d12350cf92cb280d0d9`; GitHub Actions run #143 passed Ruff, PostgreSQL migration, pytest, Docker build and container smoke test.
 - Current production deployment: none.
+- Isolated Neon Free PostgreSQL project created for Hub: `wandering-haze-16638539` (`aws-eu-central-1`, PostgreSQL 17, 0.25–1 CU autoscaling). It is not yet connected to a deployed Hub service; no connection string is committed or exposed.
+- Railway project creation attempt: blocked by the workspace Free-plan resource limit; no existing Sherlock or Novel Forge project was modified.
 - Live provider inference: not yet verified.
 - No paid cloud resources were provisioned by these changes.
 
 ## Implemented capabilities
 
-- Rust Axum/Tokio/SQLx control-plane runtime is under active migration; FastAPI remains a temporary reference implementation.
+- Rust Axum/Tokio/SQLx is the production container runtime; FastAPI remains a temporary compatibility/reference implementation.
 - Rust bearer-token authentication for root administrator and scoped project tokens.
 - Durable provider registry on PostgreSQL, Alembic migrations and local SQLite development.
 - Provider CRUD, capability/priority selection and bounded health checks.
@@ -44,20 +46,31 @@ Base repository: `Aloews/russian-dev-projects`
 - Durable audit records for provider mutations and AI inference outcomes.
 - Project registry with scoped, hashed, revocable API tokens and owner/operator/viewer roles.
 - Project-level capability and provider allowlists for AI inference and provider selection.
-- Rust implementation of project/token management, provider upsert/delete, health probes, model discovery, selection, audit reads and initial AI chat adapters.
+- Rust implements project/token management, provider CRUD, health probes, model discovery, selection, audit reads, AI chat routing and read-only infrastructure account verification.
 - Infisical Universal Auth machine-identity login, short-lived token cache and project-scoped provider secret lookup (live verification pending).
+
+## Infrastructure API adapter increment
+
+Branch: `feat/ush-provider-api-adapters-final-v2`, layered on the latest observed Rust tenancy head.
+- Read-only account checks: Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Neon.
+- Storage management checks: Supabase Storage bucket inventory, Cloudflare R2 bucket inventory and Backblaze B2 account authorization.
+- Authenticated `POST /v1/integrations/{provider_id}/verify` resolves credentials through Infisical and uses fixed HTTPS endpoints, bounded timeouts, no redirects, normalized responses and redacted audit events.
+- These checks do not provision hosting resources or perform object upload/download. S3-compatible SigV4 bucket verification now covers AWS S3, Cloudflare R2, Supabase Storage S3 protocol and Backblaze B2. Object upload/download remains outstanding. PostgreSQL and Redis probes are read-only: TLS-enforced SELECT 1 and rediss:// PING; they do not manage schema, replication, queues or locks.
+- PR and exact-SHA CI validation are required before merge.
 
 ## Work in progress
 
-Project tenancy increment on branch `feat/ush-project-tenancy`:
-- Add project and project-token tables with PostgreSQL migration.
-- Issue one-time raw tokens; store SHA-256 hashes only; support revocation and last-used timestamps.
-- Separate root-only administration from project-scoped AI/provider selection.
-- Enforce owner/operator/viewer roles and per-project capability/provider allowlists.
-- Permit viewer tokens read-only provider selection; restrict AI inference to owner/operator.
-- Allow project owners to manage operator/viewer tokens without granting root administration.
-- Add project update/delete and lifecycle tests.
-- Require passing CI, review exact head SHA, then merge.
+Provider verification increment is open as PR #20 on `feat/ush-provider-api-adapters-on-main`.
+- Adds read-only account verification for Northflank, Railway, Cloudflare, Netlify, Render, Fly.io, DigitalOcean, Supabase, Neon and read-only storage/database/Redis probes.
+- Requires CI and review on the exact final PR head before merge.
+- Does not provision resources, deploy workloads, transfer objects or orchestrate queues.
+
+Remaining product work after provider verification:
+- Provider-specific resource management (provision/deploy/scale/logs/rollback) behind explicit approval and dry-run plans.
+- Durable asynchronous jobs, queue adapters, retry/dead-letter policies and idempotent task execution.
+- Per-project/provider budgets, spend ceilings, quotas, usage metering and kill switches.
+- GitHub App installation and project onboarding automation.
+- Production hosting, managed PostgreSQL, Infisical machine identity, backups, alerts and rollback rehearsal.
 
 ## Owner-selected provider pool
 

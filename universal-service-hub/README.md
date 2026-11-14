@@ -4,7 +4,11 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Current status
 
-**Rust runtime migration in progress / not production-ready.** The production container has been switched to an Axum/Tokio/SQLx Rust binary. Rust currently implements health/readiness, PostgreSQL-backed project and token management, provider registry/selection, safe health probes, audit reads and initial OpenAI-compatible/Anthropic/Gemini chat routing. The legacy FastAPI implementation remains only as a compatibility/reference test target; it is not deployed. Project lifecycle, role-based access, token revocation and audit are implemented. Token expiry, fine-grained token scopes, production deployment, non-AI adapters, quota/queue controls and live provider verification remain outstanding. Infisical machine-identity secret retrieval is implemented but has not yet been live-tested.
+**Rust control plane implemented; production activation remains incomplete.** The production container uses an Axum/Tokio/SQLx Rust binary. It includes PostgreSQL-backed project/token management, provider registry/selection, health probes, audit, AI chat routing and read-only verification adapters for hosting, database, storage, PostgreSQL and Redis services. Provider credentials resolve through Infisical references. Private database/Redis hosts are rejected unless exact DNS names are explicitly allowlisted with `USH_ALLOWED_PRIVATE_HOSTS`. The legacy FastAPI implementation remains a compatibility/reference target. The provider checks are not live connections until credentials are added and verified. Deployment/resource mutation, object upload/download, queue orchestration, budgets/quotas, production rollout and live Infisical/provider smoke tests remain outstanding.
+
+## Provider integration matrix
+
+See [`docs/PROVIDER_API_MATRIX.md`](docs/PROVIDER_API_MATRIX.md) for the requested hosting, backend, database, object-storage and queue provider matrix, current verification coverage and remaining resource-management work.
 
 ## Run locally
 
@@ -30,6 +34,7 @@ Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This ro
 Provider management:
 - `GET /v1/providers` — list providers
 - `GET /v1/providers/{provider_id}/models` — discover current model IDs from the provider API
+- `POST /v1/integrations/{provider_id}/verify` — verify read-only account/API access for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Storage, Neon, Cloudflare R2, Backblaze B2, generic S3-compatible storage, PostgreSQL and Redis
 - `GET /v1/audit?limit=50` — list recent audit events (maximum 100)
 - `POST /v1/projects` — register a project and its allowed capabilities/providers
 - `GET /v1/projects` — list registered projects
@@ -60,7 +65,7 @@ Infisical Universal Auth is supported for provider credentials. Configure:
 - `INFISICAL_ENVIRONMENT`
 - `USH_INFISICAL_SECRET_PATH_PREFIX` (optional; defaults to `/projects`)
 
-Store each provider key in Infisical under `/projects/{project_id}/providers` with the same name as the provider's `api_key_env` reference (for example `OPENAI_API_KEY`). Root-administrator model-discovery requests use `/projects/shared/providers`. The Hub exchanges the machine identity credentials for a short-lived token, caches it until shortly before expiry, and retrieves the key only when dispatching a request. Secret values are not written to the provider table, audit events or logs. In development only, when Infisical is not configured and `USH_SECRET_BACKEND` is not set to `infisical`, provider credentials can be read from environment variables.
+Store each project-scoped provider key in Infisical under `/projects/{project_id}/providers` with the same name as the provider's `api_key_env` reference (for example `OPENAI_API_KEY`). Root-administrator integrations and shared infrastructure accounts use `/projects/shared/providers`; the integration verification endpoint resolves its credential reference from this shared path. The Hub exchanges the machine identity credentials for a short-lived token, caches it until shortly before expiry, and retrieves the key only when dispatching a request. Secret values are not written to the provider table, audit events or logs. In development only, when Infisical is not configured and `USH_SECRET_BACKEND` is not set to `infisical`, provider credentials can be read from environment variables.
 
 ## AI provider configuration
 
@@ -86,6 +91,7 @@ Example for a standard Anthropic Messages API endpoint:
 Send this object to `PUT /v1/providers/anthropic`. In production, store `ANTHROPIC_API_KEY` in Infisical at the project's `/providers` path; environment variables are development-only. For Starimg, use this adapter only after its current account documentation confirms the Anthropic Messages endpoint and use the model identifier returned by that provider. The API response reveals only whether the referenced credential is configured; it never returns the environment-variable name or secret.
 
 Supported adapter types:
+- Infrastructure verification adapters: `northflank`, `railway`, `cloudflare`, `netlify`, `render`, `digitalocean`, `flyio`, `supabase`, `supabase_storage`, `neon`, `cloudflare_r2`, `backblaze_b2`, `s3_compatible`, `postgresql`, `redis` (read-only checks only; PostgreSQL requires verified TLS; public Redis requires TLS)
 - `openai_compatible` — OpenAI-compatible `/chat/completions` endpoints
 - `anthropic` — Anthropic Messages API
 - `gemini` — Gemini `generateContent` API
@@ -127,10 +133,10 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 3. Durable PostgreSQL provider registry and migrations. (Completed)
 4. AI provider adapters and normalized chat routing. (This increment)
 5. Project tenancy, scoped tokens, roles and audit event table/read API. (Completed)
-6. Managed secret-store integration and non-AI adapters for compute, databases, storage, queues and observability.
-7. Policy engine: cost/latency/region constraints, circuit breakers, quotas and fallback chains.
-8. GitHub-driven project onboarding, isolated build/test workers and independent QA gates.
-9. Deployment controllers, staged rollout, synthetic monitoring and automated rollback.
-10. Multi-project dashboard, budget controls and operator notifications.
+6. Managed secret-store integration and read-only infrastructure account verification. (Implemented; live credential checks pending.)
+7. Provider resource-management adapters for compute, deployments, databases, storage lifecycle, queues and observability.
+8. Policy engine: per-project budgets, quotas, cost/latency/region constraints, circuit breakers and fallback chains.
+9. GitHub-driven project onboarding, isolated build/test workers and independent QA gates.
+10. Deployment controllers, staged rollout, synthetic monitoring, rollback and operator dashboard.
 
 See [ARCHITECTURE.md](./docs/ARCHITECTURE.md), [SECURITY.md](./docs/SECURITY.md), [OPERATIONS.md](./docs/OPERATIONS.md), and [INTEGRATION_PLAN.md](./docs/INTEGRATION_PLAN.md).

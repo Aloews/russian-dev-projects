@@ -1,0 +1,76 @@
+name: Autonomous Product Factory
+
+on:
+  pull_request:
+    branches: ["feat/ush-provider-api-adapters-on-main"]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: Owned product repository (Aloews/*)
+        required: true
+        default: Aloews/full
+        type: string
+      target_branch:
+        description: Existing working branch for the product
+        required: true
+        default: foundation/luxury-estate-platform
+        type: string
+      base_branch:
+        description: PR target branch
+        required: true
+        default: main
+        type: string
+      objective:
+        description: Product outcome to deliver
+        required: true
+        default: "Complete the Elite Estate vertical slice end-to-end in Rust, verify it, and open/update a PR. Do not merge or deploy production."
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: product-factory-${{ inputs.target_repo }}
+  cancel-in-progress: false
+
+jobs:
+  product-factory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      # Reuse the existing Railway project/environment explicitly authorized by the owner.
+      # Agent tasks run in Railway's cloud-agent VM; existing application services are not redeployed.
+      RAILWAY_PROJECT_ID: 0da4e454-1ef6-4b90-8424-141e8dfbcd02
+      RAILWAY_ENVIRONMENT_ID: d880b6be-d0a8-417b-b850-5e13f3237c3d
+      TARGET_REPO: ${{ inputs.target_repo || 'Aloews/full' }}
+      TARGET_BRANCH: ${{ inputs.target_branch || 'foundation/luxury-estate-platform' }}
+      BASE_BRANCH: ${{ inputs.base_branch || 'main' }}
+      OBJECTIVE: ${{ inputs.objective || 'Complete the Elite Estate vertical slice end-to-end in Rust, verify it, and open/update a PR. Do not merge or deploy production.' }}
+      GITHUB_RUN_ID: ${{ github.run_id }}
+      REPORT_DIR: artifacts/product-factory
+    steps:
+      - name: Check out orchestration repository
+        uses: actions/checkout@v4
+
+      - name: Validate required credentials and tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          command -v curl
+          command -v jq
+          test -n "$RAILWAY_API_TOKEN" || { echo "Missing repository secret RAILWAY_API_TOKEN" >&2; exit 2; }
+
+      - name: Run Fable-led multi-agent product cycle
+        shell: bash
+        run: bash universal-service-hub/scripts/product_factory.sh
+
+      - name: Preserve internal agent evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-factory-${{ github.run_id }}
+          path: artifacts/product-factory/
+          if-no-files-found: warn
+          retention-days: 14
