@@ -362,6 +362,7 @@ jobs:
           cp "$RUNNER_TEMP/candidate/base-branch.sha" "$RUNNER_TEMP/product-factory-base-branch.sha"
           cp "$RUNNER_TEMP/verification/verification.log" target/PRODUCT_FACTORY_VERIFICATION.md
       - name: Starimg Claude Opus 5 — repair from verification evidence (cycle 1)
+        if: needs.implement.outputs.starimg_key_slot != '0'
         id: starimg_repair_1
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-agent
@@ -469,6 +470,7 @@ jobs:
           cp "$RUNNER_TEMP/candidate/base-branch.sha" "$RUNNER_TEMP/product-factory-base-branch.sha"
           cp "$RUNNER_TEMP/verification/verification.log" target/PRODUCT_FACTORY_VERIFICATION.md
       - name: Starimg Claude Opus 5 — final verification repair (cycle 2)
+        if: needs.implement.outputs.starimg_key_slot != '0'
         id: starimg_repair_2
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-agent
