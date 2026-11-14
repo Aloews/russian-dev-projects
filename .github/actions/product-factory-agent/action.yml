@@ -164,6 +164,8 @@ runs:
                 continue
             denials = message.get("permission_denials") or []
             count += len(denials)
+            for error in message.get("errors") or []:
+                print("Claude provider/runtime error: " + str(error)[:400])
             for denial in denials:
                 if not isinstance(denial, dict):
                     continue
