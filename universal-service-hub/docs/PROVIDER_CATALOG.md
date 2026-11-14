@@ -64,6 +64,23 @@ This catalog defines categories to evaluate. Listing a vendor is not evidence of
 - Cerebras
 - Self-hosted inference (vLLM / Ollama) when economically and operationally justified
 
+## Multi-agent engineering roles
+
+| Role | Default executor | Responsibility | Permission boundary |
+|---|---|---|---|
+| Architecture analyst | Qwen2.5-Coder 3B local | Inspect current architecture, dependencies and failure modes | Read-only |
+| Product analyst | Qwen2.5-Coder 3B local | Define user journeys and measurable acceptance criteria | Read-only |
+| Security analyst | Qwen2.5-Coder 3B local | Challenge auth, tenancy, PII, secrets, SSRF and abuse controls | Read-only |
+| QA analyst | Qwen2.5-Coder 3B local | Identify regression and test gaps | Read-only |
+| Implementer | Qwen2.5-Coder 3B local | Make bounded structured source edits | Single writer, source-path allowlist |
+| Independent QA | Qwen2.5-Coder 3B local | Review the actual candidate diff | Read-only |
+| Senior engineer / fixer | Fable 5.2 via Starimg | Reconcile role findings, fix hard problems and own the final candidate | Single final writer |
+| Independent architecture reviewer | Opus 5.5 | Challenge design and review final diff | Read-only |
+| Independent security reviewer | Sonnet 5.5 | Security/privacy review | Read-only |
+| Product/user-journey reviewer | Haiku 5.5 | Challenge product scope and usability | Read-only |
+
+Qwen roles are separate sequential sessions using the same local model, not independent model vendors. Fable is the escalation/fixer and must independently inspect the source and test evidence. These are configured roles; each provider/model combination remains unverified until its run produces attributable evidence.
+
 ## Source control and delivery
 
 - GitHub
