@@ -45,6 +45,9 @@ jobs:
       - name: Product Factory workflow validation
         working-directory: .
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/product-factory.yml
+      - name: Product Factory composite action metadata
+        working-directory: .
+        run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' .github/actions/product-factory-agent/action.yml .github/actions/product-factory-verify/action.yml
       - name: Rust format
         run: cargo fmt --all
       - name: Rust lint
