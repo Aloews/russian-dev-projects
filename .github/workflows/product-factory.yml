@@ -303,6 +303,7 @@ jobs:
           git -C target checkout --detach "$BASE_SHA"
           git -C target apply "$RUNNER_TEMP/candidate/candidate.patch"
           cp "$RUNNER_TEMP/candidate/base.sha" "$RUNNER_TEMP/product-factory-base.sha"
+          cp "$RUNNER_TEMP/candidate/base-branch.sha" "$RUNNER_TEMP/product-factory-base-branch.sha"
           cp "$RUNNER_TEMP/verification/verification.log" target/PRODUCT_FACTORY_VERIFICATION.md
       - name: Fable 5.2 — final repair from real verification evidence (cycle 2)
         uses: ./factory/.github/actions/product-factory-agent
@@ -465,7 +466,7 @@ jobs:
           if gh pr view "$TARGET_BRANCH" --repo "$TARGET_REPO" --json number >/dev/null 2>&1; then
             gh pr edit "$TARGET_BRANCH" --repo "$TARGET_REPO" --title "${TARGET_REPO}: verified product delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
           else
-            gh pr create --repo "$TARGET_REPO" --base "$BASE_BRANCH" --head "$TARGET_BRANCH" --title "AUREL: verified Elite Estate delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
+            gh pr create --repo "$TARGET_REPO" --base "$BASE_BRANCH" --head "$TARGET_BRANCH" --title "${TARGET_REPO}: verified product delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
           fi
 
   summary:
