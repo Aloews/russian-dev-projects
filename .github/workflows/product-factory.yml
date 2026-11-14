@@ -48,6 +48,8 @@ concurrency:
 
 jobs:
   implement:
+    outputs:
+      starimg_key_slot: ${{ steps.starimg_smoke.outputs.key_slot }}
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/ush-autonomous-product-factory')) ||
@@ -317,7 +319,7 @@ jobs:
           verification_artifact: verification-0
 
   repair_1:
-    needs: verify_0
+    needs: [verify_0, implement]
     if: always() && needs.verify_0.outputs.repairable == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -364,7 +366,7 @@ jobs:
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-agent
         with:
-          starimg_api_key: ${{ secrets.STARIMG_API_KEY }}
+          starimg_api_key: ${{ needs.implement.outputs.starimg_key_slot == '2' && secrets.STARIMG_API_KEY_2 || needs.implement.outputs.starimg_key_slot == '3' && secrets.STARIMG_API_KEY_3 || needs.implement.outputs.starimg_key_slot == '4' && secrets.STARIMG_API_KEY_4 || needs.implement.outputs.starimg_key_slot == '5' && secrets.STARIMG_API_KEY_5 || needs.implement.outputs.starimg_key_slot == '6' && secrets.STARIMG_API_KEY_6 || needs.implement.outputs.starimg_key_slot == '7' && secrets.STARIMG_API_KEY_7 || needs.implement.outputs.starimg_key_slot == '8' && secrets.STARIMG_API_KEY_8 || needs.implement.outputs.starimg_key_slot == '9' && secrets.STARIMG_API_KEY_9 || needs.implement.outputs.starimg_key_slot == '10' && secrets.STARIMG_API_KEY_10 || secrets.STARIMG_API_KEY }}
           auth_token: ""
           base_url: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
           model: ${{ vars.STARIMG_MODEL || 'claude-opus-5' }}
@@ -424,7 +426,7 @@ jobs:
           verification_artifact: verification-1
 
   repair_2:
-    needs: verify_1
+    needs: [verify_1, implement]
     if: always() && needs.verify_1.outputs.repairable == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -471,7 +473,7 @@ jobs:
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-agent
         with:
-          starimg_api_key: ${{ secrets.STARIMG_API_KEY }}
+          starimg_api_key: ${{ needs.implement.outputs.starimg_key_slot == '2' && secrets.STARIMG_API_KEY_2 || needs.implement.outputs.starimg_key_slot == '3' && secrets.STARIMG_API_KEY_3 || needs.implement.outputs.starimg_key_slot == '4' && secrets.STARIMG_API_KEY_4 || needs.implement.outputs.starimg_key_slot == '5' && secrets.STARIMG_API_KEY_5 || needs.implement.outputs.starimg_key_slot == '6' && secrets.STARIMG_API_KEY_6 || needs.implement.outputs.starimg_key_slot == '7' && secrets.STARIMG_API_KEY_7 || needs.implement.outputs.starimg_key_slot == '8' && secrets.STARIMG_API_KEY_8 || needs.implement.outputs.starimg_key_slot == '9' && secrets.STARIMG_API_KEY_9 || needs.implement.outputs.starimg_key_slot == '10' && secrets.STARIMG_API_KEY_10 || secrets.STARIMG_API_KEY }}
           auth_token: ""
           base_url: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
           model: ${{ vars.STARIMG_MODEL || 'claude-opus-5' }}
