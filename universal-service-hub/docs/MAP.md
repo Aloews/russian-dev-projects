@@ -136,3 +136,12 @@ Branch: `feat/ush-autonomous-product-factory`, PR #21 (draft, retargeted to `mai
 - Execute one controlled run to prove Starimg authentication, Messages API tool calling, Fable model ID, GitHub branch write and PR creation.
 - Inspect the resulting verification artifact and target PR; do not mark the factory operational until all gates are directly evidenced.
 - Complete AUREL's owner-only release gates before any production deployment.
+
+## Agent runtime implementation — 2026-11-14
+
+- Primary implementation agent: Claude Code with Starimg model `claude-fable-5-2`.
+- Caveman plugin 4.1.0 is installed per session from the signed, verified release commit `1e91f1306d602d4ca23618701b1185575ae1869b`. The workflow clones the exact tagged commit, adds its local marketplace and installs `caveman@caveman`; it does not install a moving `main` branch.
+- Fallback: local Ollama `qwen2.5-coder:3b` on GitHub-hosted runners. The workflow caches model weights, verifies the model with `ollama show`, injects the pinned Caveman skill and accepts only bounded, allowlisted unified diffs.
+- Both paths feed the same isolated PostgreSQL/Rust/frontend verification, evidence-driven repair and PR publication pipeline. No merge or production deploy is automatic.
+- The model is installed per ephemeral runner, not as a persistent Railway process. Current run must prove fallback execution before marking Qwen active.
+- codebase-memory-mcp and Spotify Portal are not installed: this runtime has no persistent supported MCP host or authenticated Portal/AiKA session. Do not claim otherwise.
