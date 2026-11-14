@@ -152,11 +152,11 @@ def rejected_existing_file_context(answer):
         except (OSError, UnicodeError):
             continue
         sections.append(
-            "\\n--- EXISTING FILE (NOT A NEW FILE): " + path + " ---\\n"
+            "\n--- EXISTING FILE (NOT A NEW FILE): " + path + " ---\n"
             + scrub(current[:12000])
-            + ("\\n[FILE CONTENT TRUNCATED]\\n" if len(current) > 12000 else "")
+            + ("\n[FILE CONTENT TRUNCATED]\n" if len(current) > 12000 else "")
         )
-    return "\\n".join(sections)
+    return "\n".join(sections)
 
 
 def apply_edits(edits, tracked):
