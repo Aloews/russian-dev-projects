@@ -4,7 +4,7 @@
 
 Universal Service Hub is the shared engineering control plane for owned products. Product Factory turns a bounded product objective into implemented code, independent review, automated verification evidence and a pull request. It must deliver working user journeys, not a proposal, demo scaffold or claim based on compilation alone.
 
-The first target is AUREL / Elite Estate in `Aloews/full`. The control repository is public and workflow artifacts contain source patches, so private target repositories are rejected. Supporting private products requires moving the control workflow and artifact storage to a private repository or private artifact store. Do not start other product implementations until this target's release gates are satisfied.
+The first target is AUREL / Elite Estate in `Aloews/full`. The control repository `Aloews/russian-dev-projects` is private. The current workflow supports private target repositories using a fine-grained GitHub token and stores candidate/verification artifacts in the private Actions run. The first validation target is AUREL, but the platform architecture must remain product-agnostic; do not encode AUREL assumptions into shared orchestration, provider routing or verification.
 
 ## Execution architecture
 
@@ -14,7 +14,7 @@ Product Factory runs on GitHub-hosted Ubuntu runners. Railway Cloud Agent Tasks 
 - **Primary agent:** Claude Code running Claude Fable 5.2 configured for the Starimg Anthropic Messages endpoint; live tool-call compatibility is still unverified.
 - **Specialists:** read-only architecture reviewer (Claude Opus 5.5), security/privacy reviewer (Claude Sonnet 5.5), product/user-journey analyst (Claude Haiku 5.5), and independent post-change reviewer (Claude Opus 5.5).
 - **Single writer:** Fable is the only agent allowed to modify product files. Specialist agents receive read-only tools.
-- **Agent isolation:** implementation and repair sessions run on separate ephemeral jobs. The model receives repository file tools only; it has no shell, network, Git push, GitHub API, deployment or production-data tool. Project-level `.claude` or `.mcp.json` configuration is rejected rather than loaded. The model cannot modify `.github/workflows/**` or `.github/actions/**`; those controls are maintained separately.
+- **Agent isolation:** implementation and repair sessions run on separate ephemeral jobs. The model receives repository file tools only; it has no shell, network, Git push, GitHub API, deployment or production-data tool. Project-level `.claude` and `.mcp.json` configuration is moved out of the agent workspace for the session and restored byte-for-byte afterward; untrusted project hooks/MCP configuration is not loaded. The model cannot modify `.github/workflows/**` or `.github/actions/**`; those controls are maintained separately.
 - **Verification isolation:** each candidate is applied on a fresh runner. Rust formatting, Clippy with warnings denied, workspace tests, release build, npm install/audit/lint/tests/build, required Playwright browser E2E and the production API Docker build run without the Starimg key or a write token in the test process environment.
 - **Repair:** up to two bounded repair cycles run on new isolated agent jobs and receive the actual failed verification report. The complete gate set is rerun after each repair; tests are never weakened or skipped to manufacture a pass.
 - **Publication isolation:** a separate fresh job receives only the verified patch artifact and the write token. It does not execute project code, package scripts or tests. It checks both the target branch SHA and PR base SHA before applying the patch, disables Git hooks, then creates or updates a PR. An existing working branch must already contain the current PR base; stale branches are rejected rather than silently rebased.
@@ -24,7 +24,7 @@ The agent sessions use per-invocation Claude Code budget ceilings and turn limit
 
 ## Required GitHub configuration
 
-Add these repository Actions secrets in `Aloews/russian-dev-projects`:
+The latest workflow run passed the checks for both required repository Actions secrets and the target repository write permission. Keep the values in GitHub Secrets; never paste or print them. The required names are:
 
 - `STARIMG_API_KEY`: the Starimg API key for the Anthropic-compatible Messages endpoint.
 - `PRODUCT_FACTORY_GITHUB_TOKEN`: fine-grained token scoped only to the target product repositories, with **Contents: read/write** and **Pull requests: read/write**. The workflow preflights target repository write access. The token is used by checkout and the isolated publication job; it is never passed to the model or verification commands.
@@ -34,11 +34,11 @@ Optional repository Actions variables:
 - `STARIMG_ANTHROPIC_BASE_URL`: gateway base URL. Defaults to `https://ai.starimg.ru`; verify the exact endpoint path and Anthropic Messages compatibility against the current Starimg account documentation.
 - `STARIMG_FABLE_MODEL`: defaults to `claude-fable-5-2`.
 
-A model name in a catalogue is not proof that the selected gateway endpoint supports Messages API tool calls. The first real workflow invocation is the compatibility and authentication test. A failed provider preflight must stop the run; do not silently substitute a model or provider.
+A model name in a catalogue is not proof that the selected gateway endpoint supports Messages API tool calls. The current run is the first real integration test. A green action step alone is not proof of a valid model response or working tool calls; inspect the redacted provider result, candidate artifact and verification output before declaring compatibility. Do not silently substitute a model or provider.
 
 ## Current activation blocker
 
-A real bootstrap invocation was attempted on 2026-11-14. It stopped before checkout or model inference because the repository Actions secret `STARIMG_API_KEY` is absent; the runner environment also showed `PRODUCT_FACTORY_GITHUB_TOKEN` unset. No Starimg request was made and no billable agent session started. Both secrets must be added before rerunning. The control-plane CI is separate from this provider preflight.
+Run `43599416331` on 2026-11-14 passed secret-presence preflight, target repository write-permission check, target checkout and branch preparation. The Fable 5.2 composite action completed with success; the local Qwen fallback step was then observed in progress. The final outcome, provider request/tool-call compatibility, candidate patch and verification result remain unverified until the run and its artifacts complete.
 
 ## Standard run
 
