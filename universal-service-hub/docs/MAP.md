@@ -152,7 +152,7 @@ This is the primary operating objective of the Universal Service Hub and Product
 
 3. **Implement the product**
    - Build the actual user-facing product and required backend, data, integrations and operational paths—not only scaffolding, placeholder screens, mock data, agent configuration or documentation.
-   - Use specialist agents for bounded work; keep one authoritative writer per branch. Escalate difficult or repeated failures to Fable 5.2 and independent reviewers.
+   - Use specialist agents for bounded work; keep one authoritative writer per branch. Escalate difficult or repeated failures to the OpenRouter primary model and independent reviewers.
    - Use real provider integrations in the implementation. Mocks are permitted for isolated unit tests only and must never be presented as evidence of live integration.
    - Commit coherent increments to an isolated branch. Preserve existing production data and services.
 
@@ -215,8 +215,8 @@ If a product has no applicable authentication, persistence, payment or external 
 ## Current verified state — 2026-11-14
 
 ### Product Factory control plane
-- Latest branch head: `d3f24c9e6931211044462feb175ca9b21cf61bf1`.
-- CI run #832 is in progress. Verified successful steps on this exact head: Qwen Python syntax, Qwen safety regression tests, Product Factory workflow/actionlint validation, composite action metadata and Rust formatting. Rust lint and the remaining suite have not yet completed.
+- Latest workflow code commit: `d3f24c9e6931211044462feb175ca9b21cf61bf1`; latest project-map commit: `82ba520134930507987ba8c9a0dd4dd33982e682`.
+- CI run #832 for the workflow code commit is in progress. Verified successful steps on this exact head: Qwen Python syntax, Qwen safety regression tests, Product Factory workflow/actionlint validation, composite action metadata and Rust formatting. Rust lint and the remaining suite have not yet completed.
 - The workflow source contains no Starimg API probe, Fable/Opus model ID, or `STARIMG_API_KEY` dependency. OpenRouter Sonnet 4.5 is the primary; Qwen is the fallback.
 - A complete Product Factory run, candidate artifact, verification report and target product PR have not yet been confirmed. Do not claim delivery.
 
