@@ -12,9 +12,9 @@ from pathlib import Path
 ROOT = Path(os.environ.get("TARGET_WORKDIR", "target")).resolve()
 MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
-MAX_FILES = 8
-MAX_CONTEXT_CHARS = 28000
-MAX_FILE_CHARS = 5200
+MAX_FILES = 6
+MAX_CONTEXT_CHARS = 16000
+MAX_FILE_CHARS = 3500
 SOURCE_SUFFIXES = (
     ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".go", ".java", ".kt", ".swift", ".cs", ".rb", ".php",
@@ -186,7 +186,7 @@ def ask_ollama(messages, format_schema=None, max_predict=1200):
         OLLAMA_URL, data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=600) as response:
+    with urllib.request.urlopen(request, timeout=480) as response:
         data = json.loads(response.read())
     answer = data.get("message", {}).get("content")
     if not isinstance(answer, str) or not answer.strip():
@@ -252,27 +252,18 @@ def main():
         {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context + "\n\nProduce a review report and minimal exact structured edits. For existing files, old must be an exact unique snippet. For new files, old must be empty."},
     ]
     tracked_set = set(tracked)
-    answer = None
-    for attempt in range(2):
-        try:
-            answer = ask_ollama(messages, format_schema=EDIT_SCHEMA, max_predict=4096)
-            response_json = json.loads(answer)
-            changed_paths = apply_edits(response_json.get("edits"), tracked_set)
-            if not changed_paths:
-                raise ValueError("Qwen returned no source or test edits")
-            review_text = response_json.get("review")
-            if not isinstance(review_text, str) or len(review_text.strip()) < 80 or "timed out" in review_text.lower():
-                raise ValueError("Qwen review report is missing or contains an execution error")
-            break
-        except (urllib.error.URLError, TimeoutError, KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
-            error = str(exc)[:1000]
-            if attempt == 1:
-                print("::error::Qwen multi-role engineering pass failed: " + type(exc).__name__ + ": " + error)
-                return 4
-            messages.extend([
-                {"role": "assistant", "content": (answer or "")[:12000]},
-                {"role": "user", "content": "The previous structured result was rejected: " + error + ". Return corrected JSON with exact unique old text from the provided files."},
-            ])
+    try:
+        answer = ask_ollama(messages, format_schema=EDIT_SCHEMA, max_predict=2048)
+        response_json = json.loads(answer)
+        changed_paths = apply_edits(response_json.get("edits"), tracked_set)
+        if not changed_paths:
+            raise ValueError("Qwen returned no source or test edits")
+        review_text = response_json.get("review")
+        if not isinstance(review_text, str) or len(review_text.strip()) < 80 or "timed out" in review_text.lower():
+            raise ValueError("Qwen review report is missing or contains an execution error")
+    except (urllib.error.URLError, TimeoutError, KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
+        print("::error::Qwen multi-role engineering pass failed: " + type(exc).__name__ + ": " + str(exc)[:1000])
+        return 4
     report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
