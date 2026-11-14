@@ -171,6 +171,13 @@ jobs:
                   "Read(./**/.env.*)",
                   "Read(./**/*.pem)",
                   "Read(./**/*.key)",
+                  "Read(./.git/**)",
+                  "Write(./.git/**)",
+                  "Edit(./.git/**)",
+                  "Write(./**/.env)",
+                  "Write(./**/.env.*)",
+                  "Edit(./**/.env)",
+                  "Edit(./**/.env.*)",
                   "Write(./.env)",
                   "Write(./.env.*)",
                   "Edit(./.env)",
@@ -341,6 +348,12 @@ jobs:
           fi
           if git diff --cached --name-only | grep -E '(^|/)(\.env($|\.)|id_rsa|id_ed25519|.*\.pem$|.*\.key$|credentials\.json$)' >/dev/null; then
             echo "Sensitive file detected in staged changes; refusing publication." >&2
+            exit 1
+          fi
+          START_SHA="$(cat "$RUNNER_TEMP/product-factory-base.sha")"
+          REMOTE_SHA="$(git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" ls-remote origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
+          if [[ -n "$REMOTE_SHA" && "$REMOTE_SHA" != "$START_SHA" ]]; then
+            echo "Target branch moved during this run; refusing to overwrite newer work." >&2
             exit 1
           fi
           git config user.name "Product Factory"
