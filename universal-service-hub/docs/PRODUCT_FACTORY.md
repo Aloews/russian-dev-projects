@@ -2,50 +2,50 @@
 
 ## Purpose
 
-Universal Service Hub is the shared engineering control plane for owned products. Product Factory turns a bounded product objective into reviewed code, automated verification evidence and a pull request. It must deliver working user journeys, not a proposal, demo scaffold or claim based on compilation alone.
+Universal Service Hub is the shared engineering control plane for owned products. Product Factory turns a bounded product objective into implemented code, independent review, automated verification evidence and a pull request. It must deliver working user journeys, not a proposal, demo scaffold or claim based on compilation alone.
 
 The first target is AUREL / Elite Estate in `Aloews/full`. Do not start other product implementations until this target's release gates are satisfied.
 
 ## Execution architecture
 
-Product Factory runs on a GitHub-hosted Ubuntu runner. Railway Cloud Agent Tasks are not used.
+Product Factory runs on GitHub-hosted Ubuntu runners. Railway Cloud Agent Tasks are not used.
 
-- **Orchestrator:** GitHub Actions workflow `.github/workflows/product-factory.yml`; manual `workflow_dispatch` only. PR updates do not trigger paid model runs.
+- **Orchestrator:** `.github/workflows/product-factory.yml`. The owner can start a run with `workflow_dispatch`, or comment exactly `/factory run` on an issue or PR. The comment trigger is restricted to the repository owner and starts the default AUREL objective.
 - **Primary agent:** Claude Code running Claude Fable 5.2 configured for the Starimg Anthropic Messages endpoint; live tool-call compatibility is still unverified.
 - **Specialists:** read-only architecture reviewer (Claude Opus 5.5), security/privacy reviewer (Claude Sonnet 5.5), product/user-journey analyst (Claude Haiku 5.5), and independent post-change reviewer (Claude Opus 5.5).
 - **Single writer:** Fable is the only agent allowed to modify product files. Specialist agents receive read-only tools.
-- **Tool boundary:** the model session receives repository file tools only; it has no shell, network, Git push, GitHub API, deployment or production-data tool. This keeps provider credentials and write tokens out of model-accessible shell processes.
-- **Verification:** a separate workflow step runs Rust and frontend checks after the model session has ended. It does not receive the Starimg key.
-- **Repair:** up to two bounded repair cycles receive the actual failed verification report; tests are rerun after each repair.
-- **Publication:** only after a complete verification pass, a separate step commits and pushes the candidate branch and creates or updates a PR.
+- **Agent isolation:** implementation and repair sessions run on separate ephemeral jobs. The model receives repository file tools only; it has no shell, network, Git push, GitHub API, deployment or production-data tool. Project-level `.claude` or `.mcp.json` configuration is rejected rather than loaded.
+- **Verification isolation:** each candidate is applied on a fresh runner. Rust formatting, Clippy with warnings denied, workspace tests, release build, npm install/audit/lint/tests/build, required Playwright browser E2E and the production API Docker build run without the Starimg key or a write token in the test process environment.
+- **Repair:** up to two bounded repair cycles run on new isolated agent jobs and receive the actual failed verification report. The complete gate set is rerun after each repair; tests are never weakened or skipped to manufacture a pass.
+- **Publication isolation:** a separate fresh job receives only the verified patch artifact and the write token. It does not execute project code, package scripts or tests. It checks both the target branch SHA and PR base SHA before applying the patch, disables Git hooks, then creates or updates a PR.
 - **Release:** no automatic merge, production deployment, DNS change, paid infrastructure provisioning or production-data mutation.
 
-The agent session uses a per-invocation Claude Code budget ceiling and turn limit. Starimg account-level spend limits remain the authoritative billing guard; gateway pricing and budget accounting must be checked against the actual Starimg account.
+The agent sessions use per-invocation Claude Code budget ceilings and turn limits: up to $35 for implementation and $20 for each repair cycle. These are local CLI ceilings, not a guarantee of Starimg billing equivalence. Starimg account-level spend limits remain authoritative; verify gateway pricing and budget accounting against the actual account.
 
 ## Required GitHub configuration
 
 Add these repository Actions secrets in `Aloews/russian-dev-projects`:
 
 - `STARIMG_API_KEY`: the Starimg API key for the Anthropic-compatible Messages endpoint.
-- `PRODUCT_FACTORY_GITHUB_TOKEN`: fine-grained token scoped only to the target product repositories, with **Contents: read/write** and **Pull requests: read/write**. It is used by checkout and the final publish step; it is not passed to the model session.
+- `PRODUCT_FACTORY_GITHUB_TOKEN`: fine-grained token scoped only to the target product repositories, with **Contents: read/write** and **Pull requests: read/write**. The workflow preflights target repository write access. The token is used by checkout and the isolated publication job; it is never passed to the model or verification commands.
 
 Optional repository Actions variables:
 
 - `STARIMG_ANTHROPIC_BASE_URL`: gateway base URL. Defaults to `https://ai.starimg.ru`; verify the exact endpoint path and Anthropic Messages compatibility against the current Starimg account documentation.
 - `STARIMG_FABLE_MODEL`: defaults to `claude-fable-5-2`.
 
-A model name in a catalog is not proof that the selected gateway endpoint supports Messages API tool calls. The first real workflow invocation is the compatibility and authentication test. A failed provider preflight must stop the run; do not silently substitute a model or provider.
+A model name in a catalogue is not proof that the selected gateway endpoint supports Messages API tool calls. The first real workflow invocation is the compatibility and authentication test. A failed provider preflight must stop the run; do not silently substitute a model or provider.
 
 ## Standard run
 
-1. Owner starts **Autonomous Product Factory** manually and supplies the target repository, working branch, base branch and objective.
-2. The runner validates the repository/branch allowlist, checks the required credentials, fetches the latest target branch and records its starting SHA.
+1. The owner starts **Autonomous Product Factory** manually with target repository, working branch, base branch and objective, or comments `/factory run` to start the default AUREL task.
+2. The runner validates the repository/branch allowlist and required credentials, checks target write access, fetches the selected branches and records both starting SHAs.
 3. Fable inspects the real code, project map, delivery plan, tests and CI. Architecture, security and product specialists independently challenge scope and acceptance criteria.
-4. Fable implements the bounded increment and requests read-only review of the actual changes.
-5. The runner executes the verification script. For a Rust workspace it runs formatting, Clippy with warnings denied, workspace tests and release build. For an npm project with a lockfile it runs `npm ci`, dependency audit, configured lint/test scripts and production build.
-6. If any gate fails, Fable receives the captured report and may repair. The complete gate set is rerun; tests are never weakened or skipped to manufacture a pass.
-7. A verified candidate is committed to the configured working branch and a PR is created or updated against the base branch. Verification logs are retained as a 30-day workflow artifact.
-8. If both repair cycles fail, the workflow stops with the failing report. It does not publish an unverified candidate.
+4. Fable implements the bounded increment and requests read-only review of the actual changes. The runner exports a patch artifact; it does not commit or push from the agent job.
+5. A fresh verification job applies that patch at the recorded SHA and executes the complete gate set. The report is retained as a 30-day workflow artifact.
+6. If any gate fails, Fable receives the captured report in a new isolated job and may repair. The complete gate set is rerun; at most two repair cycles are allowed.
+7. Only a candidate with all gates green reaches the isolated publication job. It rechecks both branch SHAs, pushes the candidate branch and creates or updates a PR. The PR is not merged or deployed.
+8. If no candidate passes, the workflow fails and retains the available verification evidence. It does not publish an unverified candidate.
 
 ## First product: AUREL / Elite Estate
 
@@ -53,7 +53,7 @@ A model name in a catalog is not proof that the selected gateway endpoint suppor
 - Default working branch: `factory/elite-estate`
 - Default PR base: `foundation/luxury-estate-platform`
 
-The current branch already contains a Rust/Axum API, PostgreSQL persistence and row-level tenant isolation, evidence-backed property review/publication and a Next.js presentation layer. These are a technical foundation, not a production release.
+The current branch already contains a Rust/Axum API, PostgreSQL persistence and row-level tenant isolation, evidence-backed property review/publication and a Next.js presentation layer. These are a technical foundation, not a production release. The current target does not yet have a Playwright configuration; the factory must add browser-level tests for the critical user journeys before a candidate can pass.
 
 The factory must close the remaining blockers with evidence:
 
@@ -81,4 +81,4 @@ The factory may implement jurisdiction-neutral foundations while owner-only lega
 
 GitHub-hosted runner usage for private repositories is subject to the account's included Actions compute allowance and any overage billing. Starimg model inference is billed separately by Starimg. Configure provider-side spend limits before repeated runs; do not interpret a workflow's successful start as proof of remaining account balance.
 
-The workflow is bounded by a six-hour job timeout, a maximum of two repair cycles, Claude Code turn/budget limits and one active run per target branch.
+The workflow is bounded by a six-hour agent-job timeout, a maximum of two repair cycles, Claude Code turn/budget limits and one active run per target repository/branch.
