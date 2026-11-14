@@ -27,6 +27,18 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install pinned Caveman 4.1.0
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        CAVEMAN_DIR="$RUNNER_TEMP/caveman"
+        git clone --depth 1 --branch v4.1.0 https://github.com/JuliusBrussee/caveman.git "$CAVEMAN_DIR"
+        test "$(git -C "$CAVEMAN_DIR" rev-parse HEAD)" = "1e91f1306d602d4ca23618701b1185575ae1869b"
+        test -s "$CAVEMAN_DIR/.claude-plugin/marketplace.json"
+        test -s "$CAVEMAN_DIR/.claude-plugin/plugin.json"
+        test -s "$CAVEMAN_DIR/skills/caveman/SKILL.md"
+        echo "CAVEMAN_SKILL_PATH=$CAVEMAN_DIR/skills/caveman/SKILL.md" >> "$GITHUB_ENV"
+
     - name: Prepare isolated specialist profiles
       shell: bash
       run: |
@@ -52,6 +64,8 @@ runs:
           --max-budget-usd ${{ inputs.max_budget_usd }}
           --permission-mode dontAsk
           --allowedTools "Read,Write,Edit,Glob,Grep,Agent(pf-architect),Agent(pf-security),Agent(pf-product),Agent(pf-reviewer)"
+        plugin_marketplaces: ${{ runner.temp }}/caveman
+        plugins: caveman@caveman
         settings: |
           {
             "permissions": {
@@ -127,6 +141,44 @@ runs:
               "blockWritesOutsideWorkingDirectories": true
             }
           }
+
+    - name: Emit redacted Claude permission diagnostics
+      if: always()
+      shell: bash
+      run: |
+        python3 - <<'PY'
+        import json, os
+        from pathlib import Path
+        path = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "claude-execution-output.json"
+        if not path.is_file():
+            print("Claude execution file unavailable; no tool-level diagnostic.")
+            raise SystemExit(0)
+        try:
+            messages = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            print("Claude execution file could not be parsed.")
+            raise SystemExit(0)
+        count = 0
+        for message in messages if isinstance(messages, list) else []:
+            if not isinstance(message, dict) or message.get("type") != "result":
+                continue
+            denials = message.get("permission_denials") or []
+            count += len(denials)
+            for denial in denials:
+                if not isinstance(denial, dict):
+                    continue
+                tool = denial.get("tool_name", "unknown")
+                tool_input = denial.get("tool_input") or {}
+                details = []
+                if isinstance(tool_input, dict):
+                    if tool_input.get("subagent_type"):
+                        details.append("subagent=" + str(tool_input["subagent_type"])[:80])
+                    for key in ("file_path", "path"):
+                        if tool_input.get(key):
+                            details.append("file=" + Path(str(tool_input[key])).name[:100])
+                print("Permission denied: " + str(tool)[:80] + (" (" + ", ".join(details) + ")" if details else ""))
+        print("Claude permission denials: " + str(count))
+        PY
 
     - name: Remove temporary Claude project configuration
       if: always()
