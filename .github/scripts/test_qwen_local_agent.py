@@ -46,6 +46,42 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+    def test_full_file_replacement_with_empty_old_is_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "src/main.py"
+                source.parent.mkdir(parents=True)
+                source.write_text("A" * 600, encoding="utf-8")
+                replacement = "B" * 400
+                changed = agent.apply_edits(
+                    [{"path": "src/main.py", "old": "", "new": replacement}],
+                    {"src/main.py"},
+                )
+                self.assertEqual(changed, ["src/main.py"])
+                self.assertEqual(source.read_text(encoding="utf-8"), replacement)
+            finally:
+                agent.ROOT = previous_root
+
+    def test_short_fragment_cannot_replace_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "src/main.py"
+                source.parent.mkdir(parents=True)
+                original = "A" * 600
+                source.write_text(original, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "complete replacement"):
+                    agent.apply_edits(
+                        [{"path": "src/main.py", "old": "", "new": "B" * 100}],
+                        {"src/main.py"},
+                    )
+                self.assertEqual(source.read_text(encoding="utf-8"), original)
+            finally:
+                agent.ROOT = previous_root
+
     def test_new_file_conflict_context_includes_existing_file(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT
