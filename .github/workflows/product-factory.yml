@@ -75,6 +75,8 @@ jobs:
           command -v gh
           PUSH_PERMISSION="$(gh api "repos/$TARGET_REPO" --jq '.permissions.push // false')"
           [[ "$PUSH_PERMISSION" == "true" ]] || { echo "GitHub token lacks Contents write access to $TARGET_REPO" >&2; exit 2; }
+          TARGET_PRIVATE="$(gh api "repos/$TARGET_REPO" --jq '.private')"
+          [[ "$TARGET_PRIVATE" == "false" ]] || { echo "Private target repositories are blocked while workflow artifacts live in this public control repository." >&2; exit 2; }
 
       - name: Check out target product repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
