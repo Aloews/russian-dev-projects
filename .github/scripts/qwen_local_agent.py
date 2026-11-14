@@ -15,14 +15,22 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MAX_FILES = 8
 MAX_CONTEXT_CHARS = 28000
 MAX_FILE_CHARS = 5200
-ALLOWED_PREFIXES = (
-    "app/",
-    "services/platform-api/src/",
-    "services/platform-api/tests/",
-    "services/platform-api/migrations/",
-    "tests/",
-    "docs/",
+SOURCE_SUFFIXES = (
+    ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".go", ".java", ".kt", ".swift", ".cs", ".rb", ".php",
+    ".vue", ".svelte", ".html", ".css", ".scss", ".sql",
+    ".md", ".mdx", ".yaml", ".yml", ".toml",
 )
+PROTECTED_DIRS = {
+    ".git", ".github", ".claude", ".next", ".venv", "node_modules",
+    "vendor", "dist", "build", "coverage", "target", "migrations",
+}
+PROTECTED_NAMES = {
+    "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+    "cargo.toml", "cargo.lock", "pyproject.toml", "poetry.lock",
+    "requirements.txt", "dockerfile", "docker-compose.yml",
+    "makefile", "justfile",
+}
 
 def git(*args, check=True, input_text=None):
     return subprocess.run(
@@ -35,15 +43,17 @@ def allowed(path, tracked):
     if path.startswith("/") or any(part in (".", "..") for part in path.split("/")):
         return False
     low = path.lower()
-    if not path.startswith(ALLOWED_PREFIXES):
+    parts = low.split("/")
+    if any(part in PROTECTED_DIRS for part in parts):
+        return False
+    name = parts[-1]
+    if name in PROTECTED_NAMES or name.endswith((".lock", ".min.js", ".map", ".pem", ".key", ".p12", ".pfx")):
         return False
     if any(x in low for x in (".env", "credentials", "service-account", "secret", "private-key")):
         return False
-    if low.endswith((".lock", ".min.js", ".map", ".pem", ".key", ".p12", ".pfx")):
+    if name.startswith(".") and name not in {".gitignore", ".dockerignore"}:
         return False
-    if path.startswith("services/platform-api/migrations/") and path in tracked:
-        return False
-    return True
+    return Path(name).suffix.lower() in SOURCE_SUFFIXES
 
 def read_text(path):
     try:
@@ -63,13 +73,7 @@ def make_context(task, tracked):
     tokens = set(re.findall(r"[a-zA-Z0-9_/-]{3,}", task.lower()))
     preferred = [
         "docs/MAP.md", "docs/DELIVERY_PLAN.md", "docs/AI_AGENT_WORKFLOW.md",
-        "README.md", "app/page.tsx", "app/properties/page.tsx",
-        "app/properties/[id]/page.tsx", "app/properties/[id]/enquiry-form.tsx",
-        "services/platform-api/src/elite_estate_api.rs",
-        "services/platform-api/src/routes.rs",
-        "services/platform-api/src/domains/elite_estate.rs",
-        "services/platform-api/src/main.rs",
-        "services/platform-api/migrations/0001_elite_estate.sql",
+        "AGENTS.md", "README.md", "README.rst",
     ]
     candidates = [p for p in preferred if p in tracked]
     ranked = []
@@ -172,7 +176,7 @@ def main():
         print("::error::Target working tree is missing.")
         return 2
     tracked = git("ls-files").stdout.splitlines()
-    task = os.environ.get("OBJECTIVE", "Complete the highest-priority bounded AUREL delivery slice.")
+    task = os.environ.get("OBJECTIVE", "Complete the highest-priority bounded, testable product increment.")
     verification = read_text("PRODUCT_FACTORY_VERIFICATION.md")
     if verification:
         task += "\n\nRepair the actual failures listed in PRODUCT_FACTORY_VERIFICATION.md. Preserve all checks."
@@ -189,15 +193,15 @@ def main():
         print("::error::No safe source context found for Qwen.")
         return 2
     system = (
-        "You are a cautious local coding fallback for a production product. "
-        "Inspect the provided project evidence; choose one small, complete, testable increment. "
+        "You are a cautious, product-agnostic local coding fallback for any software product. "
+        "Inspect the provided project evidence and project map; infer the actual stack and product domain from files, then choose one small, complete, testable increment. "
         "Return only JSON matching the supplied schema, with an edits array of exact path/old/new replacements. "
         "For existing files, old must be an exact unique snippet copied from the provided file. "
         "For a new file, old must be empty and new must contain the complete file. "
         "Never return a unified diff, markdown fence or explanation. "
         "Never invent live data, credentials, legal approvals, customers, property inventory or tests. "
-        "Do not edit workflows, action definitions, package manifests, lockfiles, credentials, deployment files, "
-        "production secrets or existing SQL migrations. Add tests for behavior changes. "
+        "Do not edit workflows, action definitions, dependency manifests, lockfiles, credentials, deployment files, "
+        "production secrets, infrastructure definitions or database migrations. Add tests for behavior changes. "
         "Do not weaken or delete tests. Keep changes minimal. No extra keys or explanations."
     )
     if skill:
