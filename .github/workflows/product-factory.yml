@@ -147,7 +147,7 @@ jobs:
 
             You may use only Read, Write, Edit, Glob, Grep and Agent tools. Do not use shell, network, credentials, Git push, GitHub API, deployment, merge or production data. Verification runs later in separate isolated jobs. Never claim tests passed unless the workflow verification report proves it.
 
-            Preserve the existing Rust/PostgreSQL architecture and tenant isolation. Never fabricate inventory, customers, partners, valuations, evidence, licensing or legal approvals. Update docs/MAP.md and the delivery plan with implemented behavior and explicit remaining blockers. Do not modify .github/workflows/** or .github/actions/**; the delivery pipeline is controlled separately. Do not write explanatory function descriptions into production-facing code.
+            Preserve the target repository's actual architecture, languages, frameworks, security boundaries and tenancy model; do not impose another project's stack. Never fabricate real-world data, customers, partners, valuations, evidence, licensing or legal approvals. Update docs/MAP.md and the delivery plan with implemented behavior and explicit remaining blockers. Do not modify .github/workflows/** or .github/actions/**; the delivery pipeline is controlled separately. Do not write explanatory function descriptions into production-facing code.
 
             Finish with all intended source, test and documentation changes saved in the working tree. Do not commit, push, open a PR, merge or deploy; the workflow owns publication after verification.
 
@@ -157,7 +157,7 @@ jobs:
         with:
           artifact_name: candidate-0
           objective: |
-            Complete one highest-priority bounded vertical slice for the AUREL product objective. Read docs/MAP.md, docs/DELIVERY_PLAN.md and docs/AI_AGENT_WORKFLOW.md. Focus on one concrete user journey, add regression tests, preserve Rust/PostgreSQL tenant isolation, and never fabricate inventory, partners, evidence or legal approvals. If the full objective is too broad, deliver one coherent, verifiable increment and document remaining blockers.
+            Complete one highest-priority bounded vertical slice for the supplied product objective. Inspect the repository's project map, delivery plan, architecture and tests before choosing a task. Preserve the existing stack and security/tenancy invariants; do not assume Rust or PostgreSQL. Add regression tests for the changed behavior. Never fabricate real-world data, credentials, partners, evidence or approvals. If the full objective is too broad, deliver one coherent, verifiable increment and document remaining blockers.
 
   verify_0:
     needs: implement
