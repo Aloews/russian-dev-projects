@@ -51,7 +51,7 @@ runs:
           --max-turns ${{ inputs.max_turns }}
           --max-budget-usd ${{ inputs.max_budget_usd }}
           --permission-mode dontAsk
-          --allowedTools "Read,Write,Edit,Glob,Grep,Agent(pf-architect,pf-security,pf-product,pf-reviewer)"
+          --allowedTools "Read,Write,Edit,Glob,Grep,Agent(pf-architect),Agent(pf-security),Agent(pf-product),Agent(pf-reviewer)"
         settings: |
           {
             "permissions": {
