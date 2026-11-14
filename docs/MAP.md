@@ -70,3 +70,11 @@ This section is shared across the active project maps. A repository entry is not
 - Primary implementation model is Fable 5.2 through the Starimg Anthropic Messages endpoint. This is distinct from the Sherlock local Qwen GitHub Actions fallback.
 - Latest inspected run #43594647745: configuration/credential validation and target checkout succeeded; `Run Fable 5.2 agent team` failed; verification, repair and publication jobs were skipped; no candidate artifact was published. The connector could not retrieve the full job log, so the exact denied tool/cause is not established here. Do not repeat the run until the failure is diagnosed.
 - No merge or deployment has occurred. Treat the Product Factory as a draft workflow, not a verified autonomous production service.
+
+## Agent runtime deployment status — 2026-11-14
+
+- Product Factory runs on GitHub-hosted ephemeral Actions runners, not Railway Cloud Agent Tasks.
+- The Product Factory Claude Code action clones signed Caveman v4.1.0 at verified commit `1e91f1306d602d4ca23618701b1185575ae1869b`, installs marketplace `caveman` and plugin `caveman@caveman` before each Fable session.
+- On Fable failure, the workflow has a bounded local Ollama fallback. It pulls/verifies `qwen2.5-coder:3b`, loads the same Caveman skill, restricts patches to application/source/tests/docs and sends the result through the existing isolated verification and publication gates.
+- Qwen runs only on the ephemeral GitHub runner; it is not a persistent Railway service. Runtime installation is verified only when a run records the model check and inference result.
+- The first post-integration Product Factory run is being validated; do not infer AUREL completion from agent setup or CI.
