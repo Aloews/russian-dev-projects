@@ -91,7 +91,7 @@ dispatch_and_wait() {
   local query='query($cloudAgentId:String!,$sessionId:String!,$taskId:String){cloudAgentTask(cloudAgentId:$cloudAgentId,sessionId:$sessionId,taskId:$taskId){taskId status text error model reasoningEffort completedAt}}'
   local vars poll task status text_value error_value
   vars=$(jq -n --arg agent "$cloud_agent_id" --arg session "$session_id" --arg task "$task_id" '{cloudAgentId:$agent,sessionId:$session,taskId:$task}')
-  for attempt in $(seq 1 540); do
+  for attempt in $(seq 1 210); do
     poll=$(gql "$(jq -n --arg query "$query" --argjson variables "$vars" '{query:$query,variables:$variables}')")
     if jq -e '.errors and (.errors|length>0)' >/dev/null <<<"$poll"; then
       jq -c '.errors' <<<"$poll" >&2
