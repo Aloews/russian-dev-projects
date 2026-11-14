@@ -33,9 +33,6 @@ Optional repository Actions variables:
 
 - `STARIMG_ANTHROPIC_BASE_URL`: gateway base URL. Defaults to `https://ai.starimg.ru`; verify the exact endpoint path and Anthropic Messages compatibility against the current Starimg account documentation.
 - `STARIMG_FABLE_MODEL`: defaults to `claude-fable-5-2`.
-- `STARIMG_OPUS_MODEL`: specialist profile default is `claude-opus-5-5`.
-- `STARIMG_SONNET_MODEL`: specialist profile default is `claude-sonnet-5-5`.
-- `STARIMG_HAIKU_MODEL`: specialist profile default is `claude-haiku-5-5`.
 
 A model name in a catalog is not proof that the selected gateway endpoint supports Messages API tool calls. The first real workflow invocation is the compatibility and authentication test. A failed provider preflight must stop the run; do not silently substitute a model or provider.
 
