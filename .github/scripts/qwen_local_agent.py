@@ -13,7 +13,7 @@ ROOT = Path(os.environ.get("TARGET_WORKDIR", "target")).resolve()
 MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MAX_FILES = 8
-MAX_CONTEXT_CHARS = 44000
+MAX_CONTEXT_CHARS = 28000
 MAX_FILE_CHARS = 5200
 ALLOWED_PREFIXES = (
     "app/",
@@ -120,7 +120,7 @@ def main():
     skill = ""
     if skill_path:
         try:
-            skill = Path(skill_path).read_text(encoding="utf-8")[:9000]
+            skill = Path(skill_path).read_text(encoding="utf-8")[:7000]
         except (OSError, UnicodeError):
             print("::error::Pinned Caveman skill could not be loaded.")
             return 2
