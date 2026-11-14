@@ -143,9 +143,9 @@ Branch: `feat/ush-autonomous-product-factory`, PR #21 (draft, retargeted to `mai
 
 - Primary implementation agent: Claude Code with Starimg model `claude-fable-5-2`.
 - Caveman plugin 4.1.0 is installed per session from the signed, verified release commit `1e91f1306d602d4ca23618701b1185575ae1869b`. The workflow clones the exact tagged commit, adds its local marketplace and installs `caveman@caveman`; it does not install a moving `main` branch.
-- Fallback: local Ollama `qwen2.5-coder:3b` on GitHub-hosted runners. The workflow caches model weights, verifies the model with `ollama show`, injects the pinned Caveman skill and accepts only bounded structured JSON edits with exact old-text matches and path validation.
-- The local Qwen fallback is product-agnostic: it detects source files by language extension, excludes credentials, dependency manifests, infrastructure, migrations and CI configuration, and uses structured edits rather than model-generated unified diffs.
+- Local Qwen2.5-Coder 3B runs a sequential multi-role team (architecture, product, security, QA, implementation and independent QA) on GitHub-hosted runners. Its structured edits use exact old-text matches and source-path validation; the evidence report is reviewed by Fable 5.2.
+- Fable 5.2 acts as the senior engineer and problem fixer: it inspects the Qwen review report and actual diff, independently challenges the findings, repairs defects and owns the final candidate. If Qwen fails, Fable can implement directly; if Fable fails, the bounded Qwen fallback is available.
 - Verification now detects Rust, Python, Go, Gradle/Maven and Node projects; browser E2E is required for detected browser apps and not imposed on non-browser Node services. Additional stacks still need explicit verifier adapters before they can be considered covered.
-- Both paths feed the same isolated verification, evidence-driven repair and PR publication pipeline. No merge or production deploy is automatic.
+- The Qwen team, Fable senior engineer and subsequent repair cycles feed the same isolated verification, evidence-driven repair and PR publication pipeline. No merge or production deploy is automatic.
 - The model is installed per ephemeral runner, not as a persistent Railway process. Current run must prove fallback execution before marking Qwen active.
 - codebase-memory-mcp and Spotify Portal are not installed: this runtime has no persistent supported MCP host or authenticated Portal/AiKA session. Do not claim otherwise.
