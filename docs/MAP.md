@@ -59,9 +59,9 @@ This section is shared across the active project maps. A repository entry is not
 ### Installation status — 2026-11-14
 | Integration | Documentation | Active runtime |
 |---|---|---|
-| Caveman | Project skills at `.agents/skills/caveman/` and `.claude/skills/caveman/` | Included in this PR; host discovery/activation not yet verified |
+| Caveman | Portable skill at `.agents/skills/caveman/`; official `caveman@caveman` plugin enabled in `.claude/settings.json` | Included in this PR; host trust/session activation not yet verified |
 | codebase-memory-mcp | Pinned project config `.mcp.json` (`0.12.1`) | MCP startup and indexing not yet verified on a persistent host |
-| Spotify Portal / shunt | `.claude/settings.json` registers marketplace, enables `portal@portal`, disables `shunt@portal` | Portal auth/session setup pending; shunt blocked pending upstream hook fix and AiKA verification |
+| Spotify Portal / shunt | `.claude/settings.json` registers the `portal` marketplace, enables `portal@portal`, disables `shunt@portal` | Portal installation awaits folder trust/session and `/portal:setup`; shunt blocked pending hook fix and AiKA verification |
 
 
 ## Autonomous Product Factory (in progress; not merged)
