@@ -50,6 +50,10 @@ if [[ -f "$ROOT/package-lock.json" && -f "$ROOT/package.json" ]]; then
   fi
 fi
 
+if [[ -f "$ROOT/services/platform-api/Dockerfile" ]]; then
+  run_gate "Production API Docker build" docker build --tag product-factory-api:verification --file "$ROOT/services/platform-api/Dockerfile" "$ROOT"
+fi
+
 if [[ "$GATES" -eq 0 ]]; then
   echo "No supported Cargo workspace or npm lockfile found; refusing to report success." >> "$REPORT"
   exit 2
