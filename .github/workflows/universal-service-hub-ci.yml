@@ -1,12 +1,22 @@
 name: universal-service-hub-ci
 
-on:
+"on":
   push:
     paths:
       - "universal-service-hub/**"
+      - ".github/workflows/universal-service-hub-ci.yml"
+      - ".github/workflows/product-factory.yml"
+      - ".github/actions/product-factory-agent/**"
+      - ".github/actions/product-factory-verify/**"
+      - ".github/product-factory/agents/**"
   pull_request:
     paths:
       - "universal-service-hub/**"
+      - ".github/workflows/universal-service-hub-ci.yml"
+      - ".github/workflows/product-factory.yml"
+      - ".github/actions/product-factory-agent/**"
+      - ".github/actions/product-factory-verify/**"
+      - ".github/product-factory/agents/**"
 
 permissions:
   contents: read
