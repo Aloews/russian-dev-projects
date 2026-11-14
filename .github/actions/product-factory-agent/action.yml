@@ -211,7 +211,7 @@ runs:
       run: |
         set -Eeuo pipefail
         cd target
-        rm -f PRODUCT_FACTORY_VERIFICATION.md
+        rm -f PRODUCT_FACTORY_VERIFICATION.md docs/PRODUCT_FACTORY_QWEN_REVIEW.md
         git add -A
         git diff --cached --check
         if git diff --cached --quiet; then
