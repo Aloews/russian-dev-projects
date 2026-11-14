@@ -111,25 +111,26 @@ GitHub OAuth sign-in to a hosting vendor is not equivalent to granting the Hub t
 
 ## Autonomous Product Factory increment
 
-Branch: `feat/ush-autonomous-product-factory`, PR #21 (draft; stacked on PR #20).
-- Replaced Railway Cloud Agent Tasks with a GitHub-hosted Ubuntu runner and Starimg endpoint configured for Anthropic Messages; live tool-call compatibility remains unverified.
-- Workflow `.github/workflows/product-factory.yml` is manual `workflow_dispatch` only; PR updates no longer start paid model runs.
-- Primary model: Claude Fable 5.2. Read-only specialists: Opus 5.5 architecture/code review, Sonnet 5.5 security/privacy, Haiku 5.5 product/user-journey review.
-- The model session is restricted to repository file tools; no shell, Git push, GitHub API, secrets store, deployment or production-data tools. Temporary specialist definitions are removed after each invocation.
-- Separate verification script `scripts/product_factory_verify.sh` runs Rust format/Clippy/tests/release build, npm install/audit/lint/tests/build and the production API Docker build where applicable.
-- The workflow allows at most two repair cycles based on the real verification report; it only publishes a branch and opens/updates a PR after a complete green verification pass.
-- Required GitHub Actions secrets: `STARIMG_API_KEY` and a target-scoped `PRODUCT_FACTORY_GITHUB_TOKEN` with Contents and Pull requests read/write. Optional variables: `STARIMG_ANTHROPIC_BASE_URL` and `STARIMG_FABLE_MODEL`.
-- CI now syntax-checks the verification script and runs actionlint against the Product Factory workflow.
-- This branch has not yet completed a new CI run after the Railway replacement. The prior Railway run failed with an account-level `Agent usage limit reached`; no agent task was started in that attempt.
-- No live Starimg endpoint/tool-call test has been performed from this workflow. A model name in a provider catalogue is not proof of gateway compatibility.
-- First target remains `Aloews/full`, working branch `factory/elite-estate`, PR base `foundation/luxury-estate-platform`.
-- The Product Factory workflow is not manually dispatchable until it is present on the repository default branch. PR #20 and PR #21 must pass their exact-head checks and be integrated before the workflow can be run from Actions.
-- No PR merge, production deployment, new paid hosting resource, or production-data mutation has been performed by this increment.
+Branch: `feat/ush-autonomous-product-factory`, PR #21 (draft, retargeted to `main`; includes the provider-adapter work previously proposed in PR #20).
+- Railway Cloud Agent Tasks have been removed from the Product Factory runtime. Product Factory uses GitHub Actions runners and Starimg; Railway remains only an optional hosting-provider adapter in the Universal Service Hub.
+- Workflow: `.github/workflows/product-factory.yml`. Start with `workflow_dispatch`, or comment exactly `/factory run` as repository owner to start the default AUREL objective.
+- Primary model configured: Claude Fable 5.2 through the Starimg Anthropic Messages endpoint. Live endpoint/tool-call compatibility has not yet been proven.
+- Read-only specialists: Opus 5.5 architecture/code review, Sonnet 5.5 security/privacy, Haiku 5.5 product/user-journey review.
+- Agent, verification and publication run on separate ephemeral jobs. The model gets file tools only; it cannot run shell, network, Git push, GitHub API, deployment or production-data tools.
+- Verification jobs execute Rust formatting/Clippy/tests/release build, npm install/audit/lint/tests/build, required Playwright browser E2E and production API Docker build. They receive neither the Starimg key nor a write token in the test process environment.
+- Up to two repair cycles use the actual failed verification report. A fresh publication job receives only the verified patch artifact, rechecks the target and base branch SHAs, then opens/updates a PR. No target PR is auto-merged or deployed.
+- Required Actions secrets: `STARIMG_API_KEY` and target-scoped `PRODUCT_FACTORY_GITHUB_TOKEN` with Contents read/write and Pull requests read/write. Optional variables: `STARIMG_ANTHROPIC_BASE_URL`, `STARIMG_FABLE_MODEL`.
+- CI validates the workflow, composite action metadata and verification script. The exact final head still needs a complete green CI run.
+- No live Starimg invocation has been made; no agent task has yet produced a candidate PR in `Aloews/full`.
+- PR #20 remains open as the earlier provider-adapter proposal. PR #21 contains those provider changes plus the Product Factory; close #20 as superseded after #21 is integrated.
+- First target: `Aloews/full`, working branch `factory/elite-estate`, PR base `foundation/luxury-estate-platform`.
+- AUREL is not production-ready until its dedicated database, real identity/JWT issuance, public enquiry abuse controls and PII retention, licensed inventory/partners, jurisdiction review, staging E2E and rollback gates pass.
+- No merge of the target product PR, production deployment, paid hosting provisioning, billing change, DNS change or production-data mutation has been performed.
 
 ### Remaining acceptance gates
-- Pass CI and actionlint on the exact final PR #21 head SHA; resolve any merge-base conflict with PR #20.
-- Integrate the PR chain so the manual workflow is present on `main`.
+- Pass CI and actionlint on the exact final PR #21 head SHA; resolve any workflow or composite-action validation errors.
+- Integrate PR #21 into `main`; PR #20 is superseded by the consolidated branch.
 - Verify the two required Actions secrets exist and are scoped correctly without exposing their values.
-- Execute one controlled run to prove Starimg authentication, Messages API tool calling, model IDs, GitHub branch write and PR creation.
-- Inspect the resulting verification artifact and PR head; do not mark the factory operational until all gates are directly evidenced.
-- Complete Elite Estate only after its dedicated database, real identity/JWT issuance, public enquiry controls/retention, licensed supply, jurisdiction, staging E2E and rollback gates pass.
+- Execute one controlled run to prove Starimg authentication, Messages API tool calling, Fable model ID, GitHub branch write and PR creation.
+- Inspect the resulting verification artifact and target PR; do not mark the factory operational until all gates are directly evidenced.
+- Complete AUREL's owner-only release gates before any production deployment.
