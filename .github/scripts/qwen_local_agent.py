@@ -186,9 +186,21 @@ def apply_edits(edits, tracked):
         else:
             current = None
         if old == "":
-            if current is not None or path in tracked:
-                raise ValueError("new-file edit targets an existing file")
-            current = new
+            if current is None and path not in tracked:
+                current = new
+            elif current is not None:
+                # Some small local models mislabel a complete existing-file replacement
+                # as a new-file edit. Accept it only when the returned content is plausibly
+                # a whole-file replacement; short fragments must use an exact old snippet.
+                minimum_replacement = max(200, int(len(current) * 0.65))
+                if len(new) < minimum_replacement:
+                    raise ValueError(
+                        "new-file edit targets an existing file; provide an exact old snippet "
+                        "or a complete replacement of at least " + str(minimum_replacement) + " characters"
+                    )
+                current = new
+            else:
+                raise ValueError("new-file edit targets a tracked file that is missing")
         else:
             if current is None:
                 raise ValueError("update edit targets a missing file")
