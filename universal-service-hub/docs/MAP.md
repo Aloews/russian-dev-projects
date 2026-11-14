@@ -231,3 +231,17 @@ If a product has no applicable authentication, persistence, payment or external 
 - Production deployment, paid resource creation beyond an explicitly approved budget, DNS/domain changes, billing changes, irreversible migrations and production-data mutation remain gated by explicit owner authorization and a rollback plan.
 - Never reuse credentials or production data from Sherlock Scholes, Novel Forge or another project. Use project-scoped identities and secrets.
 - The factory must prefer delivering a verified working preview over leaving the task as an untested PR, while preserving the production safety boundary.
+
+## Execution recovery update — 2026-11-14
+
+- Latest confirmed control-plane CI before this recovery: run `43604324413` (workflow run #810) passed the complete Rust, Python, migration, Docker and container-smoke suite on its exact commit.
+- Product Factory execution is still not proven. Run `43602951049` reached the Qwen implementation pass, which failed because the model marked an existing source file as a new file (`new-file edit targets an existing file`). The subsequent Starimg probe returned HTTP 402 `insufficient_balance_error` for both Fable 5.2 and Opus 5.5. No candidate artifact or product PR was published.
+- Run `43604172878` was cancelled while Qwen was installing its local model; the run's implementation, verification and publication jobs did not complete. This is consistent with the workflow's previous `cancel-in-progress: true` concurrency policy, which could cancel a long-running agent job when another run entered the same target group.
+- Recovery changes on this branch:
+  - Set Product Factory concurrency to `cancel-in-progress: false` so a newer run queues rather than cancelling the active product build.
+  - Increase both Qwen team and Qwen fallback job-step timeouts from 10 to 25 minutes. The local 3B model runs CPU-only on GitHub-hosted runners and the previous 10-minute ceiling was too tight for model startup plus inference/retry.
+  - When Qwen incorrectly marks an existing path as a new file, include bounded current-file evidence in the corrective retry instead of only repeating the generic validation error.
+  - Reject edits whose resolved filesystem path escapes the target repository through a symlinked parent directory.
+  - Add regression tests for the existing-file retry context and symlink escape rejection.
+- The latest PR head contains these recovery changes. CI and a new end-to-end Product Factory run on the exact recovery head must pass before this platform is considered operational. Starimg balance remains an external blocker unless a funded Starimg key or a separately verified OpenRouter fallback is available.
+- Do not merge PR #21 or claim a completed product from these code changes alone. The first product acceptance target remains `Aloews/full`, branch `factory/elite-estate-rc3`, base `foundation/luxury-estate-platform`.
