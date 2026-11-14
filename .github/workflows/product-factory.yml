@@ -40,8 +40,10 @@ jobs:
     timeout-minutes: 360
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-      RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
-      RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+      # Reuse the existing Railway project/environment explicitly authorized by the owner.
+      # Agent tasks run in Railway's cloud-agent VM; existing application services are not redeployed.
+      RAILWAY_PROJECT_ID: 0da4e454-1ef6-4b90-8424-141e8dfbcd02
+      RAILWAY_ENVIRONMENT_ID: d880b6be-d0a8-417b-b850-5e13f3237c3d
       TARGET_REPO: ${{ inputs.target_repo || 'Aloews/full' }}
       TARGET_BRANCH: ${{ inputs.target_branch || 'foundation/luxury-estate-platform' }}
       BASE_BRANCH: ${{ inputs.base_branch || 'main' }}
@@ -59,8 +61,6 @@ jobs:
           command -v curl
           command -v jq
           test -n "$RAILWAY_API_TOKEN" || { echo "Missing repository secret RAILWAY_API_TOKEN" >&2; exit 2; }
-          test -n "$RAILWAY_PROJECT_ID" || { echo "Missing repository secret RAILWAY_PROJECT_ID" >&2; exit 2; }
-          test -n "$RAILWAY_ENVIRONMENT_ID" || { echo "Missing repository secret RAILWAY_ENVIRONMENT_ID" >&2; exit 2; }
 
       - name: Run Fable-led multi-agent product cycle
         shell: bash
