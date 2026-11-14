@@ -204,6 +204,14 @@ def main():
         "production secrets, infrastructure definitions or database migrations. Add tests for behavior changes. "
         "Do not weaken or delete tests. Keep changes minimal. No extra keys or explanations."
     )
+    reality_path = os.environ.get("REALITY_FIRST_SKILL_PATH", "")
+    if reality_path:
+        try:
+            reality_skill = Path(reality_path).read_text(encoding="utf-8")[:10000]
+        except (OSError, UnicodeError):
+            print("::error::Reality-First Business skill could not be loaded.")
+            return 2
+        system += "\\n\\nApply this Reality-First Business skill as a hard execution standard:\\n" + reality_skill
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
     messages = [
