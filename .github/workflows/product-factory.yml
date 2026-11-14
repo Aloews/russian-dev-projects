@@ -231,7 +231,7 @@ jobs:
           base_url: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
           model: ${{ vars.STARIMG_FABLE_MODEL || 'claude-fable-5-2' }}
           max_turns: "100"
-          max_budget_usd: "35"
+          max_budget_usd: "25"
           artifact_name: candidate-0
           prompt: |
             You are the senior staff engineer and final implementation authority. A local Qwen2.5-Coder 3B multi-role team has already reviewed the project and may have created an initial candidate. Read docs/PRODUCT_FACTORY_QWEN_REVIEW.md if present, inspect the actual changed files, challenge its conclusions and repair defects before verification. If the Qwen team failed or made no useful changes, implement the bounded vertical slice yourself.
@@ -260,7 +260,7 @@ jobs:
           base_url: ${{ vars.STARIMG_ANTHROPIC_BASE_URL || 'https://ai.starimg.ru' }}
           model: claude-opus-5-5
           max_turns: "80"
-          max_budget_usd: "35"
+          max_budget_usd: "10"
           artifact_name: candidate-0
           prompt: |
             You are the senior staff engineer and recovery implementer for this product run. Fable 5.2 did not complete; inspect the actual repository and the redacted Starimg diagnostics artifact before proceeding. Read docs/PRODUCT_FACTORY_QWEN_REVIEW.md if present, inspect the actual changed files, challenge Qwen's conclusions and repair defects.
