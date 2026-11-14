@@ -48,6 +48,18 @@ if [[ -f "$ROOT/package-lock.json" && -f "$ROOT/package.json" ]]; then
   if node -e 'process.exit(require(process.argv[1]).scripts?.build ? 0 : 1)' "$ROOT/package.json"; then
     run_gate "Frontend production build" bash -c 'cd "$1" && npm run build' _ "$ROOT"
   fi
+  if [[ -f "$ROOT/playwright.config.ts" || -f "$ROOT/playwright.config.js" || -f "$ROOT/playwright.config.mts" || -f "$ROOT/playwright.config.mjs" ]]; then
+    run_gate "Playwright Chromium installation" bash -c 'cd "$1" && npx playwright install --with-deps chromium' _ "$ROOT"
+    if node -e 'process.exit(require(process.argv[1]).scripts?.["test:e2e"] ? 0 : 1)' "$ROOT/package.json"; then
+      run_gate "Browser end-to-end tests" bash -c 'cd "$1" && npm run test:e2e' _ "$ROOT"
+    else
+      run_gate "Browser end-to-end tests" bash -c 'cd "$1" && npx playwright test' _ "$ROOT"
+    fi
+  else
+    GATES=$((GATES + 1))
+    FAILURES=$((FAILURES + 1))
+    printf '\n## Browser end-to-end tests\nMissing Playwright configuration; critical user journeys are not verified.\nexit_code=2\n' >> "$REPORT"
+  fi
 fi
 
 if [[ -f "$ROOT/services/platform-api/Dockerfile" ]]; then
