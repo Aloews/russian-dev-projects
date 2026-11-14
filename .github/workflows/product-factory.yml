@@ -56,10 +56,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      TARGET_REPO: ${{ env.TARGET_REPO }}
-      TARGET_BRANCH: ${{ env.TARGET_BRANCH }}
-      BASE_BRANCH: ${{ env.BASE_BRANCH }}
-      OBJECTIVE: ${{ github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality. Implement real user journeys, security, tests and documentation. Do not merge or deploy.' }}
+      TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
+      TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc3' }}
+      BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+      OBJECTIVE: ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality. Implement real user journeys, security, tests and documentation. Do not merge or deploy.' }}
 
     steps:
       - name: Check out Product Factory control repository
@@ -67,33 +67,6 @@ jobs:
         with:
           path: factory
           persist-credentials: false
-
-      - name: Resolve task from issue body
-        if: github.event_name == 'issue_comment'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          CONTROL_REPOSITORY: ${{ github.repository }}
-        run: |
-          set -Eeuo pipefail
-          gh api "repos/$CONTROL_REPOSITORY/issues/$ISSUE_NUMBER" --jq '.body' > "$RUNNER_TEMP/product-factory-task.json"
-          python3 - "$RUNNER_TEMP/product-factory-task.json" "$GITHUB_ENV" <<'PY'
-          import json, pathlib, sys, uuid
-          payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-          required = ("target_repo", "target_branch", "base_branch", "objective")
-          if not isinstance(payload, dict) or any(not isinstance(payload.get(k), str) or not payload[k].strip() for k in required):
-              raise SystemExit("Task issue body must be a JSON object with target_repo, target_branch, base_branch and objective strings.")
-          if len(payload["objective"]) > 12000:
-              raise SystemExit("Task objective exceeds 12000 characters.")
-          delimiter = "PF_" + uuid.uuid4().hex
-          with open(sys.argv[2], "a", encoding="utf-8") as env:
-              for key, source in (("TARGET_REPO", "target_repo"), ("TARGET_BRANCH", "target_branch"), ("BASE_BRANCH", "base_branch"), ("OBJECTIVE", "objective")):
-                  value = payload[source].strip()
-                  if delimiter in value:
-                      raise SystemExit("Invalid delimiter in task value.")
-                  env.write(f"{key}<<{delimiter}\\n{value}\\n{delimiter}\\n")
-          PY
 
       - name: Validate configuration and credentials
         shell: bash
@@ -331,8 +304,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
-      TARGET_REPO: ${{ env.TARGET_REPO }}
-      BASE_BRANCH: ${{ env.BASE_BRANCH }}
+      TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
+      BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
     steps:
       - name: Check out Product Factory control repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
@@ -438,8 +411,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
-      TARGET_REPO: ${{ env.TARGET_REPO }}
-      BASE_BRANCH: ${{ env.BASE_BRANCH }}
+      TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
+      BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
     steps:
       - name: Check out Product Factory control repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
@@ -549,10 +522,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      TARGET_REPO: ${{ env.TARGET_REPO }}
-      TARGET_BRANCH: ${{ env.TARGET_BRANCH }}
-      BASE_BRANCH: ${{ env.BASE_BRANCH }}
-      OBJECTIVE: ${{ github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality.' }}
+      TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
+      TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc3' }}
+      BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
+      OBJECTIVE: ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality.' }}
     steps:
       - name: Check out target product repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
