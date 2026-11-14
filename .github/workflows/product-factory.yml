@@ -42,7 +42,7 @@ permissions:
 
 concurrency:
   group: product-factory-${{ github.event.inputs.target_repo || 'Aloews/full' }}-${{ github.event.inputs.target_branch || 'factory/elite-estate' }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   implement:
@@ -53,7 +53,7 @@ jobs:
        github.actor == 'Aloews' &&
        github.event.comment.body == '/factory run')
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 90
     env:
       TARGET_REPO: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
       TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'factory/elite-estate' }}
@@ -125,6 +125,7 @@ jobs:
 
       - name: Qwen2.5-Coder 3B multi-role engineering team
         id: qwen_team
+        timeout-minutes: 20
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-qwen-agent
         with:
