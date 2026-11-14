@@ -10,7 +10,7 @@ The first target is AUREL / Elite Estate in `Aloews/full`. The control repositor
 
 Product Factory runs on GitHub-hosted Ubuntu runners. Railway Cloud Agent Tasks are not used.
 
-- **Orchestrator:** `.github/workflows/product-factory.yml`. The owner can start a run with `workflow_dispatch`, or comment exactly `/factory run` on an issue or PR. The comment trigger is restricted to the repository owner and starts the default AUREL objective.
+- **Orchestrator:** `.github/workflows/product-factory.yml`. While the control workflow is still on its feature branch, a narrowly scoped push to that workflow file bootstraps a run without merging. After the workflow is merged into the default branch, the owner can also comment exactly `/factory run` on an issue or PR. The comment trigger is restricted to the repository owner and starts the default AUREL objective. `workflow_dispatch` is available after the workflow exists on the default branch.
 - **Primary agent:** Claude Code running Claude Fable 5.2 configured for the Starimg Anthropic Messages endpoint; live tool-call compatibility is still unverified.
 - **Specialists:** read-only architecture reviewer (Claude Opus 5.5), security/privacy reviewer (Claude Sonnet 5.5), product/user-journey analyst (Claude Haiku 5.5), and independent post-change reviewer (Claude Opus 5.5).
 - **Single writer:** Fable is the only agent allowed to modify product files. Specialist agents receive read-only tools.
@@ -36,9 +36,13 @@ Optional repository Actions variables:
 
 A model name in a catalogue is not proof that the selected gateway endpoint supports Messages API tool calls. The first real workflow invocation is the compatibility and authentication test. A failed provider preflight must stop the run; do not silently substitute a model or provider.
 
+## Current activation blocker
+
+A real bootstrap invocation was attempted on 2026-11-14. It stopped before checkout or model inference because the repository Actions secret `STARIMG_API_KEY` is absent; the runner environment also showed `PRODUCT_FACTORY_GITHUB_TOKEN` unset. No Starimg request was made and no billable agent session started. Both secrets must be added before rerunning. The control-plane CI is separate from this provider preflight.
+
 ## Standard run
 
-1. The owner starts **Autonomous Product Factory** manually with target repository, working branch, base branch and objective, or comments `/factory run` to start the default AUREL task.
+1. Before merge, a change to `.github/workflows/product-factory.yml` on `feat/ush-autonomous-product-factory` starts the bootstrap run. After merge, the owner can use **Autonomous Product Factory** (`workflow_dispatch`) or comment `/factory run` to start the default AUREL task.
 2. The runner validates the repository/branch allowlist and required credentials, checks target write access, fetches the selected branches and records both starting SHAs.
 3. Fable inspects the real code, project map, delivery plan, tests and CI. Architecture, security and product specialists independently challenge scope and acceptance criteria.
 4. Fable implements the bounded increment and requests read-only review of the actual changes. The runner exports a patch artifact; it does not commit or push from the agent job.
