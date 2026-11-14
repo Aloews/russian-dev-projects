@@ -8,6 +8,7 @@ name: Autonomous Product Factory
     branches:
       - main
       - feat/ush-autonomous-product-factory
+      - fix/factory-starimg-primary
     paths:
       - .github/workflows/product-factory.yml
       - .github/actions/product-factory-agent/**
@@ -52,7 +53,7 @@ jobs:
       starimg_key_slot: ${{ steps.starimg_smoke.outputs.key_slot }}
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/ush-autonomous-product-factory')) ||
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/ush-autonomous-product-factory' || github.ref == 'refs/heads/fix/factory-starimg-primary')) ||
       (github.event_name == 'issue_comment' &&
        github.actor == 'Aloews' &&
        github.event.comment.body == '/factory run')
@@ -62,7 +63,7 @@ jobs:
       TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
       TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc4' }}
       BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
-      OBJECTIVE: ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality. Implement real user journeys, security, tests and documentation. Do not merge or deploy.' }}
+      OBJECTIVE: ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Deliver AUREL Elite Estate as a functional staging MVP: Neon Auth OTP sign-up/login, agency workspace, property submission with immutable evidence, reviewer approval, public search/detail/enquiry. Use the provisioned Neon staging database and Next.js server route handlers in the existing Vercel project; do not depend on an unprovisioned backend host. Preserve RLS and tenant isolation, verify Neon JWTs through JWKS, enforce public enquiry rate limits and data-retention controls, and add regression/integration tests. Never fabricate listings or partner data. Do not merge or deploy production.' }}
 
     steps:
       - name: Check out Product Factory control repository
@@ -651,7 +652,7 @@ jobs:
     if: >-
       always() &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/ush-autonomous-product-factory')) ||
+       (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/ush-autonomous-product-factory' || github.ref == 'refs/heads/fix/factory-starimg-primary')) ||
        (github.event_name == 'issue_comment' &&
         github.actor == 'Aloews' &&
         github.event.comment.body == '/factory run'))
