@@ -110,7 +110,7 @@ runs:
           exit 2
         fi
         git diff --cached --binary HEAD > "$RUNNER_TEMP/candidate.patch"
-        if git diff --cached --name-only | grep -E '(^|/)\.env($|\.(local|production|development|test)(\.|$))|(^|/)(id_rsa|id_ed25519|.*\.pem$|.*\.key$|.*\.p12$|.*\.pfx$|.*\.jks$|credentials\.json$)' >/dev/null; then
+        if git diff --cached --name-only | grep -E '(^|/)\.github/(workflows|actions)/|(^|/)\.env($|\.(local|production|development|test)(\.|$))|(^|/)(id_rsa|id_ed25519|.*\.pem$|.*\.key$|.*\.p12$|.*\.pfx$|.*\.jks$|credentials\.json$)' >/dev/null; then
           echo "Sensitive file detected in candidate patch." >&2
           exit 2
         fi
