@@ -4,7 +4,7 @@
 
 Universal Service Hub is the shared engineering control plane for owned products. Product Factory turns a bounded product objective into implemented code, independent review, automated verification evidence and a pull request. It must deliver working user journeys, not a proposal, demo scaffold or claim based on compilation alone.
 
-The first target is AUREL / Elite Estate in `Aloews/full`. Do not start other product implementations until this target's release gates are satisfied.
+The first target is AUREL / Elite Estate in `Aloews/full`. The control repository is public and workflow artifacts contain source patches, so private target repositories are rejected. Supporting private products requires moving the control workflow and artifact storage to a private repository or private artifact store. Do not start other product implementations until this target's release gates are satisfied.
 
 ## Execution architecture
 
