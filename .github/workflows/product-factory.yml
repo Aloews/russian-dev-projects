@@ -22,7 +22,7 @@ name: Autonomous Product Factory
       target_branch:
         description: Working branch to create or update
         required: true
-        default: factory/elite-estate
+        default: factory/elite-estate-rc1
         type: string
       base_branch:
         description: Existing product branch used as the PR base
@@ -41,7 +41,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: product-factory-${{ github.event.inputs.target_repo || 'Aloews/full' }}-${{ github.event.inputs.target_branch || 'factory/elite-estate' }}
+  group: product-factory-${{ github.event.inputs.target_repo || 'Aloews/full' }}-${{ github.event.inputs.target_branch || 'factory/elite-estate-rc1' }}
   cancel-in-progress: true
 
 jobs:
@@ -56,7 +56,7 @@ jobs:
     timeout-minutes: 90
     env:
       TARGET_REPO: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-      TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'factory/elite-estate' }}
+      TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'factory/elite-estate-rc1' }}
       BASE_BRANCH: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
       OBJECTIVE: ${{ github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality. Implement real user journeys, security, tests and documentation. Do not merge or deploy.' }}
 
@@ -433,7 +433,7 @@ jobs:
     timeout-minutes: 30
     env:
       TARGET_REPO: ${{ github.event.inputs.target_repo || 'Aloews/full' }}
-      TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'factory/elite-estate' }}
+      TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'factory/elite-estate-rc1' }}
       BASE_BRANCH: ${{ github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
       OBJECTIVE: ${{ github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality.' }}
     steps:
