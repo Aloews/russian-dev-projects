@@ -1,5 +1,5 @@
 name: Autonomous Product Factory
-# The push trigger bootstraps this feature-branch workflow without requiring a merge into the default branch.
+# A push to main or the bootstrap feature branch starts the default acceptance run without a manual dispatch.
 # Bootstrap: Starimg Claude Opus 5 primary, bounded local Qwen fallback only when Starimg tool-call or implementation fails.
 # AUREL staging database and auth environment configuration confirmed for Vercel Preview/Development.
 
