@@ -1,0 +1,129 @@
+name: Product Factory agent session
+description: Run a constrained Starimg agent session and export a reviewed candidate patch
+
+inputs:
+  starimg_api_key:
+    description: Starimg API key
+    required: true
+  base_url:
+    description: Starimg Anthropic Messages base URL
+    required: true
+  model:
+    description: Primary agent model identifier
+    required: true
+  prompt:
+    description: Product task prompt
+    required: true
+  max_turns:
+    description: Claude Code turn ceiling
+    required: true
+  max_budget_usd:
+    description: Claude Code budget ceiling
+    required: true
+  artifact_name:
+    description: Candidate patch artifact name
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare isolated specialist profiles
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        if [[ -e target/.claude || -e target/.mcp.json ]]; then
+          echo "Target repository contains project-level Claude/MCP configuration; refusing to load unreviewed hooks or tools." >&2
+          exit 2
+        fi
+        mkdir -p target/.claude/agents
+        cp factory/.github/product-factory/agents/pf-*.md target/.claude/agents/
+
+    - name: Run primary agent and read-only specialists
+      uses: anthropics/claude-code-base-action@4f75da3721f36973e9c08ca6eeadbd3c4648a56c
+      env:
+        CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+        ANTHROPIC_BASE_URL: ${{ inputs.base_url }}
+      with:
+        anthropic_api_key: ${{ inputs.starimg_api_key }}
+        prompt: ${{ inputs.prompt }}
+        claude_args: >-
+          --model ${{ inputs.model }}
+          --max-turns ${{ inputs.max_turns }}
+          --max-budget-usd ${{ inputs.max_budget_usd }}
+          --permission-mode dontAsk
+          --allowedTools "Read,Write,Edit,Glob,Grep,Agent"
+        settings: |
+          {
+            "permissions": {
+              "defaultMode": "dontAsk",
+              "allow": ["Read", "Write", "Edit", "Glob", "Grep", "Agent"],
+              "deny": [
+                "Read(./.env)",
+                "Read(./.env.*)",
+                "Read(./**/.env)",
+                "Read(./**/.env.*)",
+                "Read(./**/*.pem)",
+                "Read(./**/*.key)",
+                "Read(./.git/**)",
+                "Read(./.mcp.json)",
+                "Read(./.claude/settings.json)",
+                "Read(./.claude/settings.local.json)",
+                "Write(./.env)",
+                "Write(./.env.*)",
+                "Write(./**/.env)",
+                "Write(./**/.env.*)",
+                "Write(./.git/**)",
+                "Write(./.claude/**)",
+                "Write(./.mcp.json)",
+                "Edit(./.env)",
+                "Edit(./.env.*)",
+                "Edit(./**/.env)",
+                "Edit(./**/.env.*)",
+                "Edit(./.git/**)",
+                "Edit(./.claude/**)",
+                "Edit(./.mcp.json)"
+              ],
+              "blockReadsOutsideWorkingDirectories": true,
+              "blockWritesOutsideWorkingDirectories": true
+            }
+          }
+
+    - name: Remove temporary Claude project configuration
+      if: always()
+      shell: bash
+      run: rm -rf target/.claude target/.mcp.json
+
+    - name: Create candidate patch
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        cd target
+        rm -f PRODUCT_FACTORY_VERIFICATION.md
+        git add -A
+        git diff --cached --check
+        if git diff --cached --quiet; then
+          echo "Agent produced no candidate changes." >&2
+          exit 2
+        fi
+        git diff --cached --binary HEAD > "$RUNNER_TEMP/candidate.patch"
+        if git diff --cached --name-only | grep -E '(^|/)\.env($|\.(local|production|development|test)(\.|$))|(^|/)(id_rsa|id_ed25519|.*\.pem$|.*\.key$|.*\.p12$|.*\.pfx$|.*\.jks$|credentials\.json$)' >/dev/null; then
+          echo "Sensitive file detected in candidate patch." >&2
+          exit 2
+        fi
+        if grep -E -- '-----BEGIN (RSA|EC|OPENSSH|PRIVATE) PRIVATE KEY-----|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{24,}' "$RUNNER_TEMP/candidate.patch" >/dev/null; then
+          echo "Secret-like value detected in candidate patch." >&2
+          exit 2
+        fi
+        cp "$RUNNER_TEMP/product-factory-base.sha" "$RUNNER_TEMP/base.sha"
+        test -s "$RUNNER_TEMP/candidate.patch"
+        test -s "$RUNNER_TEMP/base.sha"
+
+    - name: Upload candidate patch
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: |
+          ${{ runner.temp }}/candidate.patch
+          ${{ runner.temp }}/base.sha
+        if-no-files-found: error
+        retention-days: 30
