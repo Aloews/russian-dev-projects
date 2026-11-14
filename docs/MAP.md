@@ -62,3 +62,11 @@ This section is shared across the active project maps. A repository entry is not
 | Caveman | Recorded here | Not verified |
 | codebase-memory-mcp | Recorded here | Not installed/indexed on a persistent supported host |
 | Spotify Portal / shunt | Recorded here | Not connected; Portal auth and AiKA readiness not established |
+
+
+## Autonomous Product Factory (in progress; not merged)
+- Implementation currently exists on branch `feat/ush-autonomous-product-factory`, draft PR #21: https://github.com/Aloews/russian-dev-projects/pull/21.
+- Workflow: `.github/workflows/product-factory.yml`; bounded agent, separate verification/repair/publication jobs and target AUREL repository `Aloews/full`.
+- Primary implementation model is Fable 5.2 through the Starimg Anthropic Messages endpoint. This is distinct from the Sherlock local Qwen GitHub Actions fallback.
+- Latest inspected run #43594647745: configuration/credential validation and target checkout succeeded; `Run Fable 5.2 agent team` failed; verification, repair and publication jobs were skipped; no candidate artifact was published. The connector could not retrieve the full job log, so the exact denied tool/cause is not established here. Do not repeat the run until the failure is diagnosed.
+- No merge or deployment has occurred. Treat the Product Factory as a draft workflow, not a verified autonomous production service.
