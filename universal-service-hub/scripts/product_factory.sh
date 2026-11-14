@@ -183,18 +183,87 @@ $RESEARCH_RESULT
 Closing report must state exact branch, commit SHA, PR URL, commands run and their raw outcomes, checks not run, known blockers and remaining work."
 IMPLEMENTATION_RESULT="$LAST_RESULT"
 
+FINAL_ACCEPTED=0
 for cycle in 1 2; do
   dispatch_and_wait "code-review-$cycle" "claude-opus-5-5" "high" "$repo_context
 
-ROLE: Independent code reviewer. Do not edit files. Fetch the latest remote branch and inspect its exact HEAD commit and full diff against $BASE_BRANCH. Review correctness, architecture, data integrity, concurrency, failure paths, tests and regressions. Return findings only, each with severity, file/line, evidence and required fix. If no blocking findings, state that explicitly and list residual risks."
+ROLE: Independent code reviewer. Do not edit files. Fetch the latest remote branch and inspect its exact HEAD commit and full diff against $BASE_BRANCH. Review correctness, architecture, data integrity, concurrency, failure paths, tests and regressions. Return findings with severity, file/line, evidence and required fix. Begin the final report with exactly one machine-readable line: BLOCKING_FINDINGS: N. Use zero only when no blocking or high-severity finding remains; otherwise report the exact positive count."
   CODE_REVIEW="$LAST_RESULT"
 
   dispatch_and_wait "qa-$cycle" "claude-sonnet-5-5" "high" "$repo_context
 
-ROLE: Independent QA/release engineer. Do not edit files. Inspect the exact latest commit on $TARGET_BRANCH. Run the repository's full documented test, lint, typecheck, security and build commands that are safe in this environment. Inspect CI runs attached to that exact SHA. Do not count missing, stale or unrelated checks as passes. Return PASS/FAIL per gate, evidence, logs and regression gaps."
+ROLE: Independent QA/release engineer. Do not edit files. Inspect the exact latest commit on $TARGET_BRANCH. Run the repository's full documented test, lint, typecheck, security and build commands that are safe in this environment. Inspect CI runs attached to that exact SHA. Do not count missing, stale or unrelated checks as passes. Begin the final report with exactly one machine-readable line: OVERALL: PASS or OVERALL: FAIL. Use PASS only when every required gate has direct evidence on the exact candidate SHA. Return PASS/FAIL per gate, evidence, logs and regression gaps."
   QA_RESULT="$LAST_RESULT"
 
-  if grep -Eiq '(^|[^A-Z])(BLOCKER|CRITICAL|HIGH|FAIL|FAILED)([^A-Z]|$)' <<<"$CODE_REVIEW"$'\n'"$QA_RESULT"; then
+  if ! grep -Eiq '^BLOCKING_FINDINGS:[[:space:]]*0
+    if [[ "$cycle" -eq 2 ]]; then
+      echo "Two review/QA cycles exhausted; leaving PR open and reporting blockers." >&2
+      break
+    fi
+    dispatch_and_wait "repair" "claude-fable-5-1" "max" "$repo_context
+
+ROLE: Lead repair engineer. Resolve every blocking finding below, add regression tests, run all affected checks, inspect the exact final diff, push the same working branch and update the PR. Do not merge or deploy. If a finding is incorrect, prove that with repository/test evidence and explain why; do not ignore it.
+
+INDEPENDENT CODE REVIEW:
+$CODE_REVIEW
+
+QA REPORT:
+$QA_RESULT
+
+Previous implementation report:
+$IMPLEMENTATION_RESULT"
+    IMPLEMENTATION_RESULT="$LAST_RESULT"
+  else
+    echo "Independent code review and QA report contain no blocking findings." >&2
+    FINAL_ACCEPTED=1
+    break
+  fi
+done
+
+printf '%s\n' "Product Factory run $GITHUB_RUN_ID" > "$REPORT_DIR/summary.md"
+printf '%s\n' "Repository: $TARGET_REPO" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Branch: $TARGET_BRANCH" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Objective: $OBJECTIVE" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Implementation result: $IMPLEMENTATION_RESULT" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Final review: $CODE_REVIEW" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Final QA: $QA_RESULT" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Accepted: $FINAL_ACCEPTED" >> "$REPORT_DIR/summary.md"
+if [[ "$FINAL_ACCEPTED" -ne 1 ]]; then
+  echo "Product Factory did not clear independent review and QA; PR remains unmerged." >&2
+  exit 1
+fi
+ <<<"$CODE_REVIEW" || ! grep -Eiq '^OVERALL:[[:space:]]*PASS
+    if [[ "$cycle" -eq 2 ]]; then
+      echo "Two review/QA cycles exhausted; leaving PR open and reporting blockers." >&2
+      break
+    fi
+    dispatch_and_wait "repair" "claude-fable-5-1" "max" "$repo_context
+
+ROLE: Lead repair engineer. Resolve every blocking finding below, add regression tests, run all affected checks, inspect the exact final diff, push the same working branch and update the PR. Do not merge or deploy. If a finding is incorrect, prove that with repository/test evidence and explain why; do not ignore it.
+
+INDEPENDENT CODE REVIEW:
+$CODE_REVIEW
+
+QA REPORT:
+$QA_RESULT
+
+Previous implementation report:
+$IMPLEMENTATION_RESULT"
+    IMPLEMENTATION_RESULT="$LAST_RESULT"
+  else
+    echo "Independent code review and QA report contain no blocking findings." >&2
+    break
+  fi
+done
+
+printf '%s\n' "Product Factory run $GITHUB_RUN_ID" > "$REPORT_DIR/summary.md"
+printf '%s\n' "Repository: $TARGET_REPO" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Branch: $TARGET_BRANCH" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Objective: $OBJECTIVE" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Implementation result: $IMPLEMENTATION_RESULT" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Final review: $CODE_REVIEW" >> "$REPORT_DIR/summary.md"
+printf '%s\n' "Final QA: $QA_RESULT" >> "$REPORT_DIR/summary.md"
+ <<<"$QA_RESULT"; then
     if [[ "$cycle" -eq 2 ]]; then
       echo "Two review/QA cycles exhausted; leaving PR open and reporting blockers." >&2
       break
