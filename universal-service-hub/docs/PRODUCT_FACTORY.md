@@ -11,8 +11,8 @@ The first target is AUREL / Elite Estate in `Aloews/full`. The control repositor
 Product Factory runs on GitHub-hosted Ubuntu runners. Railway Cloud Agent Tasks are not used.
 
 - **Orchestrator:** `.github/workflows/product-factory.yml`. While the control workflow is still on its feature branch, a narrowly scoped push to that workflow file bootstraps a run without merging. After the workflow is merged into the default branch, the owner can also comment exactly `/factory run` on an issue or PR. The comment trigger is restricted to the repository owner and starts the default AUREL objective. `workflow_dispatch` is available after the workflow exists on the default branch.
-- **Senior implementation authority:** Claude Code running Claude Fable 5.2 through the Starimg Anthropic Messages endpoint. Fable reviews the Qwen team's evidence and actual changes, fixes hard problems and owns the final candidate; live tool-call compatibility remains under test.
-- **Local Qwen team:** sequential architecture, product, security, QA, implementation and independent QA roles using Qwen2.5-Coder 3B through Ollama. Findings are written to a transient review file for Fable; the file is removed before candidate publication.
+- **Senior implementation authority:** Claude Code running Starimg `claude-opus-5` through the Anthropic Messages endpoint. A forced tool-call smoke test runs before the agent session; Opus owns implementation and verification repairs. Fable is not used in this workflow.
+- **Local Qwen fallback:** Qwen2.5-Coder 3B through Ollama is invoked only when the Starimg tool-call probe or Opus implementation/repair fails. It produces the same bounded candidate artifact consumed by isolated verification.
 - **Independent specialists:** read-only architecture reviewer (Claude Opus 5.5), security/privacy reviewer (Claude Sonnet 5.5), product/user-journey analyst (Claude Haiku 5.5), and independent post-change reviewer (Claude Opus 5.5).
 - **Single writer:** Fable is the only agent allowed to modify product files. Specialist agents receive read-only tools.
 - **Agent isolation:** implementation and repair sessions run on separate ephemeral jobs. The model receives repository file tools only; it has no shell, network, Git push, GitHub API, deployment or production-data tool. The shared Reality-First Business skill is injected into the agent session and every specialist profile. Project-level `.claude` and `.mcp.json` configuration is moved out of the agent workspace for the session and restored byte-for-byte afterward; untrusted project hooks/MCP configuration is not loaded. The model cannot modify `.github/workflows/**` or `.github/actions/**`; those controls are maintained separately.
@@ -33,13 +33,13 @@ The latest workflow run passed the checks for both required repository Actions s
 Optional repository Actions variables:
 
 - `STARIMG_ANTHROPIC_BASE_URL`: gateway base URL. Defaults to `https://ai.starimg.ru`; verify the exact endpoint path and Anthropic Messages compatibility against the current Starimg account documentation.
-- `STARIMG_FABLE_MODEL`: defaults to `claude-fable-5-2`.
+- `STARIMG_MODEL`: defaults to `claude-opus-5`, matching the model identifier already used by Sherlock Scholes.
 
-A model name in a catalogue is not proof that the selected gateway endpoint supports Messages API tool calls. Run 43599416331 passed credential preflight, target write permission and checkout. Fable's action step concluded success but its outcome triggered the Qwen fallback; the Qwen step was still running at last inspection. A green action conclusion alone is not proof of a valid model response or working tool calls; inspect the redacted provider result, candidate artifact and verification output before declaring compatibility. Do not silently substitute a model or provider.
+The Starimg key's presence is not proof of tool-call compatibility. The workflow now sends a real forced-tool-call probe to the configured Anthropic Messages endpoint, saves redacted diagnostics, and invokes Opus only if the probe returns a valid `tool_use` block. Inspect the run artifact, candidate patch and verification report before declaring compatibility. The Qwen fallback is bounded and does not silently substitute another hosted provider.
 
 ## Current activation blocker
 
-Run `43599416331` on 2026-11-14 passed secret-presence preflight, target repository write-permission check, target checkout and branch preparation. The Fable 5.2 composite action completed with success; the local Qwen fallback step was then observed in progress. The final outcome, provider request/tool-call compatibility, candidate patch and verification result remain unverified until the run and its artifacts complete.
+The earlier OpenRouter diagnostic for run `43637640350` proved `OPENROUTER_API_KEY` was empty. That workflow therefore entered a slow local Qwen pass before trying its primary provider. The routing correction moves Starimg Opus ahead of Qwen and isolates the new acceptance run on `factory/elite-estate-rc4`. Its provider compatibility and delivery remain unverified until the new run produces diagnostics, a candidate artifact and passing verification.
 
 ## Standard run
 
@@ -90,4 +90,4 @@ The target repository and objective are selected through workflow inputs. Agents
 
 GitHub-hosted runner usage for private repositories is subject to the account's included Actions compute allowance and any overage billing. Starimg model inference is billed separately by Starimg. Configure provider-side spend limits before repeated runs; do not interpret a workflow's successful start as proof of remaining account balance.
 
-The workflow is bounded by a six-hour agent-job timeout, a maximum of two repair cycles, Claude Code turn/budget limits and one active run per target repository/branch. Qwen's role team runs before Fable; Fable is the senior fixer and the Qwen action remains a bounded fallback if Fable fails.
+The workflow is bounded by a six-hour agent-job timeout, a maximum of two repair cycles, Claude Code turn/budget limits and one active run per target repository/branch. Starimg Opus runs first after the compatibility probe; Qwen is a bounded fallback only when the probe or Opus agent fails.
