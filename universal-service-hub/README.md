@@ -144,8 +144,6 @@ See [ARCHITECTURE.md](./docs/ARCHITECTURE.md), [SECURITY.md](./docs/SECURITY.md)
 
 ## Autonomous Product Factory
 
-The repository includes a Fable-led multi-agent workflow for delivering owned products through Railway Cloud Agent Tasks. It coordinates architecture, security, research, implementation, independent code review and QA. The execution contract and first target are documented in [PRODUCT_FACTORY.md](./docs/PRODUCT_FACTORY.md).
+The repository includes a Railway-independent, Fable-led multi-agent workflow. GitHub Actions provides the isolated runner; Starimg provides the Anthropic-compatible model gateway; read-only Opus, Sonnet and Haiku specialists challenge architecture, security and product quality. A separate verification step runs Rust/frontend gates after the model session has ended, permits up to two evidence-driven repair cycles, then opens or updates a PR. The workflow never merges or deploys production.
 
-Run it from GitHub Actions using **Autonomous Product Factory**. It requires repository secrets `RAILWAY_API_TOKEN`, `RAILWAY_PROJECT_ID` and `RAILWAY_ENVIRONMENT_ID`. It starts/reuses four persistent specialist agents (Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5), limits repair cycles to two, stores internal evidence as a short-lived workflow artifact, and never merges or deploys production.
-
-The workflow is not active until those secrets point to an authorized Railway agent environment. A workflow file or a model appearing in the model catalogue is not proof that an agent task has run.
+Run **Autonomous Product Factory** manually from GitHub Actions. Required repository secrets are `STARIMG_API_KEY` and `PRODUCT_FACTORY_GITHUB_TOKEN` (scoped to target repositories with Contents and Pull requests read/write). Optional variables configure the Starimg Anthropic base URL and model IDs. PR updates do not start paid model runs. See [PRODUCT_FACTORY.md](./docs/PRODUCT_FACTORY.md) for exact configuration, security boundaries, costs and release gates.
