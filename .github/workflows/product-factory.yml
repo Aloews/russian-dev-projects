@@ -57,7 +57,7 @@ jobs:
     timeout-minutes: 90
     env:
       TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
-      TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc3' }}
+      TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc4' }}
       BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
       OBJECTIVE: ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality. Implement real user journeys, security, tests and documentation. Do not merge or deploy.' }}
 
@@ -512,7 +512,7 @@ jobs:
     timeout-minutes: 30
     env:
       TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
-      TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc3' }}
+      TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc4' }}
       BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
       OBJECTIVE: ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality.' }}
     steps:
