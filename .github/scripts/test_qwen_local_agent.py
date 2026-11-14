@@ -53,7 +53,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                 agent.ROOT = Path(directory)
                 source = agent.ROOT / "src/main.py"
                 source.parent.mkdir(parents=True)
-                original = "def get_value():\\n    return 1\\n\\n"
+                original = "def get_value():\\n    return 1\\n\\n" + "# retained content\\n" * 30
                 source.write_text(original, encoding="utf-8")
                 replacement = original.replace("return 1", "return 2") + "# verified\\n"
                 changed = agent.apply_edits(
