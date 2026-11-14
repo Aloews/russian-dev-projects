@@ -1,0 +1,104 @@
+name: Product Factory local Qwen fallback
+description: Run bounded Qwen2.5-Coder 3B fallback, validate patch paths and export candidate artifact
+
+inputs:
+  objective:
+    description: Bounded implementation or repair objective
+    required: true
+  artifact_name:
+    description: Candidate artifact name consumed by the existing verification pipeline
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Cache Qwen model weights
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ~/.ollama/models
+        key: ollama-qwen2.5-coder-3b-v1-\${{ runner.os }}
+
+    - name: Install pinned Caveman skill source
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        CAVEMAN_DIR="$RUNNER_TEMP/caveman"
+        if [[ ! -s "$CAVEMAN_DIR/skills/caveman/SKILL.md" ]]; then
+          rm -rf "$CAVEMAN_DIR"
+          git clone --depth 1 --branch v4.1.0 https://github.com/JuliusBrussee/caveman.git "$CAVEMAN_DIR"
+        fi
+        test "$(git -C "$CAVEMAN_DIR" rev-parse HEAD)" = "1e91f1306d602d4ca23618701b1185575ae1869b"
+        test -s "$CAVEMAN_DIR/skills/caveman/SKILL.md"
+
+    - name: Install Ollama and Qwen2.5-Coder 3B
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        curl -fsSL https://ollama.com/install.sh | sh
+        sudo systemctl stop ollama >/dev/null 2>&1 || true
+        pkill -x ollama >/dev/null 2>&1 || true
+        mkdir -p "$HOME/.ollama/models"
+        (OLLAMA_MODELS="$HOME/.ollama/models" nohup ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &)
+        ready=0
+        for attempt in $(seq 1 60); do
+          if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null; then
+            ready=1
+            break
+          fi
+          sleep 2
+        done
+        if [[ "$ready" != "1" ]]; then
+          tail -n 80 "$RUNNER_TEMP/ollama.log" || true
+          echo "Ollama API did not become ready." >&2
+          exit 1
+        fi
+        OLLAMA_MODELS="$HOME/.ollama/models" ollama pull qwen2.5-coder:3b
+        OLLAMA_MODELS="$HOME/.ollama/models" ollama show qwen2.5-coder:3b >/dev/null
+        curl -fsS http://127.0.0.1:11434/api/tags | python3 -c 'import json,sys; d=json.load(sys.stdin); assert any(x.get("name","").startswith("qwen2.5-coder:3b") for x in d.get("models",[])); print("Verified local model: qwen2.5-coder:3b")'
+
+    - name: Generate bounded patch with Qwen
+      shell: bash
+      env:
+        TARGET_WORKDIR: \${{ github.workspace }}/target
+        OBJECTIVE: \${{ inputs.objective }}
+        OLLAMA_MODEL: qwen2.5-coder:3b
+        CAVEMAN_SKILL_PATH: \${{ runner.temp }}/caveman/skills/caveman/SKILL.md
+      run: python3 "$GITHUB_ACTION_PATH/../../scripts/qwen_local_agent.py"
+
+    - name: Create candidate patch
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        cd target
+        rm -f PRODUCT_FACTORY_VERIFICATION.md
+        git add -A
+        git diff --cached --check
+        if git diff --cached --quiet; then
+          echo "Qwen produced no candidate changes." >&2
+          exit 2
+        fi
+        git diff --cached --binary HEAD > "$RUNNER_TEMP/candidate.patch"
+        if git diff --cached --name-only | grep -E '(^|/)\\.github/(workflows|actions)/|(^|/)\\.env($|\\.(local|production|development|test|staging)(\\.|$))|(^|/)(id_rsa|id_ed25519|.*\\.pem$|.*\\.key$|.*\\.p12$|.*\\.pfx$|.*\\.jks$|credentials\\.json$)' >/dev/null; then
+          echo "Sensitive or restricted file detected in Qwen candidate patch." >&2
+          exit 2
+        fi
+        if grep -E -- '-----BEGIN (RSA|EC|OPENSSH|PRIVATE) PRIVATE KEY-----|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{24,}' "$RUNNER_TEMP/candidate.patch" >/dev/null; then
+          echo "Secret-like value detected in Qwen candidate patch." >&2
+          exit 2
+        fi
+        cp "$RUNNER_TEMP/product-factory-base.sha" "$RUNNER_TEMP/base.sha"
+        cp "$RUNNER_TEMP/product-factory-base-branch.sha" "$RUNNER_TEMP/base-branch.sha"
+        test -s "$RUNNER_TEMP/candidate.patch"
+        test -s "$RUNNER_TEMP/base.sha"
+        test -s "$RUNNER_TEMP/base-branch.sha"
+
+    - name: Upload candidate patch
+      uses: actions/upload-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: \${{ inputs.artifact_name }}
+        path: |
+          \${{ runner.temp }}/candidate.patch
+          \${{ runner.temp }}/base.sha
+          \${{ runner.temp }}/base-branch.sha
+        if-no-files-found: error
+        retention-days: 30
