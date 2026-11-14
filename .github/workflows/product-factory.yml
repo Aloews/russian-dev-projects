@@ -78,8 +78,9 @@ jobs:
           test -n "$PRODUCT_FACTORY_GITHUB_TOKEN" || { echo "Missing Actions secret PRODUCT_FACTORY_GITHUB_TOKEN (fine-grained token for the target repository: Contents read/write and Pull requests read/write)" >&2; exit 2; }
           command -v git
           command -v gh
-          command -v cargo
           command -v npm
+          git check-ref-format --branch "$TARGET_BRANCH"
+          git check-ref-format --branch "$BASE_BRANCH"
 
       - name: Check out target product repository
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
