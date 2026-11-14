@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: universal-service-hub-${{ github.ref }}
+  group: universal-service-hub-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
