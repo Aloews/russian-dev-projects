@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -42,6 +43,39 @@ class QwenEditSafetyTests(unittest.TestCase):
                 )
                 self.assertEqual(changed, ["src/main.py"])
                 self.assertEqual(source.read_text(encoding="utf-8"), "VALUE = 2\n")
+            finally:
+                agent.ROOT = previous_root
+
+    def test_new_file_conflict_context_includes_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "src/main.py"
+                source.parent.mkdir(parents=True)
+                source.write_text("VALUE = 1\\n", encoding="utf-8")
+                answer = json.dumps({
+                    "edits": [{"path": "src/main.py", "old": "", "new": "VALUE = 2\\n"}]
+                })
+                context = agent.rejected_existing_file_context(answer)
+                self.assertIn("EXISTING FILE (NOT A NEW FILE)", context)
+                self.assertIn("VALUE = 1", context)
+            finally:
+                agent.ROOT = previous_root
+
+    def test_symlink_parent_cannot_escape_repository(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "src").mkdir()
+                (agent.ROOT / "src/escape").symlink_to(Path(outside), target_is_directory=True)
+                with self.assertRaises(ValueError):
+                    agent.apply_edits(
+                        [{"path": "src/escape/pwn.py", "old": "", "new": "VALUE = 1\\n"}],
+                        set(),
+                    )
+                self.assertFalse((Path(outside) / "pwn.py").exists())
             finally:
                 agent.ROOT = previous_root
 
