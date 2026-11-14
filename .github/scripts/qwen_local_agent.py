@@ -238,7 +238,7 @@ def main():
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
     system += (
-        "\\n\\nYou are a coordinated Qwen2.5-Coder 3B engineering council. In ONE inference pass, "
+        "\n\nYou are a coordinated Qwen2.5-Coder 3B engineering council. In ONE inference pass, "
         "perform six explicitly separated roles: (1) architecture analyst, (2) product and user-journey analyst, "
         "(3) security/privacy analyst, (4) QA/test analyst, (5) implementation engineer, and "
         "(6) independent post-change reviewer. First reason through architecture, product, security and QA; "
@@ -249,7 +249,7 @@ def main():
     )
     messages = [
         {"role": "system", "content": system},
-        {"role": "user", "content": "OBJECTIVE:\\n" + task + "\\n\\nREPOSITORY EVIDENCE:\\n" + context + "\\n\\nProduce a review report and minimal exact structured edits. For existing files, old must be an exact unique snippet. For new files, old must be empty."},
+        {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context + "\n\nProduce a review report and minimal exact structured edits. For existing files, old must be an exact unique snippet. For new files, old must be empty."},
     ]
     tracked_set = set(tracked)
     answer = None
@@ -257,7 +257,12 @@ def main():
         try:
             answer = ask_ollama(messages, format_schema=EDIT_SCHEMA, max_predict=4096)
             response_json = json.loads(answer)
-            apply_edits(response_json.get("edits"), tracked_set)
+            changed_paths = apply_edits(response_json.get("edits"), tracked_set)
+            if not changed_paths:
+                raise ValueError("Qwen returned no source or test edits")
+            review_text = response_json.get("review")
+            if not isinstance(review_text, str) or len(review_text.strip()) < 80 or "timed out" in review_text.lower():
+                raise ValueError("Qwen review report is missing or contains an execution error")
             break
         except (urllib.error.URLError, TimeoutError, KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
             error = str(exc)[:1000]
@@ -271,9 +276,9 @@ def main():
     report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
-        "# Qwen2.5-Coder 3B multi-role engineering review\\n\\n"
-        + "OBJECTIVE: " + task + "\\n\\n"
-        + response_json["review"][:7000] + "\\n",
+        "# Qwen2.5-Coder 3B multi-role engineering review\n\n"
+        + "OBJECTIVE: " + task + "\n\n"
+        + review_text[:7000] + "\n",
         encoding="utf-8",
     )
     print("Qwen multi-role engineering council completed in one inference pass.")
