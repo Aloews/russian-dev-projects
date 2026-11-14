@@ -198,7 +198,7 @@ def main():
         "Never invent live data, credentials, legal approvals, customers, property inventory or tests. "
         "Do not edit workflows, action definitions, package manifests, lockfiles, credentials, deployment files, "
         "production secrets or existing SQL migrations. Add tests for behavior changes. "
-        "Do not weaken or delete tests. Keep changes minimal. No explanations outside the diff."
+        "Do not weaken or delete tests. Keep changes minimal. No extra keys or explanations."
     )
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
