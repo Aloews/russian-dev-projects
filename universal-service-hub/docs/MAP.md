@@ -236,3 +236,10 @@ If a product has no applicable authentication, persistence, payment or external 
 - Run authenticated staging E2E from sign-up through property submission, independent review, public listing and enquiry persistence.
 - Confirm lawful property supply, partner agreements and jurisdiction-specific legal review.
 - Rehearse rollback. Production deployment remains blocked until all release gates pass.
+
+
+### Execution request — 2026-11-14
+- Owner requested completion of the first usable product, AUREL Elite Estate, without Fable.
+- Trigger the Product Factory on this feature-branch push using the configured OpenRouter Sonnet 4.5 primary and Qwen fallback.
+- Deliver a running Vercel Preview backed by the provisioned Neon staging database, with the complete authenticated property submission → independent review → public verified listing → enquiry journey and evidence from browser/API tests.
+- Do not merge or deploy production. Update this section only with immutable run IDs, candidate SHA, actual preview URL and verified journey results; do not infer that a push or comment means the factory completed.
