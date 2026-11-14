@@ -109,6 +109,7 @@ def make_context(task, tracked):
 EDIT_SCHEMA = {
     "type": "object",
     "properties": {
+        "review": {"type": "string", "minLength": 1, "maxLength": 7000},
         "edits": {
             "type": "array",
             "minItems": 1,
@@ -125,7 +126,7 @@ EDIT_SCHEMA = {
             },
         },
     },
-    "required": ["edits"],
+    "required": ["review", "edits"],
     "additionalProperties": False,
 }
 
@@ -185,7 +186,7 @@ def ask_ollama(messages, format_schema=None, max_predict=1200):
         OLLAMA_URL, data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=1800) as response:
+    with urllib.request.urlopen(request, timeout=600) as response:
         data = json.loads(response.read())
     answer = data.get("message", {}).get("content")
     if not isinstance(answer, str) or not answer.strip():
@@ -236,84 +237,46 @@ def main():
         system += "\n\nApply this Reality-First Business skill as a hard execution standard:\n" + reality_skill
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
-    role_specs = [
-        ("architecture", "Inspect architecture, boundaries, dependencies, failure modes and the smallest safe vertical slice. Return evidence-backed findings only."),
-        ("product", "Inspect product intent, user journeys, UX states and measurable acceptance criteria. Do not invent customers, demand or market validation."),
-        ("security", "Inspect authentication, authorization, tenancy, secrets, PII, input validation, SSRF, supply-chain and abuse risks. Return only evidence-backed risks."),
-        ("qa", "Inspect tests and implementation risks. Identify missing regression, integration and end-to-end coverage. Do not claim tests ran."),
-    ]
-    role_findings = []
-    role_system = (
-        "You are a read-only specialist in a multi-agent software delivery team. "
-        "Do not propose unsupported facts or edit files. Distinguish verified evidence, assumptions and unknowns. "
-        "Return concise findings with file paths and severity."
-    )
-    reality_path = os.environ.get("REALITY_FIRST_SKILL_PATH", "")
-    if reality_path:
-        try:
-            role_system += "\n\n" + Path(reality_path).read_text(encoding="utf-8")[:10000]
-        except (OSError, UnicodeError):
-            print("::error::Reality-First Business skill could not be loaded.")
-            return 2
-    for role_name, role_task in role_specs:
-        try:
-            finding = ask_ollama([
-                {"role": "system", "content": role_system + "\n\nROLE: " + role_name + ". " + role_task},
-                {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context},
-            ], max_predict=850)
-        except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
-            print(f"::error::Qwen {role_name} role failed: {type(exc).__name__}: {exc}")
-            return 3
-        role_findings.append("## " + role_name.title() + "\n" + finding[:3500])
-        print("Qwen role completed: " + role_name)
-    report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(
-        "# Qwen2.5-Coder 3B multi-role review\n\n"
-        + "OBJECTIVE: " + task + "\n\n"
-        + "\n\n".join(role_findings) + "\n",
-        encoding="utf-8",
-    )
-    implementation_system = system + (
-        "\n\nYou are the single implementation role. Reconcile the architecture, product, security and QA findings below. "
-        "Do not implement unverified assumptions. Produce only the smallest coherent source changes that satisfy the objective.\n\n"
-        + "\n\n".join(role_findings)
+    system += (
+        "\\n\\nYou are a coordinated Qwen2.5-Coder 3B engineering council. In ONE inference pass, "
+        "perform six explicitly separated roles: (1) architecture analyst, (2) product and user-journey analyst, "
+        "(3) security/privacy analyst, (4) QA/test analyst, (5) implementation engineer, and "
+        "(6) independent post-change reviewer. First reason through architecture, product, security and QA; "
+        "then make only the smallest coherent implementation changes; finally review your proposed changes "
+        "for regressions and missing tests. The 'review' field must contain concise findings for each role, "
+        "evidence-backed file references, acceptance criteria and any remaining unknowns. "
+        "Do not claim tests were run. Return only JSON matching the schema, including both review and edits."
     )
     messages = [
-        {"role": "system", "content": implementation_system},
-        {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context + "\n\nProduce minimal structured edits only, following the JSON schema."},
+        {"role": "system", "content": system},
+        {"role": "user", "content": "OBJECTIVE:\\n" + task + "\\n\\nREPOSITORY EVIDENCE:\\n" + context + "\\n\\nProduce a review report and minimal exact structured edits. For existing files, old must be an exact unique snippet. For new files, old must be empty."},
     ]
     tracked_set = set(tracked)
-    for attempt in range(3):
+    answer = None
+    for attempt in range(2):
         try:
             answer = ask_ollama(messages, format_schema=EDIT_SCHEMA, max_predict=4096)
-        except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
-            print(f"::error::Qwen implementation role failed: {type(exc).__name__}: {exc}")
-            return 3
-        try:
             response_json = json.loads(answer)
             apply_edits(response_json.get("edits"), tracked_set)
             break
-        except (ValueError, OSError, UnicodeError, json.JSONDecodeError) as exc:
+        except (urllib.error.URLError, TimeoutError, KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
             error = str(exc)[:1000]
-            messages.extend([
-                {"role": "assistant", "content": answer[:12000]},
-                {"role": "user", "content": "The structured edit was rejected: " + error + ". Return corrected JSON with exact old text from the provided files."},
-            ])
-            if attempt == 2:
-                print("::error::Qwen could not produce valid structured edits: " + error)
+            if attempt == 1:
+                print("::error::Qwen multi-role engineering pass failed: " + type(exc).__name__ + ": " + error)
                 return 4
-    diff = git("diff").stdout[:16000]
-    try:
-        qa_review = ask_ollama([
-            {"role": "system", "content": role_system + "\n\nYou are the independent post-change QA reviewer. Do not edit files. Return blockers, regressions, missing tests and exact file paths. If none, state 'BLOCKERS: none'."},
-            {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nIMPLEMENTATION DIFF:\n" + diff},
-        ], max_predict=1000)
-    except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
-        qa_review = "QA review unavailable: " + type(exc).__name__
-    with report_path.open("a", encoding="utf-8") as report:
-        report.write("\n\n## Independent Qwen QA review\n\n" + qa_review[:5000] + "\n")
-    print("Qwen multi-role team completed: architecture, product, security, implementation and QA")
+            messages.extend([
+                {"role": "assistant", "content": (answer or "")[:12000]},
+                {"role": "user", "content": "The previous structured result was rejected: " + error + ". Return corrected JSON with exact unique old text from the provided files."},
+            ])
+    report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        "# Qwen2.5-Coder 3B multi-role engineering review\\n\\n"
+        + "OBJECTIVE: " + task + "\\n\\n"
+        + response_json["review"][:7000] + "\\n",
+        encoding="utf-8",
+    )
+    print("Qwen multi-role engineering council completed in one inference pass.")
     changed = set(git("diff", "--name-only").stdout.splitlines())
     changed.update(git("ls-files", "--others", "--exclude-standard").stdout.splitlines())
     changed.discard("PRODUCT_FACTORY_VERIFICATION.md")
