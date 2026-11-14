@@ -27,8 +27,10 @@ The agent sessions use per-invocation Claude Code budget ceilings and turn limit
 
 The latest workflow run passed the checks for both required repository Actions secrets and the target repository write permission. Keep the values in GitHub Secrets; never paste or print them. The required names are:
 
-- `STARIMG_API_KEY`: the Starimg API key for the Anthropic-compatible Messages endpoint.
+- `STARIMG_API_KEY`: the first Starimg API key for the Anthropic-compatible Messages endpoint.
 - `PRODUCT_FACTORY_GITHUB_TOKEN`: fine-grained token scoped only to the target product repositories, with **Contents: read/write** and **Pull requests: read/write**. The workflow preflights target repository write access. The token is used by checkout and the isolated publication job; it is never passed to the model or verification commands.
+
+Optional additional Starimg keys: `STARIMG_API_KEY_2` through `STARIMG_API_KEY_10`. The compatibility probe tries configured keys in order and selects the first one that successfully returns a valid forced `tool_use` response. Only the selected slot number and redacted error metadata are written to the run artifact; key values are never logged. Add these as GitHub Actions Secrets only if separate keys already exist in the Starimg account.
 
 Optional repository Actions variables:
 
