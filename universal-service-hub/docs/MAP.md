@@ -232,6 +232,16 @@ If a product has no applicable authentication, persistence, payment or external 
 - Never reuse credentials or production data from Sherlock Scholes, Novel Forge or another project. Use project-scoped identities and secrets.
 - The factory must prefer delivering a verified working preview over leaving the task as an untested PR, while preserving the production safety boundary.
 
+
+## Agent routing update — 2026-11-14 (no Fable)
+
+- The Product Factory workflow no longer calls Starimg or Fable and no longer requires `STARIMG_API_KEY`.
+- Primary implementation and up to two verification-repair passes use Anthropic-compatible Claude Sonnet 4.5 through OpenRouter, only after a live tool-call compatibility probe succeeds.
+- Local Qwen2.5-Coder 3B is the fallback for initial candidate generation and verification repair when OpenRouter is absent or fails.
+- Missing OpenRouter credentials must not stop the pipeline from attempting the local Qwen route. A missing provider key is a capability gate, not a fabricated success.
+- Workflow head implementing this routing: `a17c9023464f770ac28e46dd84f4169105aa2c3b`.
+- Required verification: control-plane CI on this exact head, then a complete factory run that produces candidate artifacts, passes isolated verification and publishes a PR for `Aloews/full`. Until those artifacts exist, the factory is not accepted as operational.
+
 ## Execution recovery update — 2026-11-14
 
 - Latest confirmed control-plane CI before this recovery: run `43604324413` (workflow run #810) passed the complete Rust, Python, migration, Docker and container-smoke suite on its exact commit.
