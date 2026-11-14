@@ -463,8 +463,10 @@ jobs:
 
           This PR is not merged or deployed. External credentials, real data, legal approvals and production readiness are not inferred from CI success.
           EOF
-          if gh pr view "$TARGET_BRANCH" --repo "$TARGET_REPO" --json number >/dev/null 2>&1; then
-            gh pr edit "$TARGET_BRANCH" --repo "$TARGET_REPO" --title "${TARGET_REPO}: verified product delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
+          TARGET_OWNER="${TARGET_REPO%%/*}"
+          PR_NUMBER="$(gh pr list --repo "$TARGET_REPO" --head "$TARGET_OWNER:$TARGET_BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$PR_NUMBER" ]]; then
+            gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --title "${TARGET_REPO}: verified product delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
           else
             gh pr create --repo "$TARGET_REPO" --base "$BASE_BRANCH" --head "$TARGET_BRANCH" --title "${TARGET_REPO}: verified product delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
           fi
@@ -477,7 +479,6 @@ jobs:
         github.actor == 'Aloews' &&
         github.event.comment.body == '/factory run'))
     needs: [implement, verify_0, repair_1, verify_1, repair_2, verify_2, publish]
-    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Require verified publication
