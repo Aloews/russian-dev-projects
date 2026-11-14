@@ -211,7 +211,7 @@ def main():
         except (OSError, UnicodeError):
             print("::error::Reality-First Business skill could not be loaded.")
             return 2
-        system += "\\n\\nApply this Reality-First Business skill as a hard execution standard:\\n" + reality_skill
+        system += "\n\nApply this Reality-First Business skill as a hard execution standard:\n" + reality_skill
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
     messages = [
