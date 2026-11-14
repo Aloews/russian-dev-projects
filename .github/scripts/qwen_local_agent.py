@@ -131,14 +131,14 @@ EDIT_SCHEMA = {
 }
 
 def rejected_existing_file_context(answer):
-    """Return bounded current-file evidence when the model incorrectly proposes a new file."""
+    """Return bounded current-file evidence for every rejected existing-file edit."""
     try:
         payload = json.loads(answer)
     except (TypeError, json.JSONDecodeError):
         return ""
     sections = []
     for edit in payload.get("edits", []) if isinstance(payload, dict) else []:
-        if not isinstance(edit, dict) or edit.get("old") != "":
+        if not isinstance(edit, dict):
             continue
         path = edit.get("path")
         if not isinstance(path, str) or not allowed(path, set()):
