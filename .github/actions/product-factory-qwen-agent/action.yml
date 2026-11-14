@@ -30,6 +30,10 @@ runs:
         test "$(git -C "$CAVEMAN_DIR" rev-parse HEAD)" = "1e91f1306d602d4ca23618701b1185575ae1869b"
         test -s "$CAVEMAN_DIR/skills/caveman/SKILL.md"
 
+    - name: Validate Qwen fallback script
+      shell: bash
+      run: python3 -m py_compile "$GITHUB_ACTION_PATH/../../scripts/qwen_local_agent.py"
+
     - name: Install Ollama and Qwen2.5-Coder 3B
       shell: bash
       run: |
