@@ -191,7 +191,10 @@ def main():
     system = (
         "You are a cautious local coding fallback for a production product. "
         "Inspect the provided project evidence; choose one small, complete, testable increment. "
-        "Return ONLY an applicable unified git diff beginning with 'diff --git'. "
+        "Return only JSON matching the supplied schema, with an edits array of exact path/old/new replacements. "
+        "For existing files, old must be an exact unique snippet copied from the provided file. "
+        "For a new file, old must be empty and new must contain the complete file. "
+        "Never return a unified diff, markdown fence or explanation. "
         "Never invent live data, credentials, legal approvals, customers, property inventory or tests. "
         "Do not edit workflows, action definitions, package manifests, lockfiles, credentials, deployment files, "
         "production secrets or existing SQL migrations. Add tests for behavior changes. "
@@ -201,7 +204,7 @@ def main():
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
     messages = [
         {"role": "system", "content": system},
-        {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context + "\n\nProduce a minimal patch only."},
+        {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context + "\n\nProduce minimal structured edits only, following the JSON schema."},
     ]
     tracked_set = set(tracked)
     for attempt in range(3):
