@@ -67,8 +67,11 @@ Branch: `feat/ush-provider-api-adapters-final-v2`, layered on the latest observe
 - GitHub Actions uses isolated agent, verification, repair and publication jobs. Only a candidate that passes the configured verification gates can be published as a PR. No automatic merge or production deployment.
 - The Qwen editor now supplies bounded existing-file context on a rejected new-file edit, rejects symlink path escapes, and has regression coverage for both cases.
 - The workflow prevents new runs from cancelling an active product build; the initial local Qwen fallback has a bounded 40-minute step and a 20-minute inference timeout.
-- Provider-routing correction is being validated in branch `fix/factory-starimg-primary`; exact-head CI and the live Starimg tool-call probe are pending.
-- Product Factory output is not yet evidenced: no candidate artifact, isolated verification report or AUREL delivery PR has been confirmed. Do not mark the factory operational until these artifacts exist.
+- PR #31 (`fix/factory-starimg-primary`) contains the Starimg-first routing, bounded Qwen fallback and regression fixes; it remains open and unmerged.
+- First AUREL acceptance run #75 (`43639707964`) validated target-repository write access, but Starimg returned HTTP 402 `insufficient_balance_error`; Qwen fallback then rejected an existing-file edit incorrectly marked as a new file. No candidate patch was produced.
+- The Qwen edit validator now accepts only sufficiently complete, substantially similar whole-file replacements when a small model emits an empty old snippet for an existing path; unrelated/short replacements remain rejected. Regression tests were added, but the revised tests have not yet passed on a GitHub runner.
+- Latest exact-head CI run #900 (`43641015883`) failed before any job step with `runner_id=0` and no runner/logs. This is a runner/account availability blocker; the reason (for example, Actions quota versus transient GitHub runner failure) is not verified. Do not merge until a real runner completes the full checks.
+- Product Factory has not produced a candidate artifact, isolated verification report, AUREL delivery PR or preview URL. No product has been delivered or deployed.
 - PR #20 is superseded by PR #21 and must not be merged independently.
 
 Remaining platform work after the first verified product delivery:
