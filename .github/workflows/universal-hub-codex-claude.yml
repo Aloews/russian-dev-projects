@@ -182,6 +182,8 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write("codex_model=" + codex_model + "\n")
               output.write("claude_model=" + claude_model + "\n")
+              output.write("CODEX_MODEL=" + codex_model + "\n")
+              output.write("CLAUDE_MODEL=" + claude_model + "\n")
           print("Starimg verified: Responses API function calling and Anthropic Messages tool use both passed.")
           print("Selected Codex model: " + codex_model)
           print("Selected Claude Code model: " + claude_model)
