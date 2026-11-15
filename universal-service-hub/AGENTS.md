@@ -30,3 +30,15 @@ This directory contains the Universal Service Hub. Work autonomously within the 
 - No production deploy without staging verification, independent QA, health checks and a tested rollback.
 - If a credential, permission, quota or external approval is missing, continue all independent work and record the exact blocker; do not ask the user to perform routine debugging.
 - Never claim a task, test, deployment, failover or provider connection succeeded without direct evidence.
+
+
+## Preferred coding-agent workflow
+
+- For changes to the Universal Service Hub itself, use the dedicated GitHub Actions workflow Universal Hub — Codex + Claude Code.
+- Codex CLI through Starimg's OpenAI Responses API is the primary implementation writer.
+- Claude Code CLI through Starimg's Anthropic Messages API is the sequential independent reviewer and repair writer. It must inspect the actual diff, not accept the Codex summary.
+- The workflow discovers exact model IDs from the live Starimg model catalogue and verifies forced tool calling on both protocols before starting either CLI.
+- Keep the two coding agents sequential; never let them write overlapping files concurrently.
+- Both agents may change only universal-service-hub/. They must not read or expose secrets, commit, push, create PRs, merge, deploy or mutate production data.
+- GitHub CI validates the exact PR head. A passing model probe is not proof that code is correct; a passing build is not proof of production readiness.
+- Do not use OpenRouter or local Qwen as the default writer for Hub development. They remain separate fallback/legacy routes until a deliberate, tested migration changes that policy.
