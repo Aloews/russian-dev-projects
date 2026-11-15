@@ -108,3 +108,10 @@ The current implementation is a development-stage control plane, not a certified
 ## Release gate
 
 No production release until S0–S7 in SECURITY_FIRST_ROADMAP.md are complete for the enabled feature set, exact-SHA CI is green, independent security review is recorded, staging E2E uses synthetic data, backup restore and rollback are tested, and an owner-authorized release decision exists. A checklist or scan alone is not a security certification.
+
+
+## API token rate limiting — implementation in progress
+
+The Rust runtime applies a PostgreSQL-backed fixed-window limit per successfully authenticated bearer token. The default is 120 requests per token per UTC minute; operators may set `USH_RATE_LIMIT_PER_MINUTE` to an integer from 1 to 10000. The database stores only the SHA-256 token fingerprint, window start, request count and update timestamp. Fingerprint rows idle for 24 hours are pruned at startup and hourly. A rejected request returns HTTP 429 with `Retry-After: 60`.
+
+This control limits abuse of valid credentials and is shared across runtime instances through PostgreSQL. It does **not** replace edge/IP-based throttling for unauthenticated traffic, sign-in/recovery abuse controls, or a distributed abuse-detection system. Operational dashboards remain outstanding. Do not describe S1 as complete.
