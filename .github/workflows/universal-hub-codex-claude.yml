@@ -328,12 +328,19 @@ jobs:
 
       - name: Publish isolated candidate branch and open pull request
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PRODUCT_FACTORY_GITHUB_TOKEN }}
           BASE_REF: ${{ inputs.base_ref || 'main' }}
+          CODEX_MODEL: ${{ steps.starimg.outputs.codex_model }}
+          CLAUDE_MODEL: ${{ steps.starimg.outputs.claude_model }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          git config user.name "github-actions[bot]"
+          test -n "$GH_TOKEN" || { echo "Missing PRODUCT_FACTORY_GITHUB_TOKEN; refusing a push-only run." >&2; exit 2; }
+          actor="$(gh api user --jq .login)"
+          test "$actor" = "Aloews" || { echo "Publication token must authenticate as the repository owner." >&2; exit 2; }
+          repo_permissions="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions.push == true and .permissions.pull == true')"
+          test "$repo_permissions" = "true" || { echo "Publication token lacks repository push/pull-request access." >&2; exit 2; }
+          git config user.name "Aloews"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           gh auth setup-git
           git add universal-service-hub
