@@ -47,7 +47,7 @@ Codex uses a named Starimg provider, wire_api = responses, and the STARIMG_API_K
 - A separate publication step creates an isolated branch and PR. GitHub CI must validate the exact PR head before merge.
 - No automatic merge, production deployment, paid infrastructure provisioning, production data mutation, DNS change or credential rotation is permitted.
 
-The runner receives the Starimg key only for model inference. The GitHub write token is not exposed to either coding CLI and is introduced only in the publication step. GitHub-hosted runners are ephemeral; do not place production credentials in the runner environment.
+The Starimg key is scoped to the model-probe and CLI steps. Codex is configured to exclude STARIMG_API_KEY from shell-command environments; Claude Code is restricted to Read, Write, Edit, Glob and Grep, with no Bash or network tools. The GitHub write token is not exposed to either coding CLI and is introduced only in the publication step. GitHub-hosted runners are ephemeral; do not place production credentials in the runner environment.
 
 ## Current limitations
 
