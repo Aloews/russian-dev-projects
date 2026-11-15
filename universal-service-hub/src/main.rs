@@ -334,6 +334,70 @@ async fn audit(
     }
 }
 
+async fn integration_catalog(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> ApiResult<Json<Value>> {
+    authenticate(&state, &headers).await?;
+    Ok(Json(json!({
+        "version": 1,
+        "categories": [
+            {
+                "id": "frontend_hosting",
+                "label": "Frontend hosting",
+                "primary": "vercel",
+                "services": [
+                    {"id":"vercel","name":"Vercel","role":"frontend_hosting","connection":"api_token","adapter_supported":false,"project_provisioning":false},
+                    {"id":"netlify","name":"Netlify","role":"frontend_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"cloudflare","name":"Cloudflare Pages and Workers","role":"frontend_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"render","name":"Render","role":"application_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"flyio","name":"Fly.io","role":"application_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"aws_amplify","name":"AWS Amplify","role":"frontend_hosting","connection":"aws_credentials","adapter_supported":false,"project_provisioning":false}
+                ]
+            },
+            {
+                "id": "application_platform",
+                "label": "Application platform",
+                "primary": "railway",
+                "services": [
+                    {"id":"railway","name":"Railway","role":"application_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"render","name":"Render","role":"application_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"flyio","name":"Fly.io","role":"application_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"northflank","name":"Northflank","role":"application_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"digitalocean","name":"DigitalOcean App Platform","role":"application_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"coolify","name":"Coolify","role":"self_hosted_deployment","connection":"api_token","adapter_supported":false,"project_provisioning":false}
+                ]
+            },
+            {
+                "id": "backend_platform",
+                "label": "Backend and database",
+                "primary": "supabase",
+                "services": [
+                    {"id":"supabase","name":"Supabase","role":"backend_platform","connection":"management_api_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"firebase","name":"Firebase","role":"backend_platform","connection":"google_service_account","adapter_supported":false,"project_provisioning":false},
+                    {"id":"appwrite","name":"Appwrite","role":"backend_platform","connection":"endpoint_and_api_key","adapter_supported":false,"project_provisioning":false},
+                    {"id":"pocketbase","name":"PocketBase","role":"self_hosted_backend","connection":"endpoint_and_admin_auth","adapter_supported":false,"project_provisioning":false},
+                    {"id":"nhost","name":"Nhost","role":"backend_platform","connection":"endpoint_and_api_key","adapter_supported":false,"project_provisioning":false},
+                    {"id":"convex","name":"Convex","role":"backend_platform","connection":"deployment_and_api_key","adapter_supported":false,"project_provisioning":false}
+                ]
+            },
+            {
+                "id": "git_hosting",
+                "label": "Git repositories and CI",
+                "primary": "github",
+                "services": [
+                    {"id":"github","name":"GitHub","role":"git_hosting","connection":"oauth_or_fine_grained_pat","adapter_supported":false,"project_provisioning":false},
+                    {"id":"gitlab","name":"GitLab","role":"git_hosting","connection":"oauth_or_project_access_token","adapter_supported":false,"project_provisioning":false},
+                    {"id":"bitbucket","name":"Bitbucket","role":"git_hosting","connection":"oauth_or_app_password","adapter_supported":false,"project_provisioning":false},
+                    {"id":"gitea","name":"Gitea","role":"self_hosted_git","connection":"endpoint_and_access_token","adapter_supported":false,"project_provisioning":false},
+                    {"id":"forgejo","name":"Forgejo","role":"self_hosted_git","connection":"endpoint_and_access_token","adapter_supported":false,"project_provisioning":false},
+                    {"id":"codeberg","name":"Codeberg","role":"git_hosting","connection":"access_token","adapter_supported":false,"project_provisioning":false}
+                ]
+            }
+        ]
+    })))
+}
+
 async fn healthz() -> Json<Value> {
     Json(json!({"status":"ok","runtime":"rust"}))
 }
@@ -2345,6 +2409,7 @@ async fn main() -> anyhow::Result<()> {
             delete(revoke_project_token),
         )
         .route("/v1/providers", get(list_providers))
+        .route("/v1/integrations/catalog", get(integration_catalog))
         .route(
             "/v1/providers/{provider_id}",
             put(upsert_provider).delete(delete_provider),
