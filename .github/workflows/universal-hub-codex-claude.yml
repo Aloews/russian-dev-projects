@@ -340,6 +340,7 @@ jobs:
           test "$actor" = "Aloews" || { echo "Publication token must authenticate as the repository owner." >&2; exit 2; }
           repo_permissions="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions.push == true and .permissions.pull == true')"
           test "$repo_permissions" = "true" || { echo "Publication token lacks repository push/pull-request access." >&2; exit 2; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?per_page=1" --jq '.total_count' >/dev/null
           git config user.name "Aloews"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           gh auth setup-git
