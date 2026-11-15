@@ -391,7 +391,7 @@ fn integration_catalog_data() -> Value {
                 ]
             }
         ]
-    }
+    })
 }
 
 async fn integration_catalog(
