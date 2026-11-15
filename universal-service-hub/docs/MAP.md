@@ -243,3 +243,14 @@ If a product has no applicable authentication, persistence, payment or external 
 - Trigger the Product Factory on this feature-branch push using the configured OpenRouter Sonnet 4.5 primary and Qwen fallback.
 - Deliver a running Vercel Preview backed by the provisioned Neon staging database, with the complete authenticated property submission → independent review → public verified listing → enquiry journey and evidence from browser/API tests.
 - Do not merge or deploy production. Update this section only with immutable run IDs, candidate SHA, actual preview URL and verified journey results; do not infer that a push or comment means the factory completed.
+
+
+## Universal Hub coding-agent workflow
+
+- Added dedicated workflow: .github/workflows/universal-hub-codex-claude.yml.
+- Codex CLI is the primary writer through Starimg OpenAI Responses API; Claude Code CLI is the sequential independent reviewer and repair writer through Starimg Anthropic Messages API.
+- The workflow discovers model IDs from the live Starimg catalogue and requires successful function/tool-call probes for both protocols before either coding agent runs.
+- The two agents work sequentially on an isolated GitHub-hosted runner and are restricted to the universal-service-hub/ subtree. The GitHub write token is only exposed in the later publication step.
+- The workflow opens a candidate PR; it does not merge, deploy, provision paid infrastructure, mutate production data or rotate credentials.
+- The workflow is configured in this branch but has not yet been run against the live Starimg account. Model compatibility, billing availability and candidate quality remain unverified until the first run completes.
+- CI now actionlints the new workflow file when it changes.
