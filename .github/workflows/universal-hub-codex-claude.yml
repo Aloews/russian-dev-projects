@@ -109,7 +109,7 @@ jobs:
           def request(url, body=None, extra_headers=None):
               request_headers = dict(headers) if extra_headers is None else dict(extra_headers)
               data = None if body is None else json.dumps(body).encode("utf-8")
-              for attempt in range(3):
+              for _ in range(3):
                   req = urllib.request.Request(url, data=data, headers=request_headers, method="GET" if body is None else "POST")
                   try:
                       with urllib.request.urlopen(req, timeout=120) as response:
