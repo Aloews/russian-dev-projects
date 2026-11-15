@@ -1411,57 +1411,57 @@ async fn verify_integration(
             (endpoint, reqwest::Method::GET, None)
         }
         "northflank" => (
-            "https://api.northflank.com/v1/teams?per_page=1",
+            "https://api.northflank.com/v1/teams?per_page=1".to_owned(),
             reqwest::Method::GET,
             None,
         ),
         "railway" => (
-            "https://backboard.railway.com/graphql/v2",
+            "https://backboard.railway.com/graphql/v2".to_owned(),
             reqwest::Method::POST,
             Some(json!({"query":"query { me { id name email } }"})),
         ),
         "cloudflare" => (
-            "https://api.cloudflare.com/client/v4/user/tokens/verify",
+            "https://api.cloudflare.com/client/v4/user/tokens/verify".to_owned(),
             reqwest::Method::GET,
             None,
         ),
         "netlify" => (
-            "https://api.netlify.com/api/v1/user",
+            "https://api.netlify.com/api/v1/user".to_owned(),
             reqwest::Method::GET,
             None,
         ),
         "render" => (
-            "https://api.render.com/v1/owners?limit=1",
+            "https://api.render.com/v1/owners?limit=1".to_owned(),
             reqwest::Method::GET,
             None,
         ),
         "digitalocean" => (
-            "https://api.digitalocean.com/v2/account",
+            "https://api.digitalocean.com/v2/account".to_owned(),
             reqwest::Method::GET,
             None,
         ),
         "flyio" => (
-            "https://api.fly.io/graphql",
+            "https://api.fly.io/graphql".to_owned(),
             reqwest::Method::POST,
             Some(json!({"query":"query { viewer { email } }"})),
         ),
         "supabase" => (
-            "https://api.supabase.com/v1/projects?limit=1",
+            "https://api.supabase.com/v1/projects?limit=1".to_owned(),
             reqwest::Method::GET,
             None,
         ),
         "neon" => (
-            "https://console.neon.tech/api/v2/projects?limit=1",
+            "https://console.neon.tech/api/v2/projects?limit=1".to_owned(),
             reqwest::Method::GET,
             None,
         ),
         "cloudflare_r2" => (
-            "https://api.cloudflare.com/client/v4",
+            "https://api.cloudflare.com/client/v4".to_owned(),
             reqwest::Method::GET,
             None,
         ),
         "backblaze_b2" => (
-            "https://api.backblazeb2.com/b2api/v4/b2_authorize_account",
+            "https://api.backblazeb2.com/b2api/v4/b2_authorize_account".to_owned(),
             reqwest::Method::GET,
             None,
         ),
