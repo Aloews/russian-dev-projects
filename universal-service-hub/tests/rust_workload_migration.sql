@@ -77,7 +77,18 @@ DO 'BEGIN
   END;
 
   BEGIN
-    INSERT INTO job_verifications (
+    INSERT INTO job_artifacts (id, job_id, step_id, project_id, object_key, mime_type, byte_size, checksum_sha256)
+VALUES ('migration-artifact-a', 'migration-job-a', 'migration-step-artifact', 'migration-proof-a', 'proof/artifact', 'text/plain', 1, repeat('b', 64));
+
+DELETE FROM job_steps WHERE id = 'migration-step-artifact';
+
+DO 'BEGIN
+  IF EXISTS (SELECT 1 FROM job_artifacts WHERE id = ''migration-artifact-a'' AND step_id IS NOT NULL) THEN
+    RAISE EXCEPTION ''deleting a step did not preserve its artifact with a NULL step reference'';
+  END IF;
+END';
+
+INSERT INTO job_verifications (
       id, project_id, job_id, step_id, source, verifier_id, command,
       exit_code, passed, commit_sha, output_sha256
     ) VALUES (
@@ -109,16 +120,5 @@ INSERT INTO job_verifications (
 
 UPDATE job_steps SET state = 'succeeded' WHERE id = 'migration-step-a';
 UPDATE jobs SET state = 'succeeded' WHERE id = 'migration-job-a';
-
-INSERT INTO job_artifacts (id, job_id, step_id, project_id, object_key, mime_type, byte_size, checksum_sha256)
-VALUES ('migration-artifact-a', 'migration-job-a', 'migration-step-artifact', 'migration-proof-a', 'proof/artifact', 'text/plain', 1, repeat('b', 64));
-
-DELETE FROM job_steps WHERE id = 'migration-step-artifact';
-
-DO 'BEGIN
-  IF EXISTS (SELECT 1 FROM job_artifacts WHERE id = ''migration-artifact-a'' AND step_id IS NOT NULL) THEN
-    RAISE EXCEPTION ''deleting a step did not preserve its artifact with a NULL step reference'';
-  END IF;
-END';
 
 ROLLBACK;
