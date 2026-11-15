@@ -235,3 +235,24 @@ For each PR:
 The platform is ready for a production release only when S0–S7 applicable gates are VERIFIED, user identity and tenant isolation are enforced, secrets are protected by managed key lifecycle, all enabled integrations have least-privilege scopes and revoke paths, sensitive actions require consent, security operations and recovery are tested, independent review is recorded, and an owner-authorized release has a tested rollback.
 
 **Current overall status: NOT STARTED as a complete security programme.** Existing controls are partial foundations, not evidence of completed S0–S7.
+
+
+## 9. Evidence register — source inspection, not security verification
+
+The following statements are limited to source-level observations. They do not prove production configuration, deployment behavior, provider connectivity or resistance to attack.
+
+Baseline inspected on `main` at base commit `75d35c32c697c096986635e9e56ce4195959a3b4`:
+- `universal-service-hub/src/main.rs`: Rust Axum application, PostgreSQL pool, root admin token held in application state, Infisical client, request routing and authentication implementation. This is source evidence only.
+- The current repository tree does not contain separate `src/auth.rs`, `src/security.rs` or `src/providers.rs` modules; do not cite those as implementation locations.
+- Project token hashing, role checks, provider allowlists, request body limit, outbound destination validation and audit behavior must be tied to the exact functions and regression tests in the implementation PR before any control is marked VERIFIED.
+- No per-user OIDC/passkey session flow, customer OAuth vault/KMS envelope encryption, full customer-data RLS policy set, public Security Center, public roadmap portal, native mobile client or desktop client has been evidenced by this documentation PR.
+- Infisical integration code is present, but live machine-identity authentication and secret retrieval are not proven by source inspection.
+- A CI run that is pending, queued, cancelled or has no completed jobs is not a passing test result.
+
+### Status of this documentation increment
+- PR: https://github.com/Aloews/russian-dev-projects/pull/41
+- Candidate head at the time of this evidence review: `a8e26cfef1e72b0dbbdef7cc989b306ca72d00b8`.
+- Workflow run: https://github.com/Aloews/russian-dev-projects/actions/runs/43750951422
+- Observed workflow state: pending; no completed job evidence was returned during this review.
+- Therefore this increment is **pushed but not CI-verified**. It must not be described as tested, merged, deployed or as implementation of the security controls.
+- Re-run/reconcile CI on the final PR head and attach exact job results before merge.
