@@ -47,7 +47,7 @@ jobs:
       - name: Checkout selected Hub baseline without persisting credentials
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.base_ref }}
+          ref: ${{ inputs.base_ref || 'main' }}
           fetch-depth: 0
           persist-credentials: false
 
