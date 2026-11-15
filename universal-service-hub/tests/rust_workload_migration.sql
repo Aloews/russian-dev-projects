@@ -1,4 +1,19 @@
 \\set ON_ERROR_STOP on
+\\if :{?proof_commit_sha}
+\\else
+\\echo 'Missing exact commit SHA from the CI runner.'
+\\quit
+\\endif
+\\if :{?proof_output_sha256}
+\\else
+\\echo 'Missing Rust test output digest from the CI runner.'
+\\quit
+\\endif
+\\if :{?proof_run_id}
+\\else
+\\echo 'Missing GitHub Actions run ID.'
+\\quit
+\\endif
 BEGIN;
 
 INSERT INTO projects (id, name, allowed_capabilities)
@@ -114,8 +129,13 @@ INSERT INTO job_verifications (
   exit_code, passed, commit_sha, output_sha256, evidence_ref
 ) VALUES (
   'migration-proof-a1', 'migration-proof-a', 'migration-job-a', 'migration-step-a',
-  'runtime_probe', 'ci-runner', 'cargo test --all-targets', 0, TRUE,
-  repeat('a', 40), repeat('b', 64), '{"run_id":"ci-proof"}'::jsonb
+  'ci', 'github-actions:' || :'proof_run_id', 'cargo test --all-targets', 0, TRUE,
+  :'proof_commit_sha', :'proof_output_sha256',
+  jsonb_build_object(
+    'run_id', :'proof_run_id',
+    'run_attempt', :'proof_run_attempt',
+    'run_url', :'proof_run_url'
+  )
 );
 
 UPDATE job_steps SET state = 'succeeded' WHERE id = 'migration-step-a';
