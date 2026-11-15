@@ -28,7 +28,7 @@ use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::{error, info};
 use uuid::Uuid;
 
-mod workloads;
+pub mod workloads;
 
 #[derive(Clone)]
 struct AppState {
