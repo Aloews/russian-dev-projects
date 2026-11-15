@@ -2,17 +2,17 @@
 \\if :{?proof_commit_sha}
 \\else
 \\echo 'Missing exact commit SHA from the CI runner.'
-\\quit
+\\quit 2
 \\endif
 \\if :{?proof_output_sha256}
 \\else
 \\echo 'Missing Rust test output digest from the CI runner.'
-\\quit
+\\quit 2
 \\endif
 \\if :{?proof_run_id}
 \\else
 \\echo 'Missing GitHub Actions run ID.'
-\\quit
+\\quit 2
 \\endif
 BEGIN;
 
