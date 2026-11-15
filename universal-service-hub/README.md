@@ -154,3 +154,6 @@ The separate Autonomous Product Factory workflow orchestrates work in target pro
 ## API request limits
 
 The Rust runtime enforces a PostgreSQL-backed fixed-window rate limit per authenticated bearer token. Default: 120 requests per minute. Configure `USH_RATE_LIMIT_PER_MINUTE` between 1 and 10000. Exceeded limits return HTTP 429 and `Retry-After: 60`. This does not replace unauthenticated IP-level throttling at the edge.
+
+
+Rate-limit fingerprint rows idle for 24 hours are pruned at startup and hourly. This keeps the limiter's metadata table from retaining inactive token fingerprints indefinitely.
