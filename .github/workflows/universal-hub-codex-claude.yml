@@ -89,9 +89,7 @@ jobs:
           headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
 
           def request(url, body=None, extra_headers=None):
-              request_headers = dict(headers)
-              if extra_headers:
-                  request_headers.update(extra_headers)
+              request_headers = dict(headers) if extra_headers is None else dict(extra_headers)
               data = None if body is None else json.dumps(body).encode("utf-8")
               req = urllib.request.Request(url, data=data, headers=request_headers, method="GET" if body is None else "POST")
               try:
