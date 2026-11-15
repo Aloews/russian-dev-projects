@@ -40,7 +40,7 @@ jobs:
       STARIMG_CODEX_MODEL: ${{ vars.STARIMG_CODEX_MODEL }}
       STARIMG_CLAUDE_MODEL: ${{ vars.STARIMG_CLAUDE_MODEL }}
       BASE_REF: ${{ inputs.base_ref || 'main' }}
-      TASK_OBJECTIVE: ${{ inputs.objective || 'Inspect the Universal Service Hub roadmap and implement the highest-priority complete production-readiness increment with tests and evidence.' }}
+      TASK_OBJECTIVE: "${{ inputs.objective || 'Implement the first production-ready fal.ai image-generation increment in the Rust Universal Service Hub: inspect the Rust runtime and existing secret-resolution/security patterns; add a provider-neutral async queue adapter with strict model/path validation, submit/status/result operations, normalized errors and durable provider request identifiers; keep project authorization and allowlists; add unit/contract tests for success, malformed responses, auth failure, rate limits, timeout and ambiguous submission; document exact limitations in docs/MAP.md. Use FAL_AI_API only as a secret reference resolved through Infisical in production and development environment fallback where already supported. Never read, print, transmit or expose the secret to either coding agent. Do not call billable image-generation endpoints, deploy, provision paid resources or modify production data. Do not claim live fal.ai authentication or generation without a separate authorized test.' }}"
       BRANCH_NAME: agent/universal-hub-${{ github.run_id }}
 
     steps:
@@ -67,6 +67,15 @@ jobs:
           test -s universal-service-hub/AGENTS.md
           test -s universal-service-hub/docs/MAP.md
           echo "BASE_SHA=$(cat "$RUNNER_TEMP/universal-hub-base.sha")" >> "$GITHUB_ENV"
+
+      - name: Verify fal.ai credential is configured without exposing its value
+        env:
+          FAL_AI_API: ${{ secrets.FAL_AI_API }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$FAL_AI_API" || { echo "Missing repository secret FAL_AI_API." >&2; exit 2; }
+          echo "fal.ai credential is configured; its value is not displayed."
 
       - name: Install Codex CLI and Claude Code CLI
         shell: bash
@@ -99,14 +108,20 @@ jobs:
           def request(url, body=None, extra_headers=None):
               request_headers = dict(headers) if extra_headers is None else dict(extra_headers)
               data = None if body is None else json.dumps(body).encode("utf-8")
-              req = urllib.request.Request(url, data=data, headers=request_headers, method="GET" if body is None else "POST")
-              try:
-                  with urllib.request.urlopen(req, timeout=75) as response:
-                      return response.status, json.loads(response.read().decode("utf-8"))
-              except urllib.error.HTTPError as exc:
-                  raise RuntimeError(f"HTTP {exc.code} from Starimg endpoint {url.rsplit('/', 1)[-1]}") from None
-              except Exception as exc:
-                  raise RuntimeError(f"Starimg request failed: {type(exc).__name__}") from None
+              for attempt in range(3):
+                  req = urllib.request.Request(url, data=data, headers=request_headers, method="GET" if body is None else "POST")
+                  try:
+                      with urllib.request.urlopen(req, timeout=120) as response:
+                          return response.status, json.loads(response.read().decode("utf-8"))
+                  except urllib.error.HTTPError as exc:
+                      raise RuntimeError(f"HTTP {exc.code} from Starimg endpoint {url.rsplit('/', 1)[-1]}") from None
+                  except (TimeoutError, ConnectionError, urllib.error.URLError, OSError) as exc:
+                      if attempt == 2:
+                          raise RuntimeError(f"Starimg request failed after bounded retries: {type(exc).__name__}") from None
+                      time.sleep(3 * (attempt + 1))
+                  except Exception as exc:
+                      raise RuntimeError(f"Starimg request failed: {type(exc).__name__}") from None
+              raise RuntimeError("Starimg request exhausted bounded retries.")
 
           status, catalogue = request(origin + "/v1/models")
           raw_models = catalogue.get("data") or catalogue.get("models") or []
@@ -203,7 +218,7 @@ jobs:
           CODEX_MODEL: ${{ steps.starimg.outputs.codex_model }}
           STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
           STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
-          TASK_OBJECTIVE: ${{ inputs.objective }}
+          TASK_OBJECTIVE: "${{ inputs.objective || 'Implement the first production-ready fal.ai image-generation increment in the Rust Universal Service Hub: inspect the Rust runtime and existing secret-resolution/security patterns; add a provider-neutral async queue adapter with strict model/path validation, submit/status/result operations, normalized errors and durable provider request identifiers; keep project authorization and allowlists; add unit/contract tests for success, malformed responses, auth failure, rate limits, timeout and ambiguous submission; document exact limitations in docs/MAP.md. Use FAL_AI_API only as a secret reference resolved through Infisical in production and development environment fallback where already supported. Never read, print, transmit or expose the secret to either coding agent. Do not call billable image-generation endpoints, deploy, provision paid resources or modify production data. Do not claim live fal.ai authentication or generation without a separate authorized test.' }}"
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -239,7 +254,7 @@ jobs:
           Do not commit, push, open a PR, merge or deploy. Leave all source, tests and docs changes in the working tree for the independent Claude Code pass.
           PROMPT
           printf "\\nRequested objective: %s\\n" "$TASK_OBJECTIVE" >> "$RUNNER_TEMP/codex-task.md"
-          codex exec --full-auto --cd "$GITHUB_WORKSPACE/universal-service-hub" --model "$CODEX_MODEL" "$(cat "$RUNNER_TEMP/codex-task.md")"
+          codex exec --sandbox workspace-write --cd "$GITHUB_WORKSPACE/universal-service-hub" --model "$CODEX_MODEL" "$(cat "$RUNNER_TEMP/codex-task.md")"
 
       - name: Run Claude Code CLI — independent review and repair
         timeout-minutes: 65
@@ -247,7 +262,7 @@ jobs:
           CLAUDE_MODEL: ${{ steps.starimg.outputs.claude_model }}
           STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
           STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
-          TASK_OBJECTIVE: ${{ inputs.objective }}
+          TASK_OBJECTIVE: "${{ inputs.objective || 'Implement the first production-ready fal.ai image-generation increment in the Rust Universal Service Hub: inspect the Rust runtime and existing secret-resolution/security patterns; add a provider-neutral async queue adapter with strict model/path validation, submit/status/result operations, normalized errors and durable provider request identifiers; keep project authorization and allowlists; add unit/contract tests for success, malformed responses, auth failure, rate limits, timeout and ambiguous submission; document exact limitations in docs/MAP.md. Use FAL_AI_API only as a secret reference resolved through Infisical in production and development environment fallback where already supported. Never read, print, transmit or expose the secret to either coding agent. Do not call billable image-generation endpoints, deploy, provision paid resources or modify production data. Do not claim live fal.ai authentication or generation without a separate authorized test.' }}"
           ANTHROPIC_MODEL: ${{ steps.starimg.outputs.claude_model }}
           ANTHROPIC_DEFAULT_OPUS_MODEL: ${{ steps.starimg.outputs.claude_model }}
           ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ steps.starimg.outputs.claude_model }}
