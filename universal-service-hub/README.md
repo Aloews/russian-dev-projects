@@ -6,6 +6,10 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 **Rust control plane implemented; production activation remains incomplete.** The production container uses an Axum/Tokio/SQLx Rust binary. It includes PostgreSQL-backed project/token management, provider registry/selection, health probes, audit, AI chat routing and read-only verification adapters for hosting, database, storage, PostgreSQL and Redis services. It now also applies the first durable workload contract migration (jobs, DAG steps, attempts, checkpoints, artifacts, leases and outbox) with project-scoped idempotency and billing-ambiguity states. Provider credentials resolve through Infisical references. Private database/Redis hosts are rejected unless exact DNS names are explicitly allowlisted with `USH_ALLOWED_PRIVATE_HOSTS`. The legacy FastAPI implementation remains a compatibility/reference target. The provider checks are not live connections until credentials are added and verified. Public workload APIs, queue orchestration, workers, budgets/quotas, web control center, music/video adapters, production rollout and live Infisical/provider smoke tests remain outstanding.
 
+## Product direction
+
+The customer-facing goal is a universal aggregator of useful internet services, targeting 80% coverage of high-value user jobs (measured by a reproducible task benchmark, not by raw website count). The product catalog is distinct from the infrastructure provider registry. See [UNIVERSAL_SERVICE_AGGREGATOR.md](docs/UNIVERSAL_SERVICE_AGGREGATOR.md) for the category map, catalog contract, user experience, delivery sequence and acceptance tests. This marketplace is a product direction, not a claim that the full catalog UI or cross-service integrations are already implemented.
+
 ## Provider integration matrix
 
 See [`docs/PROVIDER_API_MATRIX.md`](docs/PROVIDER_API_MATRIX.md) for the hosting, backend, database, object-storage and queue provider matrix. See [`docs/SERVICE_INTEGRATION_CATALOG.md`](docs/SERVICE_INTEGRATION_CATALOG.md) for the 24-service project integration catalog, credential setup, verified account connections and remaining provisioning work.
