@@ -267,7 +267,7 @@ The phased implementation roadmap, task decomposition contract, interruption rec
 - **Status:** IN PROGRESS.
 - **Implementation:** PostgreSQL-backed fixed-window rate limiting for authenticated root and project bearer tokens; default 120 requests/minute, configurable from 1–10000.
 - **Response contract:** HTTP 429, stable `rate_limit_exceeded` error code and `Retry-After: 60`.
-- **Storage:** SHA-256 token fingerprints only; no raw bearer tokens are persisted.
+- **Storage:** SHA-256 token fingerprints only; no raw bearer tokens are persisted. Rows idle for 24 hours are pruned at startup and hourly.
 - **Proof required:** exact-head Rust CI, migration execution, container smoke test with 100 allowed requests followed by a 101st rejected request, and header/body assertions.
-- **Known limits:** unauthenticated IP throttling, identity/login/recovery controls, stale-row cleanup and operational alerting are not included in this increment.
+- **Known limits:** unauthenticated IP throttling, identity/login/recovery controls and operational alerting are not included in this increment.
 - **No production deployment or migration has been performed.**
