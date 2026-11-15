@@ -2,7 +2,7 @@ use std::{env, net::{IpAddr, SocketAddr}, str::FromStr, sync::Arc, time::{Durati
 
 use axum::{
     extract::{Path, Query, State},
-    http::{header::AUTHORIZATION, HeaderMap, StatusCode},
+    http::{header::{AUTHORIZATION, HeaderValue}, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Json, Router,
@@ -25,6 +25,7 @@ struct AppState {
     admin_token: Arc<String>,
     http: reqwest::Client,
     infisical: Option<InfisicalClient>,
+    rate_limit_per_minute: i64,
 }
 
 #[derive(Clone)]
@@ -116,7 +117,11 @@ impl std::error::Error for ApiError {}
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.0, Json(json!({"error": self.1}))).into_response()
+        let mut response = (self.0, Json(json!({"error": self.1}))).into_response();
+        if self.0 == StatusCode::TOO_MANY_REQUESTS {
+            response.headers_mut().insert("retry-after", HeaderValue::from_static("60"));
+        }
+        response
     }
 }
 
@@ -144,17 +149,32 @@ fn bearer(headers: &HeaderMap) -> ApiResult<&str> {
     Ok(token)
 }
 
+async fn enforce_rate_limit(state: &AppState, token_hash: &str) -> ApiResult<()> {
+    let row = sqlx::query(
+        "INSERT INTO api_rate_limits (token_hash, window_started_at, request_count, updated_at) VALUES ($1, date_trunc('minute', NOW()), 1, NOW()) ON CONFLICT (token_hash) DO UPDATE SET request_count = CASE WHEN api_rate_limits.window_started_at < date_trunc('minute', NOW()) THEN 1 ELSE api_rate_limits.request_count + 1 END, window_started_at = CASE WHEN api_rate_limits.window_started_at < date_trunc('minute', NOW()) THEN date_trunc('minute', NOW()) ELSE api_rate_limits.window_started_at END, updated_at = NOW() RETURNING request_count"
+    ).bind(token_hash).fetch_one(&state.db).await
+      .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "rate_limit_store_error"))?;
+    let count: i32 = row.try_get("request_count")
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "rate_limit_store_error"))?;
+    if i64::from(count) > state.rate_limit_per_minute {
+        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limit_exceeded"));
+    }
+    Ok(())
+}
+
 async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Principal> {
     let token = bearer(headers)?;
+    let digest = hex::encode(Sha256::digest(token.as_bytes()));
     if token.as_bytes().ct_eq(state.admin_token.as_bytes()).into() {
+        enforce_rate_limit(state, &digest).await?;
         return Ok(Principal { actor: "service-token".into(), role: "admin".into(), project_id: None, admin: true });
     }
-    let digest = hex::encode(Sha256::digest(token.as_bytes()));
     let row = sqlx::query(
         "SELECT id, project_id, role FROM project_tokens WHERE token_hash = $1 AND revoked_at IS NULL"
     ).bind(digest).fetch_optional(&state.db).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?
       .ok_or(ApiError(StatusCode::UNAUTHORIZED, "invalid_bearer_token"))?;
+    enforce_rate_limit(state, &digest).await?;
     let id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     let project_id: String = row.try_get("project_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     let role: String = row.try_get("role").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
@@ -1158,6 +1178,13 @@ async fn main() -> anyhow::Result<()> {
     }
     let admin_token = env::var("USH_API_TOKEN")?;
     if admin_token.len() < 32 { anyhow::bail!("USH_API_TOKEN must contain at least 32 characters"); }
+    let rate_limit_per_minute = match env::var("USH_RATE_LIMIT_PER_MINUTE") {
+        Ok(value) => value.parse::<i64>()?,
+        Err(_) => 120,
+    };
+    if !(1..=10_000).contains(&rate_limit_per_minute) {
+        anyhow::bail!("USH_RATE_LIMIT_PER_MINUTE must be between 1 and 10000");
+    }
     let db = PgPoolOptions::new().max_connections(20).acquire_timeout(Duration::from_secs(10)).connect(&database_url).await?;
     sqlx::migrate!("./rust-migrations").run(&db).await?;
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
@@ -1198,7 +1225,7 @@ async fn main() -> anyhow::Result<()> {
         ((None, None, None, None), "env") if runtime_environment != "production" => None,
         _ => anyhow::bail!("Infisical backend requires client ID, client secret, project ID and environment"),
     };
-    let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical };
+    let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical, rate_limit_per_minute };
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
