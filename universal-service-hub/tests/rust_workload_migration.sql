@@ -1,19 +1,19 @@
-\\set ON_ERROR_STOP on
-\\if :{?proof_commit_sha}
-\\else
-\\echo 'Missing exact commit SHA from the CI runner.'
-\\quit 2
-\\endif
-\\if :{?proof_output_sha256}
-\\else
-\\echo 'Missing Rust test output digest from the CI runner.'
-\\quit 2
-\\endif
-\\if :{?proof_run_id}
-\\else
-\\echo 'Missing GitHub Actions run ID.'
-\\quit 2
-\\endif
+\set ON_ERROR_STOP on
+\if :{?proof_commit_sha}
+\else
+\echo 'Missing exact commit SHA from the CI runner.'
+\quit 2
+\endif
+\if :{?proof_output_sha256}
+\else
+\echo 'Missing Rust test output digest from the CI runner.'
+\quit 2
+\endif
+\if :{?proof_run_id}
+\else
+\echo 'Missing GitHub Actions run ID.'
+\quit 2
+\endif
 BEGIN;
 
 INSERT INTO projects (id, name, allowed_capabilities)
