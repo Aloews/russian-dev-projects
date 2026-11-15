@@ -250,9 +250,5 @@ Baseline inspected on `main` at base commit `75d35c32c697c096986635e9e56ce419595
 - A CI run that is pending, queued, cancelled or has no completed jobs is not a passing test result.
 
 ### Status of this documentation increment
-- PR: https://github.com/Aloews/russian-dev-projects/pull/41
-- Candidate head at the time of this evidence review: `a8e26cfef1e72b0dbbdef7cc989b306ca72d00b8`.
-- Workflow run: https://github.com/Aloews/russian-dev-projects/actions/runs/43750951422
-- Observed workflow state: pending; no completed job evidence was returned during this review.
-- Therefore this increment is **pushed but not CI-verified**. It must not be described as tested, merged, deployed or as implementation of the security controls.
-- Re-run/reconcile CI on the final PR head and attach exact job results before merge.
+
+The documentation changes are tracked in [PR #41](https://github.com/Aloews/russian-dev-projects/pull/41). CI status is intentionally not hard-coded in this file because every push changes the PR head. Reviewers must inspect the live PR head SHA and its associated workflow/check results at review time. A green run for an earlier SHA is not evidence for a later revision.
