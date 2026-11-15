@@ -1099,6 +1099,93 @@ async fn upsert_provider(
     Ok(StatusCode::NO_CONTENT)
 }
 
+fn control_api_verification_request(
+    adapter: &str,
+    configured_base_url: Option<&str>,
+) -> ApiResult<(String, reqwest::Method, Option<Value>)> {
+    let result = match adapter {
+        "vercel" => ("https://api.vercel.com/v2/user".to_owned(), reqwest::Method::GET, None),
+        "github" => ("https://api.github.com/user".to_owned(), reqwest::Method::GET, None),
+        "gitlab" => ("https://gitlab.com/api/v4/user".to_owned(), reqwest::Method::GET, None),
+        "bitbucket" => ("https://api.bitbucket.org/2.0/user".to_owned(), reqwest::Method::GET, None),
+        "codeberg" => ("https://codeberg.org/api/v1/user".to_owned(), reqwest::Method::GET, None),
+        "gitea" | "forgejo" => {
+            let base = configured_base_url.ok_or(ApiError(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "self_hosted_git_base_url_required",
+            ))?;
+            let parsed = validate_https_url(base)?;
+            if parsed.path() != "/" {
+                return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_self_hosted_git_base_url"));
+            }
+            let endpoint = format!("{}/api/v1/user", base.trim_end_matches('/'));
+            (endpoint, reqwest::Method::GET, None)
+        }
+        "northflank" => (
+            "https://api.northflank.com/v1/teams?per_page=1".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "railway" => (
+            "https://backboard.railway.com/graphql/v2".to_owned(),
+            reqwest::Method::POST,
+            Some(json!({"query":"query { me { id name email } }"})),
+        ),
+        "cloudflare" => (
+            "https://api.cloudflare.com/client/v4/user/tokens/verify".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "netlify" => (
+            "https://api.netlify.com/api/v1/user".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "render" => (
+            "https://api.render.com/v1/owners?limit=1".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "digitalocean" => (
+            "https://api.digitalocean.com/v2/account".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "flyio" => (
+            "https://api.fly.io/graphql".to_owned(),
+            reqwest::Method::POST,
+            Some(json!({"query":"query { viewer { email } }"})),
+        ),
+        "supabase" => (
+            "https://api.supabase.com/v1/projects?limit=1".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "neon" => (
+            "https://console.neon.tech/api/v2/projects?limit=1".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "cloudflare_r2" => (
+            "https://api.cloudflare.com/client/v4".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "backblaze_b2" => (
+            "https://api.backblazeb2.com/b2api/v4/b2_authorize_account".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        _ => {
+            return Err(ApiError(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "unsupported_control_api_adapter",
+            ));
+        }
+    };
+    Ok(result)
+}
+
 async fn verify_integration(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1392,86 +1479,8 @@ async fn verify_integration(
         ));
     }
 
-    let (url, method, payload): (String, reqwest::Method, Option<Value>) = match adapter.as_str() {
-        "vercel" => ("https://api.vercel.com/v2/user".to_owned(), reqwest::Method::GET, None),
-        "github" => ("https://api.github.com/user".to_owned(), reqwest::Method::GET, None),
-        "gitlab" => ("https://gitlab.com/api/v4/user".to_owned(), reqwest::Method::GET, None),
-        "bitbucket" => ("https://api.bitbucket.org/2.0/user".to_owned(), reqwest::Method::GET, None),
-        "codeberg" => ("https://codeberg.org/api/v1/user".to_owned(), reqwest::Method::GET, None),
-        "gitea" | "forgejo" => {
-            let base = configured_base_url.as_deref().ok_or(ApiError(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "self_hosted_git_base_url_required",
-            ))?;
-            let parsed = validate_https_url(base)?;
-            if parsed.path() != "/" {
-                return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_self_hosted_git_base_url"));
-            }
-            let endpoint = format!("{}/api/v1/user", base.trim_end_matches('/'));
-            (endpoint, reqwest::Method::GET, None)
-        }
-        "northflank" => (
-            "https://api.northflank.com/v1/teams?per_page=1".to_owned(),
-            reqwest::Method::GET,
-            None,
-        ),
-        "railway" => (
-            "https://backboard.railway.com/graphql/v2".to_owned(),
-            reqwest::Method::POST,
-            Some(json!({"query":"query { me { id name email } }"})),
-        ),
-        "cloudflare" => (
-            "https://api.cloudflare.com/client/v4/user/tokens/verify".to_owned(),
-            reqwest::Method::GET,
-            None,
-        ),
-        "netlify" => (
-            "https://api.netlify.com/api/v1/user".to_owned(),
-            reqwest::Method::GET,
-            None,
-        ),
-        "render" => (
-            "https://api.render.com/v1/owners?limit=1".to_owned(),
-            reqwest::Method::GET,
-            None,
-        ),
-        "digitalocean" => (
-            "https://api.digitalocean.com/v2/account".to_owned(),
-            reqwest::Method::GET,
-            None,
-        ),
-        "flyio" => (
-            "https://api.fly.io/graphql".to_owned(),
-            reqwest::Method::POST,
-            Some(json!({"query":"query { viewer { email } }"})),
-        ),
-        "supabase" => (
-            "https://api.supabase.com/v1/projects?limit=1".to_owned(),
-            reqwest::Method::GET,
-            None,
-        ),
-        "neon" => (
-            "https://console.neon.tech/api/v2/projects?limit=1".to_owned(),
-            reqwest::Method::GET,
-            None,
-        ),
-        "cloudflare_r2" => (
-            "https://api.cloudflare.com/client/v4".to_owned(),
-            reqwest::Method::GET,
-            None,
-        ),
-        "backblaze_b2" => (
-            "https://api.backblazeb2.com/b2api/v4/b2_authorize_account".to_owned(),
-            reqwest::Method::GET,
-            None,
-        ),
-        _ => {
-            return Err(ApiError(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "unsupported_control_api_adapter",
-            ));
-        }
-    };
+    let (url, method, payload) =
+        control_api_verification_request(&adapter, configured_base_url.as_deref())?;
     let (request_url, auth_token, b2_credentials) = if adapter == "cloudflare_r2" {
         let config: Value = serde_json::from_str(&token).map_err(|_| {
             ApiError(
@@ -2531,6 +2540,50 @@ mod tests {
             assert!(git_ids.contains(expected), "missing Git provider {expected}");
         }
         assert_eq!(git["primary"], "github");
+    }
+
+    #[test]
+    fn git_and_deployment_adapters_resolve_to_fixed_api_endpoints() {
+        let cases = [
+            ("vercel", "https://api.vercel.com/v2/user"),
+            ("github", "https://api.github.com/user"),
+            ("gitlab", "https://gitlab.com/api/v4/user"),
+            ("bitbucket", "https://api.bitbucket.org/2.0/user"),
+            ("codeberg", "https://codeberg.org/api/v1/user"),
+        ];
+        for (adapter, expected) in cases {
+            let (url, method, body) =
+                control_api_verification_request(adapter, None).unwrap();
+            assert_eq!(url, expected);
+            assert_eq!(method, reqwest::Method::GET);
+            assert!(body.is_none());
+        }
+    }
+
+    #[test]
+    fn self_hosted_git_requires_safe_https_origin() {
+        assert!(
+            control_api_verification_request("gitea", None).is_err(),
+            "Gitea must not silently fall back to a public host"
+        );
+        let (url, method, _) = control_api_verification_request(
+            "forgejo",
+            Some("https://git.example.org"),
+        )
+        .unwrap();
+        assert_eq!(url, "https://git.example.org/api/v1/user");
+        assert_eq!(method, reqwest::Method::GET);
+        assert!(
+            control_api_verification_request(
+                "gitea",
+                Some("https://git.example.org/untrusted/path"),
+            )
+            .is_err()
+        );
+        assert!(
+            control_api_verification_request("gitea", Some("http://git.example.org"))
+                .is_err()
+        );
     }
 
     #[test]
