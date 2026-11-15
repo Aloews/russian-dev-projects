@@ -353,7 +353,7 @@ jobs:
           # real exact-SHA CI run and refuse to open a PR if any required check fails.
           head_sha="$(git rev-parse HEAD)"
           run_id=""
-          for attempt in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             run_id="$(gh run list --workflow universal-service-hub-ci.yml --branch "$BRANCH_NAME" --commit "$head_sha" --json databaseId --jq '.[0].databaseId // empty')"
             test -n "$run_id" && break
             sleep 5
