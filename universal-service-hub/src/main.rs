@@ -384,7 +384,7 @@ fn integration_catalog_data() -> Value {
                 "services": [
                     {"id":"github","name":"GitHub","role":"git_hosting","connection":"oauth_or_fine_grained_pat","adapter_supported":true,"project_provisioning":false},
                     {"id":"gitlab","name":"GitLab","role":"git_hosting","connection":"oauth_or_project_access_token","adapter_supported":true,"project_provisioning":false},
-                    {"id":"bitbucket","name":"Bitbucket","role":"git_hosting","connection":"oauth_or_app_password","adapter_supported":true,"project_provisioning":false},
+                    {"id":"bitbucket","name":"Bitbucket","role":"git_hosting","connection":"oauth_access_token","adapter_supported":true,"project_provisioning":false},
                     {"id":"gitea","name":"Gitea","role":"self_hosted_git","connection":"endpoint_and_access_token","adapter_supported":true,"project_provisioning":false},
                     {"id":"forgejo","name":"Forgejo","role":"self_hosted_git","connection":"endpoint_and_access_token","adapter_supported":true,"project_provisioning":false},
                     {"id":"codeberg","name":"Codeberg","role":"git_hosting","connection":"access_token","adapter_supported":true,"project_provisioning":false}
@@ -2531,6 +2531,29 @@ mod tests {
             assert!(git_ids.contains(expected), "missing Git provider {expected}");
         }
         assert_eq!(git["primary"], "github");
+    }
+
+    #[test]
+    fn advertised_api_integrations_have_real_verification_adapters() {
+        let catalog = integration_catalog_data();
+        for category in catalog["categories"].as_array().unwrap() {
+            for service in category["services"].as_array().unwrap() {
+                if service["adapter_supported"] == true {
+                    let id = service["id"].as_str().unwrap();
+                    assert!(
+                        is_control_api_adapter(id),
+                        "catalog advertises {id} without a verification adapter"
+                    );
+                }
+            }
+        }
+        for id in [
+            "vercel", "github", "gitlab", "bitbucket", "gitea", "forgejo", "codeberg",
+            "railway", "netlify", "cloudflare", "render", "flyio", "northflank",
+            "digitalocean", "supabase",
+        ] {
+            assert!(is_control_api_adapter(id), "missing integration adapter {id}");
+        }
     }
 
     #[test]
