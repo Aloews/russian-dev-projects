@@ -96,6 +96,7 @@ jobs:
           import json
           import os
           import re
+          import time
           import urllib.error
           import urllib.request
 
@@ -328,7 +329,7 @@ jobs:
       - name: Publish isolated candidate branch and open pull request
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_REF: ${{ inputs.base_ref }}
+          BASE_REF: ${{ inputs.base_ref || 'main' }}
         shell: bash
         run: |
           set -Eeuo pipefail
