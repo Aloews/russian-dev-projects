@@ -403,3 +403,5 @@ The objective is delivery of the intended, usable product. An agent, model, prov
 3. The checkpoint artifact exists after Codex and contains a patch/status matching the runner's final pre-review working tree, with no detected secret patterns.
 4. Claude reviews the actual combined diff; candidate scope checks pass; CI runs against the exact candidate SHA.
 5. Any timed-out/failed run retains its checkpoint artifact so a replacement agent can resume from evidence instead of restarting blindly.
+
+- **Isolation limitation:** current custom-role instructions ask subagents not to edit, but they inherit the primary Codex session's sandbox. This is not a hard read-only filesystem boundary. The main agent must inspect the full diff and reject unauthorized or out-of-scope edits. Do not claim technical write isolation until it is separately enforced and tested.
