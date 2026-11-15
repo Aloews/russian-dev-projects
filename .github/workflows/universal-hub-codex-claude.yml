@@ -14,6 +14,8 @@ run-name: Universal Hub coding run ${{ github.run_number }}
         required: true
         default: "Inspect the Universal Service Hub project map, architecture, code and tests. Select and implement the highest-priority complete production-readiness increment from the documented roadmap. Prefer a real end-to-end capability with persistence, authorization, tests and operational evidence over broad scaffolding. Update docs/MAP.md and relevant documentation. Do not deploy, provision paid resources, change production data or credentials."
         type: string
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write
@@ -25,14 +27,20 @@ concurrency:
 
 jobs:
   implement:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       github.actor == 'Aloews' &&
+       github.event.issue.pull_request != null &&
+       github.event.comment.body == '/hub run')
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
       STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
       STARIMG_CODEX_MODEL: ${{ vars.STARIMG_CODEX_MODEL }}
       STARIMG_CLAUDE_MODEL: ${{ vars.STARIMG_CLAUDE_MODEL }}
-      BASE_REF: ${{ inputs.base_ref }}
-      TASK_OBJECTIVE: ${{ inputs.objective }}
+      BASE_REF: ${{ inputs.base_ref || 'main' }}
+      TASK_OBJECTIVE: ${{ inputs.objective || 'Inspect the Universal Service Hub roadmap and implement the highest-priority complete production-readiness increment with tests and evidence.' }}
       BRANCH_NAME: agent/universal-hub-${{ github.run_id }}
 
     steps:
