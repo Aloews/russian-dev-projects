@@ -28,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
-      STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
       STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
       STARIMG_CODEX_MODEL: ${{ vars.STARIMG_CODEX_MODEL }}
       STARIMG_CLAUDE_MODEL: ${{ vars.STARIMG_CLAUDE_MODEL }}
@@ -45,6 +44,8 @@ jobs:
           persist-credentials: false
 
       - name: Validate baseline and Starimg secret
+        env:
+          STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -70,6 +71,8 @@ jobs:
 
       - name: Discover Starimg models and verify both tool-call protocols
         id: starimg
+        env:
+          STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
         shell: bash
         run: |
           python3 - <<'PY'
@@ -192,6 +195,7 @@ jobs:
           CODEX_MODEL: ${{ steps.starimg.outputs.codex_model }}
           STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
           STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
+          TASK_OBJECTIVE: ${{ inputs.objective }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -223,14 +227,16 @@ jobs:
 
           Do not commit, push, open a PR, merge or deploy. Leave all source, tests and docs changes in the working tree for the independent Claude Code pass.
           PROMPT
+          printf "\\nRequested objective: %s\\n" "$TASK_OBJECTIVE" >> "$RUNNER_TEMP/codex-task.md"
           codex exec --full-auto --cd "$GITHUB_WORKSPACE/universal-service-hub" --model "$CODEX_MODEL" "$(cat "$RUNNER_TEMP/codex-task.md")"
 
       - name: Run Claude Code CLI — independent review and repair
         timeout-minutes: 65
         env:
           CLAUDE_MODEL: ${{ steps.starimg.outputs.claude_model }}
-          ANTHROPIC_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
-          ANTHROPIC_API_KEY: ${{ secrets.STARIMG_API_KEY }}
+          STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
+          STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
+          TASK_OBJECTIVE: ${{ inputs.objective }}
           ANTHROPIC_MODEL: ${{ steps.starimg.outputs.claude_model }}
           ANTHROPIC_DEFAULT_OPUS_MODEL: ${{ steps.starimg.outputs.claude_model }}
           ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ steps.starimg.outputs.claude_model }}
@@ -251,8 +257,11 @@ jobs:
 
           Do not commit, push, open a PR, merge or deploy. Leave the final candidate in the working tree.
           PROMPT
+          printf "\\nRequested objective: %s\\n" "$TASK_OBJECTIVE" >> "$RUNNER_TEMP/claude-review.md"
           cd "$GITHUB_WORKSPACE/universal-service-hub"
-          claude -p --dangerously-skip-permissions --model "$CLAUDE_MODEL" --max-turns 60 --output-format text "$(cat "$RUNNER_TEMP/claude-review.md")"
+          ORIGIN="${STARIMG_BASE_URL%/}"
+          ORIGIN="${ORIGIN%/v1}"
+          ANTHROPIC_BASE_URL="$ORIGIN" ANTHROPIC_API_KEY="$STARIMG_API_KEY" claude -p --dangerously-skip-permissions --model "$CLAUDE_MODEL" --max-turns 60 --output-format text "$(cat "$RUNNER_TEMP/claude-review.md")"
 
       - name: Validate candidate scope and preserve evidence
         id: candidate
@@ -260,11 +269,12 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$(git rev-parse HEAD)" = "$BASE_SHA" || { echo "An agent committed unexpectedly; refusing publication." >&2; exit 2; }
+          git add -N universal-service-hub
           git diff --check
           git diff --quiet && { echo "Codex and Claude Code produced no source changes." >&2; exit 2; }
           while IFS= read -r path; do
             case "$path" in
-              universal-service-hub/src/*|universal-service-hub/app/*|universal-service-hub/tests/*|universal-service-hub/migrations/*|universal-service-hub/rust-migrations/*|universal-service-hub/scripts/*|universal-service-hub/docs/*|universal-service-hub/Cargo.toml|universal-service-hub/Cargo.lock|universal-service-hub/README.md|universal-service-hub/AGENTS.md|universal-service-hub/Dockerfile|universal-service-hub/entrypoint.sh|universal-service-hub/RUST_RUNTIME.md|universal-service-hub/pyproject.toml|universal-service-hub/alembic.ini|universal-service-hub/.dockerignore) ;;
+              universal-service-hub/src/*|universal-service-hub/app/*|universal-service-hub/tests/*|universal-service-hub/migrations/*|universal-service-hub/rust-migrations/*|universal-service-hub/scripts/*|universal-service-hub/docs/*|universal-service-hub/Cargo.toml|universal-service-hub/Cargo.lock|universal-service-hub/README.md|universal-service-hub/Dockerfile|universal-service-hub/entrypoint.sh|universal-service-hub/RUST_RUNTIME.md|universal-service-hub/pyproject.toml|universal-service-hub/alembic.ini|universal-service-hub/.dockerignore) ;;
               *) echo "Agent changed a path outside the Hub allowlist: $path" >&2; exit 2 ;;
             esac
           done < <(git diff --name-only)
