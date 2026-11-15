@@ -30,7 +30,7 @@ permissions:
 
 concurrency:
   group: universal-service-hub-${{ github.event.pull_request.head.ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   test:
