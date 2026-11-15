@@ -469,3 +469,15 @@ Initial implementation sequence:
 4. Add isolated benchmark templates for coding-agent throughput, accepted-task quality, CI duration and cost per accepted change.
 5. Publish findings as an issue or artifact; require human/reviewer approval before any adoption PR can change runtime dependencies or provider configuration.
 
+## Technology radar — first automated implementation increment
+
+- **Status:** IMPLEMENTED IN BRANCH; CI and first scheduled/live scan are NOT YET VERIFIED.
+- Scheduled workflow: `.github/workflows/technology-radar.yml`, weekly on Monday at 09:23 UTC and manually dispatchable.
+- Scanner: `.github/scripts/technology_radar.py`. It reads public GitHub release metadata from an explicit allowlist of ten repositories covering OpenAI SDK/agents, MCP, Transformers, Ollama, vLLM, LangGraph, Vercel AI SDK, Supabase and Neon.
+- The scanner stores release tags, publication dates, prerelease flags and official release URLs; compares against the prior snapshot; separates newly observed tags from the initial baseline; reports partial source failures; and fails if every configured source is unavailable.
+- Output: Markdown summary plus JSON evidence artifact, retained for 90 days. A GitHub Actions cache provides the prior comparison snapshot; cache eviction can reset the baseline, in which case the next scan explicitly marks itself as an initial baseline rather than falsely reporting new releases.
+- Regression tests cover initial-baseline semantics, new-tag detection, source failures and the WATCH-only decision boundary. The main Hub CI now runs these tests and actionlint on the scheduled workflow.
+- The scanner is discovery-only. It does not install packages, invoke discovered code, alter providers/models, open adoption PRs or touch production settings. All findings remain WATCH-only until a separately reviewed benchmark proves value.
+- **Current scope limitation:** this first increment monitors public GitHub release feeds only. It does not yet ingest vendor RSS/changelogs, CVE/security advisories, research papers, pricing changes or API deprecations; it does not yet benchmark latency/quality/cost or rank candidates for adoption.
+- **Acceptance still required:** CI must pass on the exact latest PR head; the workflow must execute once successfully against GitHub's API; the artifact must contain a valid snapshot; a subsequent run must prove comparison against the prior baseline. Until then, the scheduled radar is configured but not operationally verified.
+
