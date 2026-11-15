@@ -36,33 +36,55 @@ A catalog entry can be:
 
 Show the mode, available actions, permissions, price verification date and limitations before a user connects or launches a tool. Never use a "Connect" action for a directory-only entry.
 
-## Initial category map
+## Full-scope category map
 
-| Category | Jobs users should be able to complete | Example service families |
-|---|---|---|
-| AI, search & research | Ask, compare sources, research a topic, summarize web/files, manage knowledge | AI assistants, search engines, research agents, knowledge bases |
-| Documents & office | Write, edit, convert, sign and collaborate on documents, sheets and slides | Office suites, PDF editors, e-signatures |
-| Communication | Email, calendar, meetings, chat, transcription and follow-ups | Email, calendars, video meetings, team chat |
-| Projects & business | Plan work, track tasks, manage customers and support requests | Project trackers, CRM, help desks |
-| Design & whiteboards | Create graphics, diagrams, prototypes, maps and collaborative boards | Design suites, diagramming, whiteboards |
-| Image & video | Generate, edit, upscale, subtitle and publish visual media | Image/video editors and generators |
-| Audio & music | Generate original music, edit audio, speech and podcasts | Audio workstations, TTS/STT, music tools |
-| Developer workspace | Build, review, test, host and observe software | IDEs, code hosts, CI/CD, API testing, observability |
-| Automation & agents | Connect apps, trigger workflows and delegate repeatable work | iPaaS, workflow engines, agent platforms |
-| Cloud & backend | Deploy apps, run compute, manage databases, queues and storage | Hosting, BaaS, SQL, object storage, cache |
-| Data & analytics | Query data, build dashboards, forecast and report | BI, notebooks, warehouses, analytics |
-| Files & knowledge | Store, sync, search, share, convert and archive files | Cloud drives, DAM, knowledge management |
-| Finance & accounting | Budget, invoice, reconcile, track expenses and manage books | Accounting, invoicing, expense tools |
-| Commerce & payments | Sell, subscribe, collect payments and manage orders | Storefronts, payment processors, subscriptions |
-| Marketing & growth | Publish, email customers, manage campaigns and measure growth | SEO, social scheduling, email marketing, analytics |
-| Learning | Learn skills, practice languages and get tutoring | Courses, tutoring, flashcards, language apps |
-| Travel & mobility | Plan trips, compare routes, book stays and navigate | Maps, travel search, transport and lodging |
-| Local services | Find providers, compare offers and make reservations | Local search, marketplaces, appointment booking |
-| Health & wellness | Organize wellness information and access approved services | Fitness, wellness and patient-facing tools; strict privacy boundaries |
-| Security & identity | Manage identity, credentials, access and privacy | Password managers, SSO, MFA, secure sharing |
-| Legal & administration | Prepare forms, manage contracts and handle company administration | Contract lifecycle, e-signatures, compliance tools |
+The ambition is broad: the Hub should become a single entry point for digital life and work. Organize the catalog into these top-level domains and keep adding subcategories as the task benchmark reveals gaps.
 
-This is the initial taxonomy, not a claim that every category is already implemented. Add subcategories based on measured user jobs and search demand.
+1. **AI, search and knowledge:** assistants, research, web search, agents, knowledge bases and personal memory.
+2. **Email and communications:** email providers, unified inbox, calendar, contacts, chat, calls, video meetings, transcription and translation.
+3. **Social networks and public identity:** social profiles, creator pages, LinkedIn/professional identity, publishing, scheduling, analytics, cross-posting and reputation management. Use official OAuth and platform APIs; never collect social passwords.
+4. **Office and documents:** word processing, spreadsheets, presentations, PDF, notes, signatures, forms and collaboration.
+5. **Projects and business operations:** task management, project planning, CRM, ERP, HR, customer support, booking and internal knowledge.
+6. **Design and creative work:** graphics, UI/UX, 3D, diagrams, whiteboards, prototyping and publishing.
+7. **AI generation:** image, video, music, audio, speech, avatars, translation, editing and multimodal workflows.
+8. **Games and interactive entertainment:** PC/console/mobile game discovery, libraries, cloud gaming, game streaming, communities, servers, mods where permitted, achievements and parental controls.
+9. **Cinema, TV and streaming:** film/series discovery, watchlists, legal streaming catalogs, TV services, live channels, subscriptions and availability by region. Do not redistribute copyrighted streams.
+10. **Sports and fitness:** sports news/results, training, gyms, wearables, activity tracking, coaching, team/fan services and event tickets.
+11. **Style, fashion and beauty:** clothing catalogs, outfit planning, sizing, wardrobe, shopping, grooming, cosmetics, salons and personal styling.
+12. **Health and care:** health records where legally supported, appointments, telehealth discovery, pharmacies, wellness, mental health, nutrition and medical-device data. Apply strict consent, privacy and medical-safety boundaries.
+13. **Banking and personal finance:** account aggregation, balances, transactions, budgets, transfers where explicitly supported, cards, savings, loans, insurance, invoices, taxes and accounting. Use regulated Open Banking/PSD2 providers where available; default to read-only and never store bank passwords.
+14. **Crypto and Web3:** market data, portfolio tracking, wallets, exchanges, on-chain analytics, custody status, token research and tax records. Never request seed phrases/private keys or silently custody assets; transactions require explicit per-action confirmation and jurisdiction checks.
+15. **Payments and commerce:** payment providers, subscriptions, online stores, marketplaces, orders, delivery, refunds and loyalty programs.
+16. **Telecom and connectivity:** mobile operators, SIM/eSIM, plans, number management, mobile usage, top-ups, home broadband, Wi-Fi, connectivity tests and provider comparison. Account actions only through supported carrier integrations.
+17. **Operating systems and devices:** desktop/mobile OS ecosystems, app stores, device setup, backups, sync, remote support, device management, updates and cross-device workflows.
+18. **Networks and infrastructure:** domains, DNS, VPN, network monitoring, routers, firewalls, CDN, cloud, VPS, dedicated servers, containers, Kubernetes, databases, storage, backups and observability.
+19. **Developer tools and software delivery:** IDEs, code hosting, CI/CD, testing, issue tracking, package registries, API tools, security scanning and deployment.
+20. **Automation and integration:** workflow builders, iPaaS, webhooks, agents, RPA and event-driven systems.
+21. **Data and analytics:** BI, dashboards, notebooks, warehouses, forecasting, reports and data quality.
+22. **Files and personal knowledge:** cloud drives, sync, search, sharing, conversion, archives, e-signatures and digital asset management.
+23. **Learning and careers:** courses, tutoring, language learning, certificates, job search, CV, portfolios, recruiting and professional networking.
+24. **Travel and mobility:** maps, navigation, flights, trains, hotels, rentals, public transport, rides, parking and itineraries.
+25. **Local services and everyday life:** restaurants, groceries, delivery, home services, repair, appointments, events, tickets and reservations.
+26. **Home and utilities:** smart home, energy, water, household bills, property management, security systems and maintenance.
+27. **Legal, government and administration:** public services, identity, permits, company administration, contracts, compliance and document workflows.
+28. **Betting and casinos:** legal casino and betting discovery, licensed operator information, responsible-gambling tools, self-exclusion resources and account links. Gambling is age- and jurisdiction-restricted; no minors, no Hub-operated wagering, no credit, no pooled funds and no automated bets.
+29. **Safety, privacy and identity:** password managers, MFA, SSO, passkeys, secure sharing, privacy controls, fraud alerts and breach monitoring.
+30. **Other and emerging categories:** a flexible taxonomy for new useful internet services, with a review process rather than forcing every product into the wrong category.
+
+### Personal super-dashboard
+
+A user may optionally connect these domains into one personal dashboard: inbox, calendar, social/professional identity, subscriptions, bank/crypto portfolio summaries, telecom plans, devices, servers, media watchlists, games, health/fitness, wardrobe and travel. Each tile must show its data source, last sync time, permission level and whether actions are read-only or write-enabled. Sensitive connections are off by default and separately consented.
+
+### Sensitive-domain and regulated-service rules
+
+- **Banking:** use licensed Open Banking/PSD2 aggregators and consent screens; read-only by default. No bank-password collection. Payment/transfer actions require separate explicit confirmation, idempotency and audit.
+- **Crypto:** never ask for or store seed phrases/private keys in the Hub. Clearly distinguish custodial vs non-custodial providers. Signing and transfers require explicit transaction preview, per-action consent and chain/network verification.
+- **Gambling/casino:** show only licensed operators available in the user's jurisdiction, enforce age/region restrictions, provide responsible-gambling and self-exclusion information. The Hub must not take deposits, hold balances, place bets or optimize gambling behavior.
+- **Health:** isolate health data, use purpose-specific consent, minimize retention and avoid diagnostic/treatment claims beyond approved regulated capabilities.
+- **Social/email:** OAuth with narrow scopes, revocation, token rotation and clear separation between read, publish and send permissions.
+- **Streaming/games:** link to licensed catalogs and provider accounts; do not bypass DRM, paywalls, licensing or anti-cheat systems.
+- **Telecom and infrastructure:** distinguish comparison/discovery from account management; never claim plan changes, SIM activation, server provisioning or OS control without a verified provider API and live acceptance test.
+- **All categories:** enforce region, language, age, accessibility, privacy, data export and provider outage transparency.
 
 ## Catalog data contract
 
