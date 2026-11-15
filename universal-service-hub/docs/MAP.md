@@ -254,3 +254,8 @@ If a product has no applicable authentication, persistence, payment or external 
 - The workflow opens a candidate PR; it does not merge, deploy, provision paid infrastructure, mutate production data or rotate credentials.
 - The workflow is configured in this branch but has not yet been run against the live Starimg account. Model compatibility, billing availability and candidate quality remain unverified until the first run completes.
 - CI now actionlints the new workflow file when it changes.
+
+
+## Resumable execution and balanced media workloads
+
+The phased implementation roadmap, task decomposition contract, interruption recovery protocol, fair model scheduling and image-generation workstream are specified in [docs/EXECUTION_PLAN.md](./EXECUTION_PLAN.md). This is planned work, not implemented functionality. Prioritize the first A1–A2 persistence slice, then outbox/leases/checkpoints before enabling long-running or billable media jobs. Do not mark service-stop recovery or image-model balancing operational until their failure-injection and live provider tests pass.
