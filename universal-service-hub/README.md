@@ -142,10 +142,10 @@ The Hub does not blindly retry paid generation requests. Cross-provider failover
 See [ARCHITECTURE.md](./docs/ARCHITECTURE.md), [SECURITY.md](./docs/SECURITY.md), [OPERATIONS.md](./docs/OPERATIONS.md), and [INTEGRATION_PLAN.md](./docs/INTEGRATION_PLAN.md).
 
 
-## Autonomous Product Factory
+## Coding the Universal Service Hub
 
-The repository includes a Railway-independent, Fable-led multi-agent workflow. GitHub Actions provides ephemeral runners; Starimg is configured as the model gateway using the Anthropic Messages protocol, but live tool-call compatibility remains unverified. Read-only Opus, Sonnet and Haiku specialists challenge architecture, security and product quality.
+The Hub has a dedicated Codex CLI + Claude Code CLI workflow through Starimg. Codex is the primary writer using the OpenAI Responses API; Claude Code independently reviews and repairs the resulting diff using the Anthropic Messages API. The workflow discovers exact model IDs, verifies tool calling on both protocols, runs the agents sequentially, restricts changes to this Hub subtree and opens an isolated PR. GitHub CI validates the exact PR head. No automatic merge or production deployment is permitted. See [CODING_AGENTS.md](./docs/CODING_AGENTS.md).
 
-Implementation, verification, repair and publication run as separate jobs. Product code is tested without the Starimg key or a write token in its process environment. A fresh publication job receives only the verified patch artifact, rechecks branch SHAs and opens or updates a PR. The workflow never merges or deploys production. It requires Rust, frontend, container and Playwright browser E2E gates for the current AUREL target.
+## Product Factory for other projects
 
-Start **Autonomous Product Factory** manually from GitHub Actions, or comment exactly `/factory run` as repository owner on an issue or PR to start the default AUREL objective. Required repository secrets are `STARIMG_API_KEY` and `PRODUCT_FACTORY_GITHUB_TOKEN` (fine-grained, scoped to target repositories with Contents read/write and Pull requests read/write). Optional variables configure the Starimg Anthropic base URL and model ID. PR updates do not start paid model runs. See [PRODUCT_FACTORY.md](./docs/PRODUCT_FACTORY.md) for exact configuration, security boundaries, costs and release gates.
+The separate Autonomous Product Factory workflow orchestrates work in target product repositories. Its current provider/model route is distinct from the Hub self-development workflow; do not infer that Starimg Codex/Claude configuration has migrated the target-product pipeline. See [PRODUCT_FACTORY.md](./docs/PRODUCT_FACTORY.md) for its current execution and safety contract.
