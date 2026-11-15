@@ -198,6 +198,27 @@ Known gaps:
 
 These gaps prevent a claim that the Hub is currently production-ready or security-certified.
 
+## 7. Website Security Center and Development Roadmap
+
+The product website must expose these as real authenticated product pages, not merely link to repository documentation.
+
+### Security Center
+- Connected services: provider, account label, data categories, granted scopes, read/write capability, last sync, last verification and revoke/disconnect action.
+- Active sessions/devices, MFA/passkey status, recent security events and recovery options.
+- Data controls: export, retention, deletion requests and consent history.
+- Per-project access, members, agents and service identities.
+- Security alerts, provider incidents, permission changes and unusual activity.
+- Plain-language privacy explanations. Never display access tokens, refresh tokens, private keys, bank credentials or sensitive payloads.
+
+### Development Roadmap
+- Render S0–S7 from a versioned source of truth.
+- Show milestone status, dependencies, acceptance criteria, linked PRs, exact commit SHA, CI run, test evidence, known risks and change history.
+- Status is derived from verified CI/review/runtime evidence. Agent-authored summaries cannot mark a milestone VERIFIED.
+- Distinguish NOT STARTED, IN PROGRESS, BLOCKED and VERIFIED. Missing or inaccessible evidence must remain visibly unverified.
+- Keep an audit trail for roadmap changes and milestone transitions.
+
+**Acceptance:** responsive authenticated pages; users can inspect and revoke connections; no sensitive values appear in browser/API; roadmap links to immutable CI evidence and status changes are auditable.
+
 ## 7. Execution and evidence protocol
 
 For each PR:
