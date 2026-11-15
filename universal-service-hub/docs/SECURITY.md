@@ -24,6 +24,6 @@
 
 ## API token rate limiting — implementation in progress
 
-The Rust runtime applies a PostgreSQL-backed fixed-window limit per successfully authenticated bearer token. The default is 120 requests per token per UTC minute; operators may set `USH_RATE_LIMIT_PER_MINUTE` to an integer from 1 to 10000. The database stores only the SHA-256 token fingerprint, window start, request count and update timestamp. A rejected request returns HTTP 429 with `Retry-After: 60`.
+The Rust runtime applies a PostgreSQL-backed fixed-window limit per successfully authenticated bearer token. The default is 120 requests per token per UTC minute; operators may set `USH_RATE_LIMIT_PER_MINUTE` to an integer from 1 to 10000. The database stores only the SHA-256 token fingerprint, window start, request count and update timestamp. Fingerprint rows idle for 24 hours are pruned at startup and hourly. A rejected request returns HTTP 429 with `Retry-After: 60`.
 
-This control limits abuse of valid credentials and is shared across runtime instances through PostgreSQL. It does **not** replace edge/IP-based throttling for unauthenticated traffic, sign-in/recovery abuse controls, or a distributed abuse-detection system. Expired fingerprint-row cleanup and operational dashboards remain outstanding. Do not describe S1 as complete.
+This control limits abuse of valid credentials and is shared across runtime instances through PostgreSQL. It does **not** replace edge/IP-based throttling for unauthenticated traffic, sign-in/recovery abuse controls, or a distributed abuse-detection system. Operational dashboards remain outstanding. Do not describe S1 as complete.
