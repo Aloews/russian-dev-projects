@@ -171,7 +171,7 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
     }
     let row = sqlx::query(
         "SELECT id, project_id, role FROM project_tokens WHERE token_hash = $1 AND revoked_at IS NULL"
-    ).bind(digest).fetch_optional(&state.db).await
+    ).bind(&digest).fetch_optional(&state.db).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?
       .ok_or(ApiError(StatusCode::UNAUTHORIZED, "invalid_bearer_token"))?;
     enforce_rate_limit(state, &digest).await?;
