@@ -85,6 +85,7 @@ jobs:
           output_sha256="$(sha256sum "$RUNNER_TEMP/ush-rust-tests.log" | awk '{print $1}')"
           test "${#USH_VERIFIED_COMMIT_SHA}" -eq 40
           test "${#output_sha256}" -eq 64
+          echo "USH_VERIFIED_COMMIT_SHA=$USH_VERIFIED_COMMIT_SHA" >> "$GITHUB_ENV"
           echo "USH_RUST_TEST_OUTPUT_SHA256=$output_sha256" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
