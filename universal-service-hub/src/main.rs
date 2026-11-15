@@ -149,6 +149,13 @@ fn bearer(headers: &HeaderMap) -> ApiResult<&str> {
     Ok(token)
 }
 
+async fn prune_rate_limit_rows(db: &PgPool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "DELETE FROM api_rate_limits WHERE updated_at < NOW() - INTERVAL '24 hours'"
+    ).execute(db).await?;
+    Ok(result.rows_affected())
+}
+
 async fn enforce_rate_limit(state: &AppState, token_hash: &str) -> ApiResult<()> {
     let row = sqlx::query(
         "INSERT INTO api_rate_limits (token_hash, window_started_at, request_count, updated_at) VALUES ($1, date_trunc('minute', NOW()), 1, NOW()) ON CONFLICT (token_hash) DO UPDATE SET request_count = CASE WHEN api_rate_limits.window_started_at < date_trunc('minute', NOW()) THEN 1 ELSE api_rate_limits.request_count + 1 END, window_started_at = CASE WHEN api_rate_limits.window_started_at < date_trunc('minute', NOW()) THEN date_trunc('minute', NOW()) ELSE api_rate_limits.window_started_at END, updated_at = NOW() RETURNING request_count"
@@ -1187,6 +1194,20 @@ async fn main() -> anyhow::Result<()> {
     }
     let db = PgPoolOptions::new().max_connections(20).acquire_timeout(Duration::from_secs(10)).connect(&database_url).await?;
     sqlx::migrate!("./rust-migrations").run(&db).await?;
+    prune_rate_limit_rows(&db).await?;
+    let cleanup_db = db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match prune_rate_limit_rows(&cleanup_db).await {
+                Ok(removed) if removed > 0 => info!(removed, "Expired API rate-limit fingerprints pruned"),
+                Ok(_) => {}
+                Err(err) => error!(error = %err, "Failed to prune expired API rate-limit fingerprints"),
+            }
+        }
+    });
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
     let runtime_environment = env::var("USH_ENVIRONMENT").unwrap_or_else(|_| "development".into());
     let secret_backend = env::var("USH_SECRET_BACKEND").unwrap_or_else(|_| {
