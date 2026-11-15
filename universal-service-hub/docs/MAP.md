@@ -327,3 +327,15 @@ These are open implementation objectives, not completed features. No public deve
 - Source inspection was limited to the current main-branch Rust entry point and repository files. Source presence is not runtime or penetration-test evidence.
 - CI evidence must be checked against the live PR head at review time. Earlier runs targeted superseded commits and were pending with no completed job evidence; none of them is a passing verification. Do not copy historical run IDs or SHAs forward as current proof.
 - Overall security programme status remains **NOT STARTED as a complete programme**. No claim of security certification, production readiness, public portal availability or cross-platform app availability is made.
+
+
+## Security implementation — first runtime increment
+
+### S1 API credential abuse control
+- **Status:** IN PROGRESS.
+- **Implementation:** PostgreSQL-backed fixed-window rate limiting for authenticated root and project bearer tokens; default 120 requests/minute, configurable from 1–10000.
+- **Response contract:** HTTP 429, stable `rate_limit_exceeded` error code and `Retry-After: 60`.
+- **Storage:** SHA-256 token fingerprints only; no raw bearer tokens are persisted. Rows idle for 24 hours are pruned at startup and hourly.
+- **Proof required:** exact-head Rust CI, migration execution, container smoke test with 100 allowed requests followed by a 101st rejected request, and header/body assertions.
+- **Known limits:** unauthenticated IP throttling, identity/login/recovery controls and operational alerting are not included in this increment.
+- **No production deployment or migration has been performed.**
