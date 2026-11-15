@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS job_steps (
     ordinal INTEGER NOT NULL CHECK (ordinal >= 0), objective VARCHAR(200) NOT NULL, capability VARCHAR(120) NOT NULL,
     dependencies JSONB NOT NULL DEFAULT '[]'::jsonb, state VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','ready','leased','running','checkpointed','succeeded','retry_wait','submission_unknown','failed_permanent','cancelled')),
     input_ref JSONB NOT NULL DEFAULT '{}'::jsonb, output_ref JSONB, acceptance JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (job_id, ordinal), UNIQUE (project_id, id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (job_id, ordinal), UNIQUE (project_id, id), UNIQUE (project_id, job_id, id),
     FOREIGN KEY (project_id, job_id) REFERENCES jobs(project_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS ix_job_steps_ready ON job_steps(project_id, state, created_at);
@@ -32,17 +32,17 @@ CREATE TABLE IF NOT EXISTS job_attempts (
     id VARCHAR(36) PRIMARY KEY, job_id VARCHAR(36) NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, step_id VARCHAR(36) NOT NULL REFERENCES job_steps(id) ON DELETE CASCADE, project_id VARCHAR(80) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0), worker_id VARCHAR(160), provider_id VARCHAR(80), model VARCHAR(160), fencing_token BIGINT,
     state VARCHAR(32) NOT NULL DEFAULT 'started' CHECK (state IN ('started','succeeded','failed','submission_unknown')), failure_class VARCHAR(32) CHECK (failure_class IS NULL OR failure_class IN ('transient','permanent','billing_ambiguous')), failure_code VARCHAR(120), provider_request_id VARCHAR(200), billable BOOLEAN NOT NULL DEFAULT FALSE,
-    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), finished_at TIMESTAMPTZ, UNIQUE (step_id, attempt_number), UNIQUE (project_id, id), FOREIGN KEY (project_id, step_id) REFERENCES job_steps(project_id, id) ON DELETE CASCADE
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), finished_at TIMESTAMPTZ, UNIQUE (step_id, attempt_number), UNIQUE (project_id, id), FOREIGN KEY (project_id, job_id, step_id) REFERENCES job_steps(project_id, job_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS job_checkpoints (
     id VARCHAR(36) PRIMARY KEY, job_id VARCHAR(36) NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, step_id VARCHAR(36) NOT NULL REFERENCES job_steps(id) ON DELETE CASCADE, project_id VARCHAR(80) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    version INTEGER NOT NULL CHECK (version > 0), output_ref JSONB NOT NULL, checksum_sha256 VARCHAR(64) NOT NULL, schema_version INTEGER NOT NULL CHECK (schema_version > 0), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (step_id, version), UNIQUE (project_id, id), FOREIGN KEY (project_id, step_id) REFERENCES job_steps(project_id, id) ON DELETE CASCADE
+    version INTEGER NOT NULL CHECK (version > 0), output_ref JSONB NOT NULL, checksum_sha256 VARCHAR(64) NOT NULL, schema_version INTEGER NOT NULL CHECK (schema_version > 0), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (step_id, version), UNIQUE (project_id, id), FOREIGN KEY (project_id, job_id, step_id) REFERENCES job_steps(project_id, job_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS job_artifacts (
-    id VARCHAR(36) PRIMARY KEY, job_id VARCHAR(36) NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, step_id VARCHAR(36) REFERENCES job_steps(id) ON DELETE SET NULL, project_id VARCHAR(80) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    object_key VARCHAR(500) NOT NULL, mime_type VARCHAR(160) NOT NULL, byte_size BIGINT NOT NULL CHECK (byte_size >= 0), checksum_sha256 VARCHAR(64) NOT NULL, access_policy VARCHAR(32) NOT NULL DEFAULT 'project' CHECK (access_policy IN ('project','private')), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (project_id, object_key), UNIQUE (project_id, id), FOREIGN KEY (project_id, step_id) REFERENCES job_steps(project_id, id) ON DELETE RESTRICT
+    id VARCHAR(36) PRIMARY KEY, job_id VARCHAR(36) NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, step_id VARCHAR(36), project_id VARCHAR(80) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    object_key VARCHAR(500) NOT NULL, mime_type VARCHAR(160) NOT NULL, byte_size BIGINT NOT NULL CHECK (byte_size >= 0), checksum_sha256 VARCHAR(64) NOT NULL, access_policy VARCHAR(32) NOT NULL DEFAULT 'project' CHECK (access_policy IN ('project','private')), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (project_id, object_key), UNIQUE (project_id, id), FOREIGN KEY (project_id, job_id, step_id) REFERENCES job_steps(project_id, job_id, id) ON DELETE SET NULL (step_id)
 );
 
 CREATE TABLE IF NOT EXISTS job_leases (
@@ -50,6 +50,6 @@ CREATE TABLE IF NOT EXISTS job_leases (
 );
 
 CREATE TABLE IF NOT EXISTS outbox_events (
-    id VARCHAR(36) PRIMARY KEY, project_id VARCHAR(80) NOT NULL REFERENCES projects(id) ON DELETE CASCADE, job_id VARCHAR(36) REFERENCES jobs(id) ON DELETE CASCADE, event_type VARCHAR(80) NOT NULL, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), published_at TIMESTAMPTZ, UNIQUE (project_id, id)
+    id VARCHAR(36) PRIMARY KEY, project_id VARCHAR(80) NOT NULL REFERENCES projects(id) ON DELETE CASCADE, job_id VARCHAR(36), event_type VARCHAR(80) NOT NULL, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), published_at TIMESTAMPTZ, UNIQUE (project_id, id), FOREIGN KEY (project_id, job_id) REFERENCES jobs(project_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS ix_outbox_unpublished ON outbox_events(created_at) WHERE published_at IS NULL;
