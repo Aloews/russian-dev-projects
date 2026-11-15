@@ -405,3 +405,67 @@ The objective is delivery of the intended, usable product. An agent, model, prov
 5. Any timed-out/failed run retains its checkpoint artifact so a replacement agent can resume from evidence instead of restarting blindly.
 
 - **Isolation limitation:** current custom-role instructions ask subagents not to edit, but they inherit the primary Codex session's sandbox. This is not a hard read-only filesystem boundary. The main agent must inspect the full diff and reject unauthorized or out-of-scope edits. Do not claim technical write isolation until it is separately enforced and tested.
+
+## Continuous technology radar and delivery-acceleration system
+
+### Objective
+
+Continuously discover and evaluate technologies that can materially improve product quality, security, delivery speed, reliability or total cost across the Universal Service Hub and its Product Factory. This is an evidence-driven engineering capability, not a news feed and not permission to adopt every new tool.
+
+### Monitoring cadence and sources
+
+- **Status:** SPECIFIED; automated scheduled monitoring is NOT YET IMPLEMENTED or VERIFIED.
+- Run a lightweight discovery scan weekly. Run a focused review immediately when a critical security advisory affects a used dependency/provider, a material API/model deprecation is announced, or a current delivery workflow repeatedly misses its acceptance/time budget.
+- Prefer primary sources: official release notes and changelogs, vendor documentation and status pages, GitHub releases/security advisories, standards bodies, benchmark datasets and reproducible research. Community discussion may reveal candidates but is not sufficient evidence for adoption.
+- Track relevant areas: coding and reasoning models; agent orchestration and tool protocols; inference gateways and local models; testing/browser automation; build/CI and caching; databases, queues and storage; deployment/runtime platforms; observability/security tooling; image, video, music and voice generation; cross-platform clients.
+- Record source URL, publication/release date, checked date, version/model identifier and the exact capability being evaluated. Detect stale, duplicate and superseded entries.
+
+### Evaluation and prioritization
+
+For each candidate, compare it with the current production or workflow baseline using a small, relevant benchmark:
+- measurable task completion time and end-to-end lead time;
+- first-pass acceptance rate, defect/regression rate and rework;
+- quality against explicit product acceptance criteria;
+- total cost per accepted outcome, including tokens, retries, CI/runtime and human review;
+- reliability, rate limits, context/tool compatibility and failure recovery;
+- security posture, data residency/retention, permissions, supply-chain risk and vendor lock-in;
+- integration effort, operational burden and rollback path.
+
+Classify each candidate as **ADOPT**, **TRIAL**, **WATCH**, or **REJECT**. Every recommendation must state the baseline, evidence, uncertainty, estimated cost, risks, compatibility, expected measurable gain and a falsifiable acceptance threshold. Do not compare models using marketing claims or raw tokens/second alone; measure accepted product outcomes on representative tasks.
+
+### Safe experiment and adoption workflow
+
+1. Discover a candidate and capture its authoritative sources and version.
+2. Check licensing, terms, privacy/data handling, security advisories, API/tool protocol, account availability, regional limits and actual pricing.
+3. Define a bounded benchmark and acceptance threshold before the trial.
+4. Run in an isolated branch, sandbox or staging environment with synthetic/non-sensitive data and a strict spend/time ceiling.
+5. Compare against the current baseline; retain raw test outputs, exact commit/configuration, run IDs and reproducible commands.
+6. Have an independent reviewer inspect the results and security implications.
+7. If the threshold is met, create a scoped implementation PR and update the relevant architecture/integration map. Keep the previous path available for rollback.
+8. If evidence is weak or the threshold is missed, reject or keep watching; record why and when to reassess.
+
+- No automatic production changes, credential sharing, new paid subscriptions, provider switching, dependency upgrades or data transfers based only on a discovery result.
+- Never send private source code, customer data, secrets or production prompts to a candidate provider until its data handling and authorization are verified.
+- A scheduled scan, generated report, model catalogue entry or passing microbenchmark is not proof of faster product delivery. Only end-to-end results on representative accepted tasks count.
+- The radar must prioritize technologies that remove a measured bottleneck in the current roadmap. Avoid adding tools, agents or services that increase coordination/cost without improving the delivered product.
+
+### Required record and success criteria
+
+Maintain a dated technology register with: candidate, category, source/version, discovery date, evaluation owner/agent, current baseline, benchmark, result, cost, risk, decision, follow-up date and evidence links. Add accepted changes and deferred opportunities to this project map; do not silently overwrite previous decisions.
+
+The system is operational only when:
+- scheduled scans execute reliably and their run history is inspectable;
+- source freshness and duplicate detection are tested;
+- candidate scoring is reproducible from recorded evidence;
+- at least one isolated benchmark compares a candidate against the existing baseline;
+- recommendations link to reproducible test evidence and a reviewable PR/issue;
+- false positives, stale recommendations and failed scans are surfaced;
+- no scan can directly mutate production configuration or spend.
+
+Initial implementation sequence:
+1. Add a scheduled GitHub Actions discovery workflow and a versioned technology register.
+2. Add source adapters for official GitHub releases/security advisories and selected vendor/model changelogs; keep source allowlists explicit.
+3. Add relevance filters and candidate scoring tied to the current Hub/Product Factory bottlenecks.
+4. Add isolated benchmark templates for coding-agent throughput, accepted-task quality, CI duration and cost per accepted change.
+5. Publish findings as an issue or artifact; require human/reviewer approval before any adoption PR can change runtime dependencies or provider configuration.
+
