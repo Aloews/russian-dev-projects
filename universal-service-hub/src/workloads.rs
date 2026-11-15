@@ -129,6 +129,42 @@ pub struct CheckpointContract {
     pub schema_version: u16,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationSource {
+    Ci,
+    RuntimeProbe,
+    Artifact,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct VerificationEvidence {
+    pub source: VerificationSource,
+    pub verifier_id: String,
+    pub command: String,
+    pub exit_code: i32,
+    pub passed: bool,
+    pub commit_sha: String,
+    pub output_sha256: String,
+    pub evidence_ref: Value,
+}
+
+impl VerificationEvidence {
+    pub fn is_valid(&self) -> bool {
+        let valid_hex = |value: &str, expected_len: usize| {
+            value.len() == expected_len
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        };
+        !self.verifier_id.trim().is_empty()
+            && !self.command.trim().is_empty()
+            && self.passed == (self.exit_code == 0)
+            && valid_hex(&self.commit_sha, 40)
+            && valid_hex(&self.output_sha256, 64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +271,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn completion_evidence_requires_real_verifier_and_successful_command() {
+        let evidence = VerificationEvidence {
+            source: VerificationSource::RuntimeProbe,
+            verifier_id: "ci-runner".into(),
+            command: "cargo test --all-targets".into(),
+            exit_code: 0,
+            passed: true,
+            commit_sha: "a".repeat(40),
+            output_sha256: "b".repeat(64),
+            evidence_ref: json!({"run_id":"123"}),
+        };
+        assert!(evidence.is_valid());
+
+        let mut failed = evidence.clone();
+        failed.exit_code = 1;
+        assert!(!failed.is_valid());
+
+        let mut malformed_digest = evidence.clone();
+        malformed_digest.output_sha256 = "not-a-digest".into();
+        assert!(!malformed_digest.is_valid());
+
+        let mut no_verifier = evidence.clone();
+        no_verifier.verifier_id.clear();
+        assert!(!no_verifier.is_valid());
+    }
+
+    #[test]
+    fn agent_report_is_not_a_verification_source() {
+        let payload = json!({
+            "source": "agent_report",
+            "verifier_id": "coding-agent",
+            "command": "I completed the task",
+            "exit_code": 0,
+            "passed": true,
+            "commit_sha": "a".repeat(40),
+            "output_sha256": "b".repeat(64),
+            "evidence_ref": {}
+        });
+        assert!(serde_json::from_value::<VerificationEvidence>(payload).is_err());
     }
 
     #[test]
