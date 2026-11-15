@@ -4,11 +4,15 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Current status
 
-**Rust control plane implemented; production activation remains incomplete.** The production container uses an Axum/Tokio/SQLx Rust binary. It includes PostgreSQL-backed project/token management, provider registry/selection, health probes, audit, AI chat routing and read-only verification adapters for hosting, database, storage, PostgreSQL and Redis services. Provider credentials resolve through Infisical references. Private database/Redis hosts are rejected unless exact DNS names are explicitly allowlisted with `USH_ALLOWED_PRIVATE_HOSTS`. The legacy FastAPI implementation remains a compatibility/reference target. The provider checks are not live connections until credentials are added and verified. Deployment/resource mutation, object upload/download, queue orchestration, budgets/quotas, production rollout and live Infisical/provider smoke tests remain outstanding.
+**Rust control plane implemented; production activation remains incomplete.** The production container uses an Axum/Tokio/SQLx Rust binary. It includes PostgreSQL-backed project/token management, provider registry/selection, health probes, audit, AI chat routing and read-only verification adapters for hosting, database, storage, PostgreSQL and Redis services. It now also applies the first durable workload contract migration (jobs, DAG steps, attempts, checkpoints, artifacts, leases and outbox) with project-scoped idempotency and billing-ambiguity states. Provider credentials resolve through Infisical references. Private database/Redis hosts are rejected unless exact DNS names are explicitly allowlisted with `USH_ALLOWED_PRIVATE_HOSTS`. The legacy FastAPI implementation remains a compatibility/reference target. The provider checks are not live connections until credentials are added and verified. Public workload APIs, queue orchestration, workers, budgets/quotas, web control center, music/video adapters, production rollout and live Infisical/provider smoke tests remain outstanding.
+
+## Product direction
+
+The customer-facing goal is a universal aggregator of useful internet services, targeting 80% coverage of high-value user jobs (measured by a reproducible task benchmark, not by raw website count). The product catalog is distinct from the infrastructure provider registry. See [UNIVERSAL_SERVICE_AGGREGATOR.md](docs/UNIVERSAL_SERVICE_AGGREGATOR.md) for the category map, catalog contract, user experience, delivery sequence and acceptance tests. This marketplace is a product direction, not a claim that the full catalog UI or cross-service integrations are already implemented.
 
 ## Provider integration matrix
 
-See [`docs/PROVIDER_API_MATRIX.md`](docs/PROVIDER_API_MATRIX.md) for the requested hosting, backend, database, object-storage and queue provider matrix, current verification coverage and remaining resource-management work.
+See [`docs/PROVIDER_API_MATRIX.md`](docs/PROVIDER_API_MATRIX.md) for the hosting, backend, database, object-storage and queue provider matrix. See [`docs/SERVICE_INTEGRATION_CATALOG.md`](docs/SERVICE_INTEGRATION_CATALOG.md) for the 24-service project integration catalog, credential setup, verified account connections and remaining provisioning work.
 
 ## Run locally
 
@@ -34,7 +38,8 @@ Administrative endpoints require `Authorization: Bearer $USH_API_TOKEN`. This ro
 Provider management:
 - `GET /v1/providers` — list providers
 - `GET /v1/providers/{provider_id}/models` — discover current model IDs from the provider API
-- `POST /v1/integrations/{provider_id}/verify` — verify read-only account/API access for Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Storage, Neon, Cloudflare R2, Backblaze B2, generic S3-compatible storage, PostgreSQL and Redis
+- `GET /v1/integrations/catalog` — authenticated catalog of frontend hosting, application platforms, backend services and Git hosting (24 options, including five alternatives each for Vercel, Railway, Supabase and GitHub)
+- `POST /v1/integrations/{provider_id}/verify` — verify read-only account/API access for Vercel, GitHub, GitLab, Bitbucket OAuth, Gitea, Forgejo, Codeberg, Northflank, Railway, Cloudflare, Netlify, Render, DigitalOcean, Fly.io, Supabase Management API and Storage, Neon, Cloudflare R2, Backblaze B2, generic S3-compatible storage, PostgreSQL and Redis
 - `GET /v1/audit?limit=50` — list recent audit events (maximum 100)
 - `POST /v1/projects` — register a project and its allowed capabilities/providers
 - `GET /v1/projects` — list registered projects

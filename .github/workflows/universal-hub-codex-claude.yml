@@ -117,7 +117,7 @@ jobs:
                   except urllib.error.HTTPError as exc:
                       raise RuntimeError(f"HTTP {exc.code} from Starimg endpoint {url.rsplit('/', 1)[-1]}") from None
                   except (TimeoutError, ConnectionError, urllib.error.URLError, OSError) as exc:
-                      if attempt == 2:
+                      if _ == 2:
                           raise RuntimeError(f"Starimg request failed after bounded retries: {type(exc).__name__}") from None
                       time.sleep(3 * (attempt + 1))
                   except Exception as exc:

@@ -73,11 +73,20 @@ jobs:
         working-directory: .
         run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' .github/actions/product-factory-agent/action.yml .github/actions/product-factory-qwen-agent/action.yml .github/actions/product-factory-verify/action.yml
       - name: Rust format
-        run: cargo fmt --all
+        run: cargo fmt --all -- --check
       - name: Rust lint
         run: cargo clippy --all-targets -- -D warnings
       - name: Rust tests
-        run: cargo test
+        env:
+          USH_VERIFIED_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -Eeuo pipefail
+          cargo test --all-targets 2>&1 | tee "$RUNNER_TEMP/ush-rust-tests.log"
+          output_sha256="$(sha256sum "$RUNNER_TEMP/ush-rust-tests.log" | awk '{print $1}')"
+          test "${#USH_VERIFIED_COMMIT_SHA}" -eq 40
+          test "${#output_sha256}" -eq 64
+          echo "USH_VERIFIED_COMMIT_SHA=$USH_VERIFIED_COMMIT_SHA" >> "$GITHUB_ENV"
+          echo "USH_RUST_TEST_OUTPUT_SHA256=$output_sha256" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -213,3 +222,20 @@ jobs:
             exit 1
           fi
           grep -q "Infisical backend requires" /tmp/ush-production-guard.log
+
+      - name: Rust workload migration integrity proof
+        working-directory: universal-service-hub
+        run: |
+          set -Eeuo pipefail
+          test -n "$USH_RUST_TEST_OUTPUT_SHA256"
+          docker run --rm --network host \
+            -v "$PWD/tests/rust_workload_migration.sql:/tmp/rust_workload_migration.sql:ro" \
+            postgres:16-alpine \
+            psql "postgresql://ush:ush-test-password@127.0.0.1:5432/ush_test" \
+              -v ON_ERROR_STOP=1 \
+              -v proof_commit_sha="$USH_VERIFIED_COMMIT_SHA" \
+              -v proof_output_sha256="$USH_RUST_TEST_OUTPUT_SHA256" \
+              -v proof_run_id="$GITHUB_RUN_ID" \
+              -v proof_run_attempt="$GITHUB_RUN_ATTEMPT" \
+              -v proof_run_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              -f /tmp/rust_workload_migration.sql
