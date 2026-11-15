@@ -1392,12 +1392,12 @@ async fn verify_integration(
         ));
     }
 
-    let (url, method, payload) = match adapter.as_str() {
-        "vercel" => ("https://api.vercel.com/v2/user", reqwest::Method::GET, None),
-        "github" => ("https://api.github.com/user", reqwest::Method::GET, None),
-        "gitlab" => ("https://gitlab.com/api/v4/user", reqwest::Method::GET, None),
-        "bitbucket" => ("https://api.bitbucket.org/2.0/user", reqwest::Method::GET, None),
-        "codeberg" => ("https://codeberg.org/api/v1/user", reqwest::Method::GET, None),
+    let (url, method, payload): (String, reqwest::Method, Option<Value>) = match adapter.as_str() {
+        "vercel" => ("https://api.vercel.com/v2/user".to_owned(), reqwest::Method::GET, None),
+        "github" => ("https://api.github.com/user".to_owned(), reqwest::Method::GET, None),
+        "gitlab" => ("https://gitlab.com/api/v4/user".to_owned(), reqwest::Method::GET, None),
+        "bitbucket" => ("https://api.bitbucket.org/2.0/user".to_owned(), reqwest::Method::GET, None),
+        "codeberg" => ("https://codeberg.org/api/v1/user".to_owned(), reqwest::Method::GET, None),
         "gitea" | "forgejo" => {
             let base = configured_base_url.as_deref().ok_or(ApiError(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -1408,8 +1408,7 @@ async fn verify_integration(
                 return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_self_hosted_git_base_url"));
             }
             let endpoint = format!("{}/api/v1/user", base.trim_end_matches('/'));
-            let leaked_url = Box::leak(endpoint.into_boxed_str());
-            (leaked_url, reqwest::Method::GET, None)
+            (endpoint, reqwest::Method::GET, None)
         }
         "northflank" => (
             "https://api.northflank.com/v1/teams?per_page=1",
