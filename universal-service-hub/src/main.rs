@@ -334,12 +334,8 @@ async fn audit(
     }
 }
 
-async fn integration_catalog(
-    headers: HeaderMap,
-    State(state): State<AppState>,
-) -> ApiResult<Json<Value>> {
-    authenticate(&state, &headers).await?;
-    Ok(Json(json!({
+fn integration_catalog_data() -> Value {
+    json!({
         "version": 1,
         "categories": [
             {
@@ -395,7 +391,15 @@ async fn integration_catalog(
                 ]
             }
         ]
-    })))
+    }
+}
+
+async fn integration_catalog(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> ApiResult<Json<Value>> {
+    authenticate(&state, &headers).await?;
+    Ok(Json(integration_catalog_data()))
 }
 
 async fn healthz() -> Json<Value> {
@@ -2443,6 +2447,32 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integration_catalog_contains_four_groups_and_five_alternatives_each() {
+        let catalog = integration_catalog_data();
+        let categories = catalog["categories"].as_array().unwrap();
+        assert_eq!(categories.len(), 4);
+        for category in categories {
+            let services = category["services"].as_array().unwrap();
+            assert_eq!(services.len(), 6, "{}", category["id"]);
+            let ids: std::collections::HashSet<&str> = services
+                .iter()
+                .map(|service| service["id"].as_str().unwrap())
+                .collect();
+            assert_eq!(ids.len(), 6, "duplicate service in {}", category["id"]);
+        }
+        let git = categories.iter().find(|c| c["id"] == "git_hosting").unwrap();
+        let git_ids: std::collections::HashSet<&str> = git["services"]
+            .as_array().unwrap()
+            .iter()
+            .map(|service| service["id"].as_str().unwrap())
+            .collect();
+        for expected in ["github", "gitlab", "bitbucket", "gitea", "forgejo", "codeberg"] {
+            assert!(git_ids.contains(expected), "missing Git provider {expected}");
+        }
+        assert_eq!(git["primary"], "github");
+    }
 
     #[test]
     fn bearer_parser_accepts_only_long_bearer_tokens() {
