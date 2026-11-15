@@ -38,7 +38,7 @@ Codex uses a named Starimg provider, wire_api = responses, and the STARIMG_API_K
 
 ## Execution and safety
 
-- Start the workflow manually from GitHub Actions: Universal Hub — Codex + Claude Code.
+- Start the workflow manually from GitHub Actions: Universal Hub — Codex + Claude Code. After the workflow is merged to the default branch, the repository owner can also comment exactly /hub run on a PR to start the default objective.
 - Choose a current base branch and a bounded engineering objective.
 - Codex writes first. Claude Code then inspects the real diff and can repair it.
 - The two agents run sequentially on one ephemeral GitHub-hosted runner to avoid concurrent edits.
