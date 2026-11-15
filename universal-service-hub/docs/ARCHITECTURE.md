@@ -4,6 +4,10 @@
 
 The Hub is a control plane, not a proxy for arbitrary provider traffic. It owns provider metadata, eligibility decisions, policy evaluation and audit history. Workload data and application databases remain with the projects unless a migration is explicitly planned and validated.
 
+## Workload persistence boundary
+
+The Rust runtime now applies the A1/A2 contract migration for project-scoped jobs, DAG steps, attempts, checkpoints, artifacts, leases and outbox events. Idempotency is unique per project, and composite project/job-step foreign keys prevent records from crossing tenants. `submission_unknown` and `billing_ambiguous` are durable states so an uncertain billable submission is never retried blindly. This increment defines contracts and storage only; there is no public submit API, worker, queue publisher, object store, budget reservation, or media provider dispatch yet.
+
 ## Current runtime
 
 - Rust Axum/Tokio exposes the production HTTP API; the Docker image starts the Rust binary.
