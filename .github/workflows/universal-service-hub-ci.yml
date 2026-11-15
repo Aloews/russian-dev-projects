@@ -73,7 +73,7 @@ jobs:
         working-directory: .
         run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' .github/actions/product-factory-agent/action.yml .github/actions/product-factory-qwen-agent/action.yml .github/actions/product-factory-verify/action.yml
       - name: Rust format
-        run: cargo fmt --all
+        run: cargo fmt --all -- --check
       - name: Rust lint
         run: cargo clippy --all-targets -- -D warnings
       - name: Rust tests
@@ -213,3 +213,13 @@ jobs:
             exit 1
           fi
           grep -q "Infisical backend requires" /tmp/ush-production-guard.log
+
+      - name: Rust workload migration integrity proof
+        working-directory: universal-service-hub
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --network host \
+            -v "$PWD/tests/rust_workload_migration.sql:/tmp/rust_workload_migration.sql:ro" \
+            postgres:16-alpine \
+            psql "postgresql://ush:ush-test-password@127.0.0.1:5432/ush_test" \
+              -v ON_ERROR_STOP=1 -f /tmp/rust_workload_migration.sql
