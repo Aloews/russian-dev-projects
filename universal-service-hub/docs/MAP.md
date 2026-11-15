@@ -339,3 +339,39 @@ These are open implementation objectives, not completed features. No public deve
 - **Proof required:** exact-head Rust CI, migration execution, container smoke test with 100 allowed requests followed by a 101st rejected request, and header/body assertions.
 - **Known limits:** unauthenticated IP throttling, identity/login/recovery controls and operational alerting are not included in this increment.
 - **No production deployment or migration has been performed.**
+
+## Adaptive agent and model escalation — outcome first
+
+The objective is delivery of the intended, usable product. An agent, model, provider, workflow or successful CI run is an execution mechanism—not the product outcome and not a reason to wait indefinitely. The coordinator owns progress and must change the execution strategy when evidence shows that the current executor is too slow, stuck or under-capable.
+
+### Progress measurement and escalation triggers
+
+- Before each substantial task, record its acceptance criteria, expected duration, hard timeout, current executor/model/provider and the next verifiable checkpoint.
+- For tasks expected to take more than 20 minutes, inspect progress at least every 10 minutes. Progress means a reviewable artifact or measurable engineering result: a scoped diff, a passing targeted test, a reproduced/fixed defect, a validated API contract or a completed build stage. Token activity, status messages and generated plans alone do not count.
+- Escalate when either (a) two consecutive checkpoints show no meaningful, verifiable progress, or (b) elapsed time exceeds 1.5 times the task estimate without meeting its checkpoint. If no estimate was recorded, treat 20 minutes without a verifiable artifact as a stall.
+- Escalate immediately after the same material failure signature occurs twice, or when the current model cannot reliably use the required tools/context, repeatedly misunderstands acceptance criteria, or produces changes that fail the same targeted checks.
+- A long-running task is not automatically a stalled task: retain the current executor when it is producing measurable progress and remains within its agreed time budget. Do not interrupt an active run merely to rotate models.
+
+### Executor/model selection
+
+- Select the executor by task difficulty and demonstrated capability, not by habit, cheapest-token preference or agent brand. For complex architecture, security-sensitive changes, multi-file implementation, difficult debugging and repeated failed attempts, move to a more capable coding model/agent.
+- Before switching, inspect the live provider/model catalogue and verify the candidate model's actual availability, tool-call protocol, context capacity and task compatibility. A model name, marketing tier, configured secret or successful HTTP response alone is not proof of capability.
+- Prefer the strongest verified compatible model available within the already authorized spend ceiling. Compare expected completion quality and latency against cost; do not silently exceed a budget or introduce a new paid provider. If no authorized budget covers the required escalation, stop only at that spending boundary and request the specific approval.
+- When possible, first escalate within the currently authorized provider to avoid unnecessary integration changes. Switch provider only when its API contract, credentials, privacy boundary, data handling and cost are verified and authorized. Never silently change providers for a billable generation or external action.
+- Use a stronger model for implementation or repair when the task requires it; retain a separate independent reviewer/QA role. A reviewer must inspect the actual diff and evidence, not simply endorse the previous agent.
+
+### Safe handoff and continuity
+
+- Before replacing an executor, checkpoint its current workspace/diff, exact base and candidate SHAs, task brief, acceptance criteria, failing command and sanitized logs, completed tests, unresolved decisions and remaining work.
+- Stop or suspend the previous writer before enabling the replacement. Never allow two agents to write to the same branch/worktree concurrently.
+- Give the replacement the original product goal and acceptance criteria plus the checkpoint—not merely the previous agent's summary. Require it to inspect the actual repository state before editing.
+- Preserve useful work. Do not discard a partial implementation just because the executor is being changed; retain, test and repair it unless evidence shows it is unsafe or incompatible.
+- After handoff, rerun the failed targeted check first, then all impacted regression, security, integration and end-to-end checks on the resulting exact candidate SHA.
+
+### Product-outcome priority and stop conditions
+
+- Optimize for the user's intended product outcome: a coherent, usable, secure product with its critical journey working and persisted results—not for agent completion, number of agents, number of PRs, code volume, generated documentation or green lint alone.
+- Prefer a narrow, fully working vertical slice over broad incomplete scaffolding. Re-plan scope when necessary, but preserve the user's core intended outcome and disclose any deferred capability in the project map.
+- Do not mark a task complete because an agent timed out, changed models, opened a PR or reported success. Completion requires the product-level definition of done above and direct evidence from the running candidate.
+- If no compatible executor can make measurable progress within the authorized budget, record the concrete technical or authorization blocker and the evidence needed to resume. Do not loop indefinitely or manufacture progress.
+
