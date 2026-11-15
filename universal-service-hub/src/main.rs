@@ -416,12 +416,17 @@ async fn readyz(State(state): State<AppState>) -> ApiResult<Json<Value>> {
 
 async fn validate_project_provider_ids(db: &PgPool, provider_ids: &[String]) -> ApiResult<()> {
     if provider_ids.len() > 100 {
-        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "too_many_project_providers"));
+        return Err(ApiError(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "too_many_project_providers",
+        ));
     }
-    let unique: std::collections::HashSet<&str> =
-        provider_ids.iter().map(String::as_str).collect();
+    let unique: std::collections::HashSet<&str> = provider_ids.iter().map(String::as_str).collect();
     if unique.len() != provider_ids.len() {
-        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "duplicate_project_provider"));
+        return Err(ApiError(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "duplicate_project_provider",
+        ));
     }
     if provider_ids.is_empty() {
         return Ok(());
@@ -430,9 +435,17 @@ async fn validate_project_provider_ids(db: &PgPool, provider_ids: &[String]) -> 
         .bind(provider_ids)
         .fetch_all(db)
         .await
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_provider_validation_failed"))?;
+        .map_err(|_| {
+            ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "project_provider_validation_failed",
+            )
+        })?;
     if rows.len() != provider_ids.len() {
-        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unknown_project_provider"));
+        return Err(ApiError(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unknown_project_provider",
+        ));
     }
     Ok(())
 }
@@ -1129,11 +1142,31 @@ fn control_api_verification_request(
     configured_base_url: Option<&str>,
 ) -> ApiResult<(String, reqwest::Method, Option<Value>)> {
     let result = match adapter {
-        "vercel" => ("https://api.vercel.com/v2/user".to_owned(), reqwest::Method::GET, None),
-        "github" => ("https://api.github.com/user".to_owned(), reqwest::Method::GET, None),
-        "gitlab" => ("https://gitlab.com/api/v4/user".to_owned(), reqwest::Method::GET, None),
-        "bitbucket" => ("https://api.bitbucket.org/2.0/user".to_owned(), reqwest::Method::GET, None),
-        "codeberg" => ("https://codeberg.org/api/v1/user".to_owned(), reqwest::Method::GET, None),
+        "vercel" => (
+            "https://api.vercel.com/v2/user".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "github" => (
+            "https://api.github.com/user".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "gitlab" => (
+            "https://gitlab.com/api/v4/user".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "bitbucket" => (
+            "https://api.bitbucket.org/2.0/user".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
+        "codeberg" => (
+            "https://codeberg.org/api/v1/user".to_owned(),
+            reqwest::Method::GET,
+            None,
+        ),
         "gitea" | "forgejo" => {
             let base = configured_base_url.ok_or(ApiError(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -1141,7 +1174,10 @@ fn control_api_verification_request(
             ))?;
             let parsed = validate_https_url(base)?;
             if parsed.path() != "/" {
-                return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_self_hosted_git_base_url"));
+                return Err(ApiError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_self_hosted_git_base_url",
+                ));
             }
             let endpoint = format!("{}/api/v1/user", base.trim_end_matches('/'));
             (endpoint, reqwest::Method::GET, None)
@@ -1217,17 +1253,18 @@ async fn verify_integration(
     Path(provider_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let principal = require_admin(&state, &headers).await?;
-    let row = sqlx::query("SELECT adapter_type,api_key_env,enabled,base_url FROM providers WHERE id=$1")
-        .bind(&provider_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|_| {
-            ApiError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "integration_lookup_failed",
-            )
-        })?
-        .ok_or(ApiError(StatusCode::NOT_FOUND, "provider_not_found"))?;
+    let row =
+        sqlx::query("SELECT adapter_type,api_key_env,enabled,base_url FROM providers WHERE id=$1")
+            .bind(&provider_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|_| {
+                ApiError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "integration_lookup_failed",
+                )
+            })?
+            .ok_or(ApiError(StatusCode::NOT_FOUND, "provider_not_found"))?;
     let adapter: String = row.get("adapter_type");
     let enabled: bool = row.get("enabled");
     let key_name: Option<String> = row.get("api_key_env");
@@ -1628,7 +1665,10 @@ async fn verify_integration(
         "vercel" => (
             data["user"]["id"].is_string() || data["user"]["username"].is_string(),
             None,
-            data["user"]["username"].as_str().or_else(|| data["user"]["name"].as_str()).map(str::to_owned),
+            data["user"]["username"]
+                .as_str()
+                .or_else(|| data["user"]["name"].as_str())
+                .map(str::to_owned),
         ),
         "github" => (
             data["id"].is_number(),
@@ -2555,14 +2595,28 @@ mod tests {
                 .collect();
             assert_eq!(ids.len(), 6, "duplicate service in {}", category["id"]);
         }
-        let git = categories.iter().find(|c| c["id"] == "git_hosting").unwrap();
+        let git = categories
+            .iter()
+            .find(|c| c["id"] == "git_hosting")
+            .unwrap();
         let git_ids: std::collections::HashSet<&str> = git["services"]
-            .as_array().unwrap()
+            .as_array()
+            .unwrap()
             .iter()
             .map(|service| service["id"].as_str().unwrap())
             .collect();
-        for expected in ["github", "gitlab", "bitbucket", "gitea", "forgejo", "codeberg"] {
-            assert!(git_ids.contains(expected), "missing Git provider {expected}");
+        for expected in [
+            "github",
+            "gitlab",
+            "bitbucket",
+            "gitea",
+            "forgejo",
+            "codeberg",
+        ] {
+            assert!(
+                git_ids.contains(expected),
+                "missing Git provider {expected}"
+            );
         }
         assert_eq!(git["primary"], "github");
     }
@@ -2577,8 +2631,7 @@ mod tests {
             ("codeberg", "https://codeberg.org/api/v1/user"),
         ];
         for (adapter, expected) in cases {
-            let (url, method, body) =
-                control_api_verification_request(adapter, None).unwrap();
+            let (url, method, body) = control_api_verification_request(adapter, None).unwrap();
             assert_eq!(url, expected);
             assert_eq!(method, reqwest::Method::GET);
             assert!(body.is_none());
@@ -2591,11 +2644,8 @@ mod tests {
             control_api_verification_request("gitea", None).is_err(),
             "Gitea must not silently fall back to a public host"
         );
-        let (url, method, _) = control_api_verification_request(
-            "forgejo",
-            Some("https://git.example.org"),
-        )
-        .unwrap();
+        let (url, method, _) =
+            control_api_verification_request("forgejo", Some("https://git.example.org")).unwrap();
         assert_eq!(url, "https://git.example.org/api/v1/user");
         assert_eq!(method, reqwest::Method::GET);
         assert!(
@@ -2605,10 +2655,7 @@ mod tests {
             )
             .is_err()
         );
-        assert!(
-            control_api_verification_request("gitea", Some("http://git.example.org"))
-                .is_err()
-        );
+        assert!(control_api_verification_request("gitea", Some("http://git.example.org")).is_err());
     }
 
     #[test]
@@ -2626,11 +2673,26 @@ mod tests {
             }
         }
         for id in [
-            "vercel", "github", "gitlab", "bitbucket", "gitea", "forgejo", "codeberg",
-            "railway", "netlify", "cloudflare", "render", "flyio", "northflank",
-            "digitalocean", "supabase",
+            "vercel",
+            "github",
+            "gitlab",
+            "bitbucket",
+            "gitea",
+            "forgejo",
+            "codeberg",
+            "railway",
+            "netlify",
+            "cloudflare",
+            "render",
+            "flyio",
+            "northflank",
+            "digitalocean",
+            "supabase",
         ] {
-            assert!(is_control_api_adapter(id), "missing integration adapter {id}");
+            assert!(
+                is_control_api_adapter(id),
+                "missing integration adapter {id}"
+            );
         }
     }
 
