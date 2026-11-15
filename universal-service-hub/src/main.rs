@@ -343,7 +343,7 @@ fn integration_catalog_data() -> Value {
                 "label": "Frontend hosting",
                 "primary": "vercel",
                 "services": [
-                    {"id":"vercel","name":"Vercel","role":"frontend_hosting","connection":"api_token","adapter_supported":false,"project_provisioning":false},
+                    {"id":"vercel","name":"Vercel","role":"frontend_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
                     {"id":"netlify","name":"Netlify","role":"frontend_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
                     {"id":"cloudflare","name":"Cloudflare Pages and Workers","role":"frontend_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
                     {"id":"render","name":"Render","role":"application_hosting","connection":"api_token","adapter_supported":true,"project_provisioning":false},
@@ -382,12 +382,12 @@ fn integration_catalog_data() -> Value {
                 "label": "Git repositories and CI",
                 "primary": "github",
                 "services": [
-                    {"id":"github","name":"GitHub","role":"git_hosting","connection":"oauth_or_fine_grained_pat","adapter_supported":false,"project_provisioning":false},
-                    {"id":"gitlab","name":"GitLab","role":"git_hosting","connection":"oauth_or_project_access_token","adapter_supported":false,"project_provisioning":false},
-                    {"id":"bitbucket","name":"Bitbucket","role":"git_hosting","connection":"oauth_or_app_password","adapter_supported":false,"project_provisioning":false},
-                    {"id":"gitea","name":"Gitea","role":"self_hosted_git","connection":"endpoint_and_access_token","adapter_supported":false,"project_provisioning":false},
-                    {"id":"forgejo","name":"Forgejo","role":"self_hosted_git","connection":"endpoint_and_access_token","adapter_supported":false,"project_provisioning":false},
-                    {"id":"codeberg","name":"Codeberg","role":"git_hosting","connection":"access_token","adapter_supported":false,"project_provisioning":false}
+                    {"id":"github","name":"GitHub","role":"git_hosting","connection":"oauth_or_fine_grained_pat","adapter_supported":true,"project_provisioning":false},
+                    {"id":"gitlab","name":"GitLab","role":"git_hosting","connection":"oauth_or_project_access_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"bitbucket","name":"Bitbucket","role":"git_hosting","connection":"oauth_or_app_password","adapter_supported":true,"project_provisioning":false},
+                    {"id":"gitea","name":"Gitea","role":"self_hosted_git","connection":"endpoint_and_access_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"forgejo","name":"Forgejo","role":"self_hosted_git","connection":"endpoint_and_access_token","adapter_supported":true,"project_provisioning":false},
+                    {"id":"codeberg","name":"Codeberg","role":"git_hosting","connection":"access_token","adapter_supported":true,"project_provisioning":false}
                 ]
             }
         ]
@@ -789,6 +789,13 @@ fn is_control_api_adapter(adapter: &str) -> bool {
     [
         "northflank",
         "railway",
+        "vercel",
+        "github",
+        "gitlab",
+        "bitbucket",
+        "gitea",
+        "forgejo",
+        "codeberg",
         "cloudflare",
         "netlify",
         "render",
@@ -1098,7 +1105,7 @@ async fn verify_integration(
     Path(provider_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let principal = require_admin(&state, &headers).await?;
-    let row = sqlx::query("SELECT adapter_type,api_key_env,enabled FROM providers WHERE id=$1")
+    let row = sqlx::query("SELECT adapter_type,api_key_env,enabled,base_url FROM providers WHERE id=$1")
         .bind(&provider_id)
         .fetch_optional(&state.db)
         .await
@@ -1112,6 +1119,7 @@ async fn verify_integration(
     let adapter: String = row.get("adapter_type");
     let enabled: bool = row.get("enabled");
     let key_name: Option<String> = row.get("api_key_env");
+    let configured_base_url: Option<String> = row.get("base_url");
     if !enabled || !is_control_api_adapter(&adapter) {
         return Err(ApiError(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -1385,6 +1393,24 @@ async fn verify_integration(
     }
 
     let (url, method, payload) = match adapter.as_str() {
+        "vercel" => ("https://api.vercel.com/v2/user", reqwest::Method::GET, None),
+        "github" => ("https://api.github.com/user", reqwest::Method::GET, None),
+        "gitlab" => ("https://gitlab.com/api/v4/user", reqwest::Method::GET, None),
+        "bitbucket" => ("https://api.bitbucket.org/2.0/user", reqwest::Method::GET, None),
+        "codeberg" => ("https://codeberg.org/api/v1/user", reqwest::Method::GET, None),
+        "gitea" | "forgejo" => {
+            let base = configured_base_url.as_deref().ok_or(ApiError(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "self_hosted_git_base_url_required",
+            ))?;
+            let parsed = validate_https_url(base)?;
+            if parsed.path() != "/" {
+                return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_self_hosted_git_base_url"));
+            }
+            let endpoint = format!("{}/api/v1/user", base.trim_end_matches('/'));
+            let leaked_url = Box::leak(endpoint.into_boxed_str());
+            (leaked_url, reqwest::Method::GET, None)
+        }
         "northflank" => (
             "https://api.northflank.com/v1/teams?per_page=1",
             reqwest::Method::GET,
@@ -1509,7 +1535,16 @@ async fn verify_integration(
         .request(method, parsed)
         .timeout(Duration::from_secs(10));
     if let Some(auth_token) = auth_token {
-        request = request.bearer_auth(auth_token);
+        if ["gitea", "forgejo", "codeberg"].contains(&adapter.as_str()) {
+            request = request.header("Authorization", format!("token {auth_token}"));
+        } else if adapter == "github" {
+            request = request
+                .bearer_auth(auth_token)
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28");
+        } else {
+            request = request.bearer_auth(auth_token);
+        }
     }
     if let Some((key_id, application_key)) = b2_credentials {
         request = request.basic_auth(key_id, Some(application_key));
@@ -1557,6 +1592,31 @@ async fn verify_integration(
         .await
         .map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "integration_invalid_response"))?;
     let (verified, resource_count, account_label) = match adapter.as_str() {
+        "vercel" => (
+            data["user"]["id"].is_string() || data["user"]["username"].is_string(),
+            None,
+            data["user"]["username"].as_str().or_else(|| data["user"]["name"].as_str()).map(str::to_owned),
+        ),
+        "github" => (
+            data["id"].is_number(),
+            None,
+            data["login"].as_str().map(str::to_owned),
+        ),
+        "gitlab" => (
+            data["id"].is_number(),
+            None,
+            data["username"].as_str().map(str::to_owned),
+        ),
+        "bitbucket" => (
+            data["uuid"].is_string(),
+            None,
+            data["display_name"].as_str().map(str::to_owned),
+        ),
+        "gitea" | "forgejo" | "codeberg" => (
+            data["id"].is_number(),
+            None,
+            data["login"].as_str().map(str::to_owned),
+        ),
         "northflank" => {
             let teams = data["data"]["teams"].as_array().ok_or(ApiError(
                 StatusCode::BAD_GATEWAY,
