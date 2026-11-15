@@ -310,3 +310,21 @@ The step-by-step implementation and release plan lives in [docs/SECURITY_FIRST_R
 - No production deployment, paid resource creation, production-data migration or credential rotation without explicit authorization and rollback.
 - A passing unit test does not prove a live provider, identity system or deployment is secure. State the evidence boundary.
 - Stop catalog expansion if a new integration lacks a data classification, scope map, retention policy, revoke path and threat review.
+
+
+## Cross-device product and public accountability objectives
+
+Top-level initiative: [issue #45](https://github.com/Aloews/russian-dev-projects/issues/45).
+- Cross-device clients: [issue #44](https://github.com/Aloews/russian-dev-projects/issues/44).
+- Public evidence-backed development portal: [issue #43](https://github.com/Aloews/russian-dev-projects/issues/43).
+- Security programme: [issue #40](https://github.com/Aloews/russian-dev-projects/issues/40).
+
+These are open implementation objectives, not completed features. No public development portal or native mobile/desktop clients are currently evidenced by this roadmap PR.
+
+## Evidence review — 2026-11-15
+
+- Security roadmap and security baseline are documentation requirements; they do not implement S0–S7 controls.
+- Source inspection was limited to the current main-branch Rust entry point and repository files. Source presence is not runtime or penetration-test evidence.
+- PR #41 documentation candidate after evidence-register correction: `5a250c88dda362c6efefb4b410fbf54ee51d426c`.
+- CI must be checked again for this exact head. Earlier run #43750951422 targeted the preceding SHA and was pending with no completed jobs returned; it cannot validate this corrected commit.
+- Overall security programme status remains **NOT STARTED as a complete programme**. No claim of security certification, production readiness, public portal availability or cross-platform app availability is made.
