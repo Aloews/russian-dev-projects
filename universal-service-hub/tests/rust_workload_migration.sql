@@ -63,6 +63,53 @@ BEGIN
   END;
 END $$;
 
+DO $
+BEGIN
+  BEGIN
+    UPDATE job_steps SET state = 'succeeded' WHERE id = 'migration-step-a';
+    RAISE EXCEPTION 'step was marked succeeded without verification evidence';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+
+  BEGIN
+    INSERT INTO job_verifications (
+      id, project_id, job_id, step_id, source, verifier_id, command,
+      exit_code, passed, commit_sha, output_sha256
+    ) VALUES (
+      'migration-agent-report', 'migration-proof-a', 'migration-job-a', 'migration-step-a',
+      'agent_report', 'coding-agent', 'I completed the task', 0, TRUE,
+      repeat('a', 40), repeat('b', 64)
+    );
+    RAISE EXCEPTION 'agent-authored report was accepted as verification evidence';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $;
+
+INSERT INTO job_verifications (
+  id, project_id, job_id, step_id, source, verifier_id, command,
+  exit_code, passed, commit_sha, output_sha256, evidence_ref
+) VALUES (
+  'migration-proof-a1', 'migration-proof-a', 'migration-job-a', 'migration-step-a',
+  'runtime_probe', 'ci-runner', 'cargo test --all-targets', 0, TRUE,
+  repeat('a', 40), repeat('b', 64), '{"run_id":"ci-proof"}'::jsonb
+);
+
+UPDATE job_steps SET state = 'succeeded' WHERE id = 'migration-step-a';
+
+DO $
+BEGIN
+  BEGIN
+    UPDATE jobs SET state = 'succeeded' WHERE id = 'migration-job-b';
+    RAISE EXCEPTION 'job was marked succeeded while a step remained pending';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $;
+
+UPDATE jobs SET state = 'succeeded' WHERE id = 'migration-job-a';
+
 INSERT INTO job_artifacts (id, job_id, step_id, project_id, object_key, mime_type, byte_size, checksum_sha256)
 VALUES ('migration-artifact-a', 'migration-job-a', 'migration-step-a', 'migration-proof-a', 'proof/artifact', 'text/plain', 1, repeat('b', 64));
 
