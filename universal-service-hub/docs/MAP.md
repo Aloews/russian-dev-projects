@@ -375,3 +375,31 @@ The objective is delivery of the intended, usable product. An agent, model, prov
 - Do not mark a task complete because an agent timed out, changed models, opened a PR or reported success. Completion requires the product-level definition of done above and direct evidence from the running candidate.
 - If no compatible executor can make measurable progress within the authorized budget, record the concrete technical or authorization blocker and the evidence needed to resume. Do not loop indefinitely or manufacture progress.
 
+
+
+## Adaptive specialist team and recoverable execution
+
+### Execution model
+
+- **Status:** CONFIGURED IN WORKFLOW; live subagent execution is NOT YET VERIFIED.
+- Workflow: `.github/workflows/universal-hub-codex-claude.yml`.
+- Codex subagents are enabled with a maximum of four concurrent child agents and nesting depth one. The primary selected Codex model is the default child model; this avoids silently introducing another provider or unverified model.
+- Four bounded roles are provisioned: `codebase_explorer`, `security_reviewer`, `provider_analyst`, and `test_analyst`. Start with two or three; use the fourth only when it has a distinct task. The main Codex session remains the sole writer and integrator.
+- Claude Code remains the sequential independent reviewer/repair writer after Codex. The main writer must reconcile specialist findings before implementation and ask a read-only specialist to inspect a substantial final diff.
+- Subagents increase token consumption. Do not maximize their count by default; add concurrency only when independent work materially reduces elapsed time or risk. No price/cost advantage is assumed for an unverified model.
+
+### Recovery and evidence
+
+- After the Codex phase, the workflow records a binary Git patch and working-tree status, including on failure/timeout, and uploads them as an Actions artifact with a seven-day retention period.
+- The patch is withheld when the basic secret-pattern scan detects a likely credential. This scan is a guardrail, not a comprehensive secret scanner; the normal candidate secret checks remain mandatory.
+- The checkpoint is not proof of correctness and must not be merged or published without the existing Claude review, candidate validation, exact-SHA CI and independent QA.
+- The Starimg model/tool-call compatibility probe is still not proof that the selected model can delegate subagents. The first completed run must confirm actual spawned-agent activity and collected results. If delegation is unsupported, use the single-writer fallback and record it.
+- The existing long-running run #7 was started before this workflow change and will not inherit the new orchestration or checkpoint steps. Its workspace cannot be recovered through the GitHub API while its runner remains active. Do not claim this change retroactively fixes that run.
+
+### First-run acceptance
+
+1. Codex logs show at least two distinct subagents spawned and their outputs collected, or explicitly record the safe single-writer fallback.
+2. No subagent edits shared files; only the primary Codex process writes during the implementation phase.
+3. The checkpoint artifact exists after Codex and contains a patch/status matching the runner's final pre-review working tree, with no detected secret patterns.
+4. Claude reviews the actual combined diff; candidate scope checks pass; CI runs against the exact candidate SHA.
+5. Any timed-out/failed run retains its checkpoint artifact so a replacement agent can resume from evidence instead of restarting blindly.
