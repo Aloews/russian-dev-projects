@@ -42,3 +42,13 @@ This directory contains the Universal Service Hub. Work autonomously within the 
 - Both agents may change only universal-service-hub/. They must not read or expose secrets, commit, push, create PRs, merge, deploy or mutate production data.
 - GitHub CI validates the exact PR head. A passing model probe is not proof that code is correct; a passing build is not proof of production readiness.
 - Do not use OpenRouter or local Qwen as the default writer for Hub development. They remain separate fallback/legacy routes until a deliberate, tested migration changes that policy.
+
+
+## Adaptive multi-agent execution
+
+- The Hub coding workflow enables Codex subagent orchestration and provides four narrow roles: codebase exploration, application security, provider/API contracts and QA/test analysis.
+- Use two or three read-only specialists by default; activate a fourth only when it has a distinct, decision-relevant workstream. Maximum four concurrent subagents, nesting depth one.
+- The primary Codex session is the sole writer and integrator. Subagents return evidence-backed findings only; do not permit overlapping writes or duplicate broad scans.
+- Keep the selected, verified Starimg-compatible model as the default subagent model unless the live catalogue and protocol checks establish a cheaper compatible model with sufficient capability. Do not guess model quality or pricing from names.
+- The primary agent must consolidate findings, implement one coherent vertical slice, and request a read-only diff review before the sequential Claude review. If subagent orchestration is unsupported by the selected model, continue safely with one writer and record the limitation.
+- A checkpoint step captures the candidate patch and status after the Codex phase, including when that phase fails or times out. The checkpoint is uploaded as a short-lived Actions artifact only after a basic secret-pattern scan. It is recovery evidence, not a validated deliverable.
