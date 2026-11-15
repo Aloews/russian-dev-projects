@@ -34,7 +34,7 @@ jobs:
        github.event.issue.pull_request != null &&
        github.event.comment.body == '/hub run')
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 180
     env:
       STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
       STARIMG_CODEX_MODEL: ${{ vars.STARIMG_CODEX_MODEL }}
@@ -347,6 +347,20 @@ jobs:
           git diff --cached --check
           git commit -m "feat(universal-hub): implement verified engineering increment"
           git push origin "HEAD:$BRANCH_NAME"
+
+          # A pushed branch is not a completed delivery. Wait for the repository's
+          # real exact-SHA CI run and refuse to open a PR if any required check fails.
+          head_sha="$(git rev-parse HEAD)"
+          run_id=""
+          for attempt in $(seq 1 60); do
+            run_id="$(gh run list --workflow universal-service-hub-ci.yml --branch "$BRANCH_NAME" --commit "$head_sha" --json databaseId --jq '.[0].databaseId // empty')"
+            test -n "$run_id" && break
+            sleep 5
+          done
+          test -n "$run_id" || { echo "No exact-commit Universal Service Hub CI run appeared after branch push." >&2; exit 2; }
+          echo "Waiting for exact-SHA CI run $run_id on $head_sha."
+          gh run watch "$run_id" --exit-status
+
           gh pr create             --base "$BASE_REF"             --head "$BRANCH_NAME"             --title "feat(universal-hub): Codex + Claude engineering increment"             --body "$(cat <<EOF
           ## Implementation
 
