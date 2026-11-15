@@ -103,6 +103,7 @@ jobs:
           docker run -d --rm --name ush-smoke --network host \
             -e USH_API_TOKEN="$USH_API_TOKEN" \
             -e USH_DATABASE_URL="postgres://ush:ush-test-password@127.0.0.1:5432/ush_test" \
+            -e USH_RATE_LIMIT_PER_MINUTE=100 \
             universal-service-hub:test
           trap 'docker stop ush-smoke >/dev/null 2>&1 || true' EXIT
           ready=0
@@ -195,6 +196,24 @@ jobs:
             -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
             -d '{"messages":[{"role":"user","content":"hello"}]}')
           test "$revoked" = "401"
+
+          rate_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"rate-limit-proof","role":"viewer"}')
+          rate_token=$(printf '%s' "$rate_response" | jq -r '.token')
+          echo "::add-mask::$rate_token"
+          for attempt in $(seq 1 100); do
+            curl -fsS -X POST http://127.0.0.1:8000/v1/providers/select \
+              -H "Authorization: Bearer $rate_token" -H "Content-Type: application/json" \
+              -d '{"capability":"ai.chat"}' >/dev/null
+          done
+          rate_limited_status=$(curl -sS -D /tmp/ush-rate-limit-headers -o /tmp/ush-rate-limit-body -w "%{http_code}" \
+            -X POST http://127.0.0.1:8000/v1/providers/select \
+            -H "Authorization: Bearer $rate_token" -H "Content-Type: application/json" \
+            -d '{"capability":"ai.chat"}')
+          test "$rate_limited_status" = "429"
+          grep -qi '^retry-after: 60' /tmp/ush-rate-limit-headers
+          jq -e '.error == "rate_limit_exceeded"' /tmp/ush-rate-limit-body >/dev/null
 
           curl -fsS -X DELETE http://127.0.0.1:8000/v1/projects/smoke-project \
             -H "Authorization: Bearer $USH_API_TOKEN" >/dev/null
