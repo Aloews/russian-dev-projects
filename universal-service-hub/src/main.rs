@@ -414,6 +414,29 @@ async fn readyz(State(state): State<AppState>) -> ApiResult<Json<Value>> {
     Ok(Json(json!({"status":"ready","runtime":"rust"})))
 }
 
+async fn validate_project_provider_ids(db: &PgPool, provider_ids: &[String]) -> ApiResult<()> {
+    if provider_ids.len() > 100 {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "too_many_project_providers"));
+    }
+    let unique: std::collections::HashSet<&str> =
+        provider_ids.iter().map(String::as_str).collect();
+    if unique.len() != provider_ids.len() {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "duplicate_project_provider"));
+    }
+    if provider_ids.is_empty() {
+        return Ok(());
+    }
+    let rows = sqlx::query("SELECT id FROM providers WHERE id = ANY($1)")
+        .bind(provider_ids)
+        .fetch_all(db)
+        .await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_provider_validation_failed"))?;
+    if rows.len() != provider_ids.len() {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unknown_project_provider"));
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct ProjectCreate {
     id: String,
@@ -446,6 +469,7 @@ async fn create_project(
             "invalid_project",
         ));
     }
+    validate_project_provider_ids(&state.db, &body.allowed_provider_ids).await?;
     let result = sqlx::query(
         "INSERT INTO projects (id,name,allowed_capabilities,allowed_provider_ids,created_at,updated_at) VALUES ($1,$2,$3,$4,NOW(),NOW()) ON CONFLICT (id) DO NOTHING"
     ).bind(&body.id).bind(&body.name).bind(json!(body.allowed_capabilities.clone())).bind(json!(body.allowed_provider_ids.clone()))
@@ -514,6 +538,7 @@ async fn update_project(
             "invalid_project",
         ));
     }
+    validate_project_provider_ids(&state.db, &body.allowed_provider_ids).await?;
     let result = sqlx::query("UPDATE projects SET name=$1,allowed_capabilities=$2,allowed_provider_ids=$3,updated_at=NOW() WHERE id=$4")
         .bind(&body.name).bind(json!(body.allowed_capabilities)).bind(json!(body.allowed_provider_ids)).bind(&project_id)
         .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_update_failed"))?;
