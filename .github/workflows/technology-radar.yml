@@ -1,0 +1,62 @@
+name: Universal Hub technology radar
+
+on:
+  schedule:
+    - cron: "23 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: universal-hub-technology-radar
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Restore previous technology snapshot
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/technology-radar/previous.json
+          key: technology-radar-${{ github.run_id }}
+          restore-keys: |
+            technology-radar-
+      - name: Test radar comparison logic
+        run: python .github/scripts/technology_radar.py --self-test
+      - name: Scan official release sources
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/technology_radar.py \
+            --output technology-radar/report.json \
+            --previous .cache/technology-radar/previous.json
+      - name: Update cached comparison baseline
+        run: |
+          mkdir -p .cache/technology-radar
+          cp technology-radar/report.json .cache/technology-radar/previous.json
+      - name: Save technology snapshot
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/technology-radar/previous.json
+          key: technology-radar-${{ github.run_id }}
+      - name: Publish scan summary
+        if: always()
+        run: |
+          if [ -f technology-radar/report.md ]; then
+            cat technology-radar/report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: technology-radar-${{ github.run_id }}
+          path: technology-radar/
+          if-no-files-found: warn
+          retention-days: 90
