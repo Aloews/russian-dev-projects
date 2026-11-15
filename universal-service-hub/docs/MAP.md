@@ -325,6 +325,6 @@ These are open implementation objectives, not completed features. No public deve
 
 - Security roadmap and security baseline are documentation requirements; they do not implement S0–S7 controls.
 - Source inspection was limited to the current main-branch Rust entry point and repository files. Source presence is not runtime or penetration-test evidence.
-- PR #41 documentation candidate after evidence-register correction: `5a250c88dda362c6efefb4b410fbf54ee51d426c`.
-- CI must be checked again for this exact head. Earlier run #43750951422 targeted the preceding SHA and was pending with no completed jobs returned; it cannot validate this corrected commit.
+- PR #41 latest pushed documentation head at this review: `55e507f6cc309818bebb5d60981d5d1575b5cd36`.
+- CI run #43751512846 targets this exact head and was observed as pending; no completed job evidence was returned. It is not a passing verification.
 - Overall security programme status remains **NOT STARTED as a complete programme**. No claim of security certification, production readiness, public portal availability or cross-platform app availability is made.
