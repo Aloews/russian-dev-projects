@@ -1,8 +1,24 @@
 # Universal Service Hub — project map
 
+> **Security-first is the primary product constraint.** No feature or integration may weaken identity, tenant isolation, privacy, secrets handling or user control to improve convenience. The detailed, sequenced release plan is [SECURITY_FIRST_ROADMAP.md](./SECURITY_FIRST_ROADMAP.md); the security programme is tracked in [GitHub issue #40](https://github.com/Aloews/russian-dev-projects/issues/40).
+
 ## Mission
 
-One provider-neutral control plane for all owned projects. It must route workloads to interchangeable providers, protect credentials, measure reliability and spend, and recover from provider failures without requiring the owner to process intermediate agent output.
+Build a secure digital-life control plane and universal service aggregator. It connects useful internet services across personal communication, social identity, banking, crypto, entertainment, telecom, operating systems, infrastructure, AI generation, health, style, sport, commerce and work. It must route workloads safely, protect personal data, measure reliability and spend, and recover from provider failures without requiring the owner to process intermediate agent output.
+
+**Security invariant:** the Hub should not collect or retain data merely because it can. Prefer federated access and provider-side actions; store the minimum metadata needed to operate safely. Sensitive connections are opt-in, read-only by default and individually revocable.
+
+## Product security hierarchy
+
+1. Identity and account recovery.
+2. Tenant isolation and authorization.
+3. Secret/key protection and cryptography.
+4. Data minimization, consent, retention and deletion.
+5. Secure integration/agent execution and network egress.
+6. Audit, monitoring, incident response and resilience.
+7. Broad catalog coverage and convenience.
+
+A lower item must never be delivered by bypassing a higher item.
 
 ## Operating contract
 
@@ -259,3 +275,38 @@ If a product has no applicable authentication, persistence, payment or external 
 ## Resumable execution and balanced media workloads
 
 The phased implementation roadmap, task decomposition contract, interruption recovery protocol, fair model scheduling and image-generation workstream are specified in [docs/EXECUTION_PLAN.md](./EXECUTION_PLAN.md). This is planned work, not implemented functionality. Prioritize the first A1–A2 persistence slice, then outbox/leases/checkpoints before enabling long-running or billable media jobs. Do not mark service-stop recovery or image-model balancing operational until their failure-injection and live provider tests pass.
+
+
+## Security-first implementation map — authoritative sequence
+
+The step-by-step implementation and release plan lives in [docs/SECURITY_FIRST_ROADMAP.md](./SECURITY_FIRST_ROADMAP.md). Do not reorder milestones merely to expand the catalog faster.
+
+| Milestone | Scope | Release gate |
+|---|---|---|
+| S0 | Asset/data inventory, data classification, threat model, trust boundaries, security invariants | Threat model reviewed; risks mapped to tests |
+| S1 | User identity, passkeys/MFA, secure sessions, RBAC/scopes, rate limits, break-glass admin | Browser never uses root token; session/revocation tests pass |
+| S2 | Tenant-aware persistence, PostgreSQL RLS, artifact/object isolation, privacy domains | Cross-tenant negative tests pass for every data path |
+| S3 | OAuth vault, envelope encryption/KMS, key rotation, TLS and browser security headers | Tokens encrypted, scoped, revocable; key lifecycle tested |
+| S4 | Official integrations, egress policy, agent/tool sandbox, consent, idempotency | SSRF/prompt-injection/tool-abuse and sensitive-action tests pass |
+| S5 | Audit, monitoring, SBOM, scans, backups, restore, incident response | Security operations and recovery drills pass |
+| S6 | Universal catalog and personal dashboard across digital-life categories | Every service has truthful capability, scope and privacy metadata |
+| S7 | Independent security verification and controlled release | Exact-SHA CI, independent review, staging E2E, rollback and authorization |
+
+### Current security baseline — verified from main before this roadmap
+
+- Rust Axum/Tokio/SQLx runtime with root bearer token and project-scoped hashed tokens.
+- Project roles are owner/operator/viewer; project capability/provider allowlists are enforced on current execution paths.
+- Project tokens are revocable, but the current model does not yet provide per-user customer identity, MFA/passkeys, fine-grained per-operation grants or tenant-scoped audit views.
+- Infisical machine identity is supported for provider credentials; live production identity verification remains outstanding.
+- Request body size is bounded; outbound URL/IP checks exist, but production egress firewall and DNS-rebinding controls remain required.
+- Existing audit records omit AI prompts/responses, but tamper-evident storage, tenant views, retention and deletion controls remain outstanding.
+- No production deployment is verified. This is not yet a security-certified or production-ready customer platform.
+
+### Mandatory execution rules
+
+- Update this map and the security roadmap in the same PR as material security changes.
+- Every milestone records status as NOT STARTED, IN PROGRESS, BLOCKED or VERIFIED; VERIFIED requires exact commit SHA, CI run URL, named test commands and results.
+- One writer per branch; independent security reviewer and QA inspect the exact immutable PR head.
+- No production deployment, paid resource creation, production-data migration or credential rotation without explicit authorization and rollback.
+- A passing unit test does not prove a live provider, identity system or deployment is secure. State the evidence boundary.
+- Stop catalog expansion if a new integration lacks a data classification, scope map, retention policy, revoke path and threat review.
