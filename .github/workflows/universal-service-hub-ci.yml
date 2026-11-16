@@ -83,6 +83,190 @@ jobs:
       - name: Product Factory composite action metadata
         working-directory: .
         run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' .github/actions/product-factory-agent/action.yml .github/actions/product-factory-qwen-agent/action.yml .github/actions/product-factory-verify/action.yml
+      - name: SQLx migration version uniqueness
+        working-directory: universal-service-hub
+        run: |
+          set -eu
+          invalid=$(find rust-migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\\n' | grep -Ev '^[0-9]+_[A-Za-z0-9_-]+\\.sql      - name: Rust lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: universal-service-hub/pyproject.toml
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check app tests migrations
+      - name: Migration smoke test
+        env:
+          USH_DATABASE_URL: postgresql+asyncpg://ush:ush-test-password@localhost:5432/ush_test
+        run: alembic upgrade head
+      - name: Tests
+        run: pytest -q
+      - name: Docker build
+        run: docker build --network=host --progress=plain -t universal-service-hub:test .
+
+      - name: Local runtime scripts and Compose configuration
+        env:
+          USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
+          USH_DB_PASSWORD: ush-ci-db-password-with-at-least-32-characters
+        run: |
+          bash -n scripts/dev-up.sh scripts/dev-down.sh
+          docker compose --env-file .env.example -f compose.yml config -q
+      - name: Local Compose runtime startup smoke
+        run: |
+          set -eu
+          trap 'docker compose --env-file .env.local -f compose.yml down -v >/dev/null 2>&1 || true' EXIT
+          docker tag universal-service-hub:test universal-service-hub:local
+          USH_SKIP_BUILD=1 PORT=18000 bash scripts/dev-up.sh
+          curl -fsS http://127.0.0.1:18000/healthz >/dev/null
+          docker compose --env-file .env.local -f compose.yml ps
+          docker compose --env-file .env.local -f compose.yml logs --no-color hub
+      - name: Container smoke test
+        env:
+          USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
+        run: |
+          set -eu
+          docker run -d --rm --name ush-smoke --network host \
+            -e USH_API_TOKEN="$USH_API_TOKEN" \
+            -e USH_DATABASE_URL="postgres://ush:ush-test-password@127.0.0.1:5432/ush_test" \
+            -e USH_RATE_LIMIT_PER_MINUTE=100 \
+            universal-service-hub:test
+          trap 'docker stop ush-smoke >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/readyz >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker logs ush-smoke
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:8000/healthz >/dev/null
+          curl -fsS -H "Authorization: Bearer $USH_API_TOKEN" \
+            http://127.0.0.1:8000/v1/providers >/dev/null
+          status=$(curl -sS -o /dev/null -w "%{http_code}" \
+            http://127.0.0.1:8000/v1/providers)
+          test "$status" = "401"
+          curl -fsS -X POST http://127.0.0.1:8000/v1/projects \
+            -H "Authorization: Bearer $USH_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"id":"smoke-project","name":"Smoke project","allowed_capabilities":["ai.chat"],"allowed_provider_ids":[]}' >/dev/null
+          curl -fsS -X PUT http://127.0.0.1:8000/v1/providers/smoke-provider \
+            -H "Authorization: Bearer $USH_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"Smoke provider","capabilities":["ai.chat"],"priority":100}' >/dev/null
+
+          owner_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $USH_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"owner","role":"owner"}')
+          owner_token=$(printf '%s' "$owner_response" | jq -r '.token')
+          owner_id=$(printf '%s' "$owner_response" | jq -r '.id')
+          echo "::add-mask::$owner_token"
+
+          operator_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $owner_token" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"runtime","role":"operator"}')
+          operator_token=$(printf '%s' "$operator_response" | jq -r '.token')
+          operator_id=$(printf '%s' "$operator_response" | jq -r '.id')
+          echo "::add-mask::$operator_token"
+
+          viewer_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $owner_token" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"readonly","role":"viewer"}')
+          viewer_token=$(printf '%s' "$viewer_response" | jq -r '.token')
+          echo "::add-mask::$viewer_token"
+
+          curl -fsS -H "Authorization: Bearer $owner_token" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tokens | jq -e 'length == 3' >/dev/null
+
+          owner_escalation=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"name":"second-owner","role":"owner"}')
+          test "$owner_escalation" = "403"
+
+          operator_delegation=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d '{"name":"extra","role":"viewer"}')
+          test "$operator_delegation" = "403"
+
+          selection=$(curl -fsS -X POST http://127.0.0.1:8000/v1/providers/select \
+            -H "Authorization: Bearer $viewer_token" -H "Content-Type: application/json" \
+            -d '{"capability":"ai.chat"}')
+          printf '%s' "$selection" | jq -e '.provider.id == "smoke-provider"' >/dev/null
+
+          viewer_ai=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/ai/chat \
+            -H "Authorization: Bearer $viewer_token" -H "Content-Type: application/json" \
+            -d '{"messages":[{"role":"user","content":"hello"}]}')
+          test "$viewer_ai" = "403"
+
+          operator_ai=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/ai/chat \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d '{"messages":[{"role":"user","content":"hello"}]}')
+          test "$operator_ai" = "503"
+
+          curl -fsS -X DELETE \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/tokens/$operator_id" \
+            -H "Authorization: Bearer $owner_token" >/dev/null
+          revoked=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/ai/chat \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d '{"messages":[{"role":"user","content":"hello"}]}')
+          test "$revoked" = "401"
+
+          rate_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
+            -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"rate-limit-proof","role":"viewer"}')
+          rate_token=$(printf '%s' "$rate_response" | jq -r '.token')
+          echo "::add-mask::$rate_token"
+          for attempt in $(seq 1 100); do
+            curl -fsS -X POST http://127.0.0.1:8000/v1/providers/select \
+              -H "Authorization: Bearer $rate_token" -H "Content-Type: application/json" \
+              -d '{"capability":"ai.chat"}' >/dev/null
+          done
+          rate_limited_status=$(curl -sS -D /tmp/ush-rate-limit-headers -o /tmp/ush-rate-limit-body -w "%{http_code}" \
+            -X POST http://127.0.0.1:8000/v1/providers/select \
+            -H "Authorization: Bearer $rate_token" -H "Content-Type: application/json" \
+            -d '{"capability":"ai.chat"}')
+          test "$rate_limited_status" = "429"
+          grep -qi '^retry-after: 60' /tmp/ush-rate-limit-headers
+          jq -e '.error == "rate_limit_exceeded"' /tmp/ush-rate-limit-body >/dev/null
+
+          curl -fsS -X DELETE http://127.0.0.1:8000/v1/projects/smoke-project \
+            -H "Authorization: Bearer $USH_API_TOKEN" >/dev/null
+          deleted_token=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/providers/select \
+            -H "Authorization: Bearer $viewer_token" -H "Content-Type: application/json" \
+            -d '{"capability":"ai.chat"}')
+          test "$deleted_token" = "401"
+
+          if docker run --rm --network host \
+            -e USH_API_TOKEN="$USH_API_TOKEN" \
+            -e USH_DATABASE_URL="postgres://ush:ush-test-password@127.0.0.1:5432/ush_test" \
+            -e USH_ENVIRONMENT=production \
+            universal-service-hub:test >/tmp/ush-production-guard.log 2>&1; then
+            echo "Production unexpectedly started without Infisical credentials"
+            exit 1
+          fi
+          grep -q "Infisical backend requires" /tmp/ush-production-guard.log
+ || true)
+          if [ -n "$invalid" ]; then echo "Invalid SQLx migration filenames:"; echo "$invalid"; exit 1; fi
+          versions=$(find rust-migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\\n' | sed -E 's/^([0-9]+)_.*/\\1/' | sort)
+          duplicates=$(printf '%s\\n' "$versions" | uniq -d)
+          if [ -n "$duplicates" ]; then echo "Duplicate SQLx migration versions:"; echo "$duplicates"; exit 1; fi
       - name: Rust format
         run: cargo fmt --all
       - name: Rust lint
