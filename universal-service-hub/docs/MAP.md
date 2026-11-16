@@ -492,6 +492,8 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 
 ### Verification evidence
 
-- Previous migration-collision fix passed exact-head CI run [#43867509016](https://github.com/Aloews/russian-dev-projects/actions/runs/43867509016) on `39503e3f798c32d2dfb682cd151eb39522dca766`, including Rust format/lint/tests, Alembic/Python tests, Docker build, local Compose startup and container smoke.
-- The tenant schema, ownership triggers and new PostgreSQL isolation smoke are later changes and require a new exact-head CI run. The previous green run does not verify these changes.
+- Migration-collision fix and multi-tenant schema foundation passed exact-head CI run [#43870849099](https://github.com/Aloews/russian-dev-projects/actions/runs/43870849099) on `1dbb093c56975f07eee47d3bbd3f26bc802610d6`. Verified steps: Rust format, Clippy, Rust tests, Alembic/Python tests, Docker build, clean PostgreSQL Compose startup, tenant schema smoke and container smoke.
+- This verifies migration startup and database ownership constraints only. It does **not** verify tenant authentication, membership-aware authorization, RLS, per-tenant execution isolation, budgets, artifact isolation, export/deletion or penetration resistance.
+- **Next implementation increment: tenant identity and authorization.** Extend the authenticated principal with a verified tenant scope; authenticate tenant service tokens and project tokens through stored ownership; implement membership/token lifecycle and tenant/workspace/project administration with least-privilege policy checks. Add deny-by-default cross-tenant API tests before introducing RLS. RLS must use transaction-local context and a non-owner runtime DB role, with pooled-connection leakage tests.
+- Current source inspection confirms `Principal` still has no `tenant_id`; authentication still accepts only the platform admin token and project tokens. Existing task routes enforce project ID but not a first-class tenant principal. This is an explicit security gap, not a completed feature.
 - PR #64 remains open and unmerged. Production deployment and external tenant onboarding remain disabled.
