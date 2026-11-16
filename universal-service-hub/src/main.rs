@@ -378,6 +378,50 @@ async fn append_engineering_task_event(
 }
 
 #[derive(Deserialize)]
+struct TaskTransitionBody { next_status: String, expected_version: i64, #[serde(default)] queue: Option<String> }
+
+async fn transition_engineering_task(
+    State(state): State<AppState>, headers: HeaderMap, Path((project_id, task_id)): Path<(String,String)>,
+    Json(body): Json<TaskTransitionBody>
+) -> ApiResult<Json<Value>> {
+    let principal = authenticate(&state, &headers).await?;
+    task_project_scope(&principal, &project_id)?;
+    let next = task_state::TaskStatus::parse(&body.next_status)
+        .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unknown_task_status"))?;
+    let row = sqlx::query("SELECT status,version FROM engineering_tasks WHERE id=$1 AND project_id=$2")
+        .bind(&task_id).bind(&project_id).fetch_optional(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_lookup_failed"))?;
+    let Some(row) = row else { return Err(ApiError(StatusCode::NOT_FOUND, "task_not_found")); };
+    let current_text: String = row.try_get("status").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
+    let current_version: i64 = row.try_get("version").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
+    if current_version != body.expected_version { return Err(ApiError(StatusCode::CONFLICT, "task_version_conflict")); }
+    let current = task_state::TaskStatus::parse(&current_text)
+        .ok_or(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "stored_task_status_invalid"))?;
+    if !current.can_transition_to(next) { return Err(ApiError(StatusCode::CONFLICT, "illegal_task_transition")); }
+    let queue = body.queue.unwrap_or_else(|| match next {
+        task_state::TaskStatus::Queued => "implementation".into(),
+        task_state::TaskStatus::QueuedBuild => "build".into(),
+        task_state::TaskStatus::QueuedTest => "test".into(),
+        task_state::TaskStatus::Review => "review".into(),
+        task_state::TaskStatus::Recovery => "recovery".into(),
+        _ => "implementation".into(),
+    });
+    if !["planning","implementation","build","test","review","recovery"].contains(&queue.as_str()) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task_queue"));
+    }
+    let updated = sqlx::query("UPDATE engineering_tasks SET status=$1,queue_name=$2,version=version+1,updated_at=NOW(),worker_id=NULL,lease_token_hash=NULL,lease_expires_at=NULL WHERE id=$3 AND project_id=$4 AND version=$5 RETURNING version")
+        .bind(next.as_str()).bind(queue).bind(&task_id).bind(&project_id).bind(body.expected_version)
+        .fetch_optional(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_transition_failed"))?;
+    let Some(updated) = updated else { return Err(ApiError(StatusCode::CONFLICT, "task_version_conflict")); };
+    sqlx::query("INSERT INTO engineering_task_events (id,task_id,project_id,actor,event_type,payload) VALUES ($1,$2,$3,$4,'task.transition',$5)")
+        .bind(Uuid::new_v4().to_string()).bind(&task_id).bind(&project_id).bind(&principal.actor)
+        .bind(json!({"from":current_text,"to":next.as_str(),"queue":queue}))
+        .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_event_write_failed"))?;
+    audit(&state, &principal.actor, "engineering_task.transition", "engineering_task", &task_id, json!({"from":current_text,"to":next.as_str()})).await;
+    Ok(Json(json!({"task_id":task_id,"status":next.as_str(),"queue":queue,"version":updated.try_get::<i64,_>("version").unwrap_or(body.expected_version+1)})))
+}
+
+#[derive(Deserialize)]
 struct TaskClaimBody { queue: String, worker_id: String, #[serde(default = "default_lease_seconds")] lease_seconds: i64 }
 fn default_lease_seconds() -> i64 { 120 }
 
@@ -1478,6 +1522,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/projects", get(list_projects).post(create_project))
         .route("/v1/projects/{project_id}/tasks", get(list_engineering_tasks).post(create_engineering_task))
         .route("/v1/projects/{project_id}/tasks/{task_id}/events", post(append_engineering_task_event))
+        .route("/v1/projects/{project_id}/tasks/{task_id}/transition", post(transition_engineering_task))
         .route("/v1/tasks/claim", post(claim_engineering_task))
         .route("/v1/tasks/{task_id}/heartbeat", post(heartbeat_engineering_task))
         .route("/v1/tasks/{task_id}/checkpoints", post(create_engineering_checkpoint))
