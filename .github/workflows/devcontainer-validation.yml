@@ -26,7 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99
       - name: Validate devcontainer JSON
         run: python -m json.tool .devcontainer/devcontainer.json >/dev/null
       - name: Validate bootstrap shell
