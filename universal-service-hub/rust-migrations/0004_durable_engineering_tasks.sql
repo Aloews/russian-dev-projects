@@ -1,4 +1,5 @@
 CREATE TABLE IF NOT EXISTS engineering_tasks (
+    tenant_id VARCHAR(80) NOT NULL,
     id VARCHAR(36) PRIMARY KEY,
     project_id VARCHAR(80) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     idempotency_key VARCHAR(160) NOT NULL,
@@ -21,7 +22,9 @@ CREATE TABLE IF NOT EXISTS engineering_tasks (
     created_by VARCHAR(200) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(project_id, idempotency_key)
+    UNIQUE(project_id, idempotency_key),
+    UNIQUE(tenant_id, id),
+    CONSTRAINT fk_engineering_tasks_tenant_project FOREIGN KEY (tenant_id, project_id) REFERENCES projects(tenant_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS ix_engineering_tasks_dispatch
     ON engineering_tasks(queue_name, priority ASC, created_at ASC)
@@ -33,6 +36,7 @@ CREATE INDEX IF NOT EXISTS ix_engineering_tasks_lease
     WHERE lease_expires_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS engineering_task_events (
+    tenant_id VARCHAR(80) NOT NULL,
     id VARCHAR(36) PRIMARY KEY,
     task_id VARCHAR(36) NOT NULL REFERENCES engineering_tasks(id) ON DELETE CASCADE,
     project_id VARCHAR(80) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -41,12 +45,15 @@ CREATE TABLE IF NOT EXISTS engineering_task_events (
     idempotency_key VARCHAR(160),
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(task_id, idempotency_key)
+    UNIQUE(task_id, idempotency_key),
+    CONSTRAINT fk_engineering_task_events_tenant_task FOREIGN KEY (tenant_id, task_id) REFERENCES engineering_tasks(tenant_id, id) ON DELETE CASCADE,
+    CONSTRAINT fk_engineering_task_events_tenant_project FOREIGN KEY (tenant_id, project_id) REFERENCES projects(tenant_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS ix_engineering_task_events_task
     ON engineering_task_events(task_id, created_at ASC);
 
 CREATE TABLE IF NOT EXISTS engineering_task_checkpoints (
+    tenant_id VARCHAR(80) NOT NULL,
     id VARCHAR(36) PRIMARY KEY,
     task_id VARCHAR(36) NOT NULL REFERENCES engineering_tasks(id) ON DELETE CASCADE,
     project_id VARCHAR(80) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -56,7 +63,9 @@ CREATE TABLE IF NOT EXISTS engineering_task_checkpoints (
     candidate_sha VARCHAR(64),
     artifact_digest VARCHAR(128),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_engineering_task_checkpoints_tenant_task FOREIGN KEY (tenant_id, task_id) REFERENCES engineering_tasks(tenant_id, id) ON DELETE CASCADE,
+    CONSTRAINT fk_engineering_task_checkpoints_tenant_project FOREIGN KEY (tenant_id, project_id) REFERENCES projects(tenant_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS ix_engineering_task_checkpoints_task
     ON engineering_task_checkpoints(task_id, created_at DESC);
