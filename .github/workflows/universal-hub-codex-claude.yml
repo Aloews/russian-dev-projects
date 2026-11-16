@@ -267,6 +267,9 @@ jobs:
           PY
 
       - name: Deep planning — highest-capability available model
+        id: planning
+        if: steps.starimg.outcome == 'success' && steps.cli.outcome == 'success'
+        continue-on-error: true
         timeout-minutes: 45
         env:
           PLANNING_MODEL: ${{ steps.starimg.outputs.planning_model }}
@@ -303,7 +306,7 @@ jobs:
 
       - name: Run Codex CLI — primary implementation
         id: codex
-        if: steps.starimg.outcome == 'success' && steps.cli.outcome == 'success'
+        if: steps.starimg.outcome == 'success' && steps.cli.outcome == 'success' && steps.planning.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 65
         env:
@@ -386,7 +389,7 @@ jobs:
 
       - name: Run local Ollama/Qwen fallback after cloud-agent failure
         id: local
-        if: ${{ !cancelled() && (steps.starimg.outcome != 'success' || steps.cli.outcome != 'success' || steps.codex.outcome != 'success' || steps.claude.outcome != 'success') }}
+        if: ${{ !cancelled() && (steps.starimg.outcome != 'success' || steps.cli.outcome != 'success' || steps.planning.outcome != 'success' || steps.codex.outcome != 'success' || steps.claude.outcome != 'success') }}
         timeout-minutes: 45
         env:
           TARGET_WORKDIR: ${{ github.workspace }}
