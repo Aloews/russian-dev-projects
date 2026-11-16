@@ -409,7 +409,7 @@ The objective is delivery of the intended, usable product. An agent, model, prov
 
 ## Cross-project agent governance and product lifecycle — 2026-11-16
 
-**Status: IN PROGRESS.** The shared standards are being added in a dedicated documentation PR; they are not active repository policy until that PR is merged and its checks pass.
+**Status: VERIFIED IN MAIN.** Shared standards were merged in PR #57 (merge commit `4232690152ce8e6551ecf10599532918ec51678b`); exact-PR CI and post-merge main CI both passed.
 
 - Repository-wide agent contract: `/AGENTS.md`.
 - GitHub automation and credential boundaries: `.github/AGENTS.md`.
@@ -435,3 +435,13 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - CI runs `43838620761` and `43838636167` both passed on exact PR head `25255dc3cc8ff875eebbc14efa89501852bac2d4`.
 - The change separates Codex/OpenAI Responses from Claude Code/Anthropic Messages, fixes bounded retry handling and retains bounded, redacted upstream error diagnostics.
 - **Live Starimg compatibility has not yet been re-proven after the fix.** The successful CI runs are not evidence that both live provider tool-call probes now pass.
+
+
+## Runtime bootstrap — local launch path
+
+- **Status:** implementation candidate on `feat/ush-local-runtime-bootstrap`; not yet merged or claimed operational.
+- Production binary: Rust Axum/SQLx in `universal-service-hub/Dockerfile`; PostgreSQL 17 is mandatory; SQLx migrations run at process startup. Python/FastAPI is reference/compatibility only.
+- Added a Docker Compose stack, a one-command local startup script that creates strong local-only credentials, waits for database readiness and tests authenticated API access, and a safe stop script that retains the local database volume.
+- Added an exact-CI-head Compose startup smoke test in addition to the existing extensive Docker RBAC/rate-limit smoke test.
+- **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
+- Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
