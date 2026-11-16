@@ -14,6 +14,10 @@ These instructions are the target product's local engineering contract. Follow t
 
 Before work, inspect this file, nested agent instructions, the project map, architecture/ADR records, actual source, dependency manifests, tests, CI and deployment configuration. Identify the exact current commit and baseline.
 
+## Coding-agent compatibility
+
+Keep `AGENTS.md` as the canonical cross-agent contract. Codex CLI loads it through its directory hierarchy. Claude Code supports AGENTS.md in supported versions/configurations; if the target Claude Code runtime does not load it directly or an existing `CLAUDE.md` takes precedence, put `@AGENTS.md` at the top of `CLAUDE.md` and keep only Claude-specific additions below it. Do not duplicate the full contract. In interactive Claude Code sessions, verify loaded files with `/memory` or `/context`; in non-interactive factory runs, explicitly read the applicable AGENTS.md files.
+
 ## Stack and architecture
 
 - Runtime/language: {{RUNTIME_AND_VERSION}}
