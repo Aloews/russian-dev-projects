@@ -37,7 +37,12 @@ USH_API_TOKEN="$(sed -n 's/^USH_API_TOKEN=//p' .env | tail -n 1)"
 USH_DB_PASSWORD="$(sed -n 's/^USH_DB_PASSWORD=//p' .env | tail -n 1)"
 PORT="${PORT:-$(sed -n 's/^PORT=//p' .env | tail -n 1)}"
 PORT="${PORT:-8000}"
-if [[ ! "$PORT" =~ ^[0-9]{1,5}$ ]] || (( PORT < 1 || PORT > 65535 )); then
+if [[ ! "$PORT" =~ ^[0-9]{1,5}$ ]]; then
+  echo "PORT must be an integer from 1 to 65535." >&2
+  exit 1
+fi
+PORT="$((10#$PORT))"
+if (( PORT < 1 || PORT > 65535 )); then
   echo "PORT must be an integer from 1 to 65535." >&2
   exit 1
 fi
@@ -53,7 +58,7 @@ docker compose -f compose.yml up --build -d
 
 base_url="http://127.0.0.1:${PORT:-8000}"
 ready=0
-for attempt in $(seq 1 60); do
+for ((attempt = 1; attempt <= 60; attempt++)); do
   if curl -fsS "$base_url/readyz" >/dev/null; then
     ready=1
     break
