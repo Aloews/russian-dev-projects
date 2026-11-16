@@ -446,3 +446,109 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - **API-only:** the current product has no browser management UI; only health/readiness endpoints are directly viewable in a browser, and administrative workflows use the authenticated HTTP API.
 - **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
 - Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
+
+
+## Adaptive specialist team and recoverable execution
+
+### Execution model
+
+- **Status:** CONFIGURED IN WORKFLOW; live subagent execution is NOT YET VERIFIED.
+- Workflow: `.github/workflows/universal-hub-codex-claude.yml`.
+- Codex subagents are enabled with a maximum of four concurrent child agents and nesting depth one. The primary selected Codex model is the default child model; this avoids silently introducing another provider or unverified model.
+- Four bounded roles are provisioned: `codebase_explorer`, `security_reviewer`, `provider_analyst`, and `test_analyst`. Start with two or three; use the fourth only when it has a distinct task. The main Codex session remains the sole writer and integrator.
+- Claude Code remains the sequential independent reviewer/repair writer after Codex. The main writer must reconcile specialist findings before implementation and ask a read-only specialist to inspect a substantial final diff.
+- Subagents increase token consumption. Do not maximize their count by default; add concurrency only when independent work materially reduces elapsed time or risk. No price/cost advantage is assumed for an unverified model.
+
+### Recovery and evidence
+
+- After the Codex phase, the workflow records a binary Git patch and working-tree status, including on failure/timeout, and uploads them as an Actions artifact with a seven-day retention period.
+- The patch is withheld when the basic secret-pattern scan detects a likely credential. This scan is a guardrail, not a comprehensive secret scanner; the normal candidate secret checks remain mandatory.
+- The checkpoint is not proof of correctness and must not be merged or published without the existing Claude review, candidate validation, exact-SHA CI and independent QA.
+- The Starimg model/tool-call compatibility probe is still not proof that the selected model can delegate subagents. The first completed run must confirm actual spawned-agent activity and collected results. If delegation is unsupported, use the single-writer fallback and record it.
+- The existing long-running run #7 was started before this workflow change and will not inherit the new orchestration or checkpoint steps. Its workspace cannot be recovered through the GitHub API while its runner remains active. Do not claim this change retroactively fixes that run.
+
+### First-run acceptance
+
+1. Codex logs show at least two distinct subagents spawned and their outputs collected, or explicitly record the safe single-writer fallback.
+2. No subagent edits shared files; only the primary Codex process writes during the implementation phase.
+3. The checkpoint artifact exists after Codex and contains a patch/status matching the runner's final pre-review working tree, with no detected secret patterns.
+4. Claude reviews the actual combined diff; candidate scope checks pass; CI runs against the exact candidate SHA.
+5. Any timed-out/failed run retains its checkpoint artifact so a replacement agent can resume from evidence instead of restarting blindly.
+
+- **Isolation limitation:** current custom-role instructions ask subagents not to edit, but they inherit the primary Codex session's sandbox. This is not a hard read-only filesystem boundary. The main agent must inspect the full diff and reject unauthorized or out-of-scope edits. Do not claim technical write isolation until it is separately enforced and tested.
+
+## Continuous technology radar and delivery-acceleration system
+
+### Objective
+
+Continuously discover and evaluate technologies that can materially improve product quality, security, delivery speed, reliability or total cost across the Universal Service Hub and its Product Factory. This is an evidence-driven engineering capability, not a news feed and not permission to adopt every new tool.
+
+### Monitoring cadence and sources
+
+- **Status:** SPECIFIED; automated scheduled monitoring is NOT YET IMPLEMENTED or VERIFIED.
+- Run a lightweight discovery scan weekly. Run a focused review immediately when a critical security advisory affects a used dependency/provider, a material API/model deprecation is announced, or a current delivery workflow repeatedly misses its acceptance/time budget.
+- Prefer primary sources: official release notes and changelogs, vendor documentation and status pages, GitHub releases/security advisories, standards bodies, benchmark datasets and reproducible research. Community discussion may reveal candidates but is not sufficient evidence for adoption.
+- Track relevant areas: coding and reasoning models; agent orchestration and tool protocols; inference gateways and local models; testing/browser automation; build/CI and caching; databases, queues and storage; deployment/runtime platforms; observability/security tooling; image, video, music and voice generation; cross-platform clients.
+- Record source URL, publication/release date, checked date, version/model identifier and the exact capability being evaluated. Detect stale, duplicate and superseded entries.
+
+### Evaluation and prioritization
+
+For each candidate, compare it with the current production or workflow baseline using a small, relevant benchmark:
+- measurable task completion time and end-to-end lead time;
+- first-pass acceptance rate, defect/regression rate and rework;
+- quality against explicit product acceptance criteria;
+- total cost per accepted outcome, including tokens, retries, CI/runtime and human review;
+- reliability, rate limits, context/tool compatibility and failure recovery;
+- security posture, data residency/retention, permissions, supply-chain risk and vendor lock-in;
+- integration effort, operational burden and rollback path.
+
+Classify each candidate as **ADOPT**, **TRIAL**, **WATCH**, or **REJECT**. Every recommendation must state the baseline, evidence, uncertainty, estimated cost, risks, compatibility, expected measurable gain and a falsifiable acceptance threshold. Do not compare models using marketing claims or raw tokens/second alone; measure accepted product outcomes on representative tasks.
+
+### Safe experiment and adoption workflow
+
+1. Discover a candidate and capture its authoritative sources and version.
+2. Check licensing, terms, privacy/data handling, security advisories, API/tool protocol, account availability, regional limits and actual pricing.
+3. Define a bounded benchmark and acceptance threshold before the trial.
+4. Run in an isolated branch, sandbox or staging environment with synthetic/non-sensitive data and a strict spend/time ceiling.
+5. Compare against the current baseline; retain raw test outputs, exact commit/configuration, run IDs and reproducible commands.
+6. Have an independent reviewer inspect the results and security implications.
+7. If the threshold is met, create a scoped implementation PR and update the relevant architecture/integration map. Keep the previous path available for rollback.
+8. If evidence is weak or the threshold is missed, reject or keep watching; record why and when to reassess.
+
+- No automatic production changes, credential sharing, new paid subscriptions, provider switching, dependency upgrades or data transfers based only on a discovery result.
+- Never send private source code, customer data, secrets or production prompts to a candidate provider until its data handling and authorization are verified.
+- A scheduled scan, generated report, model catalogue entry or passing microbenchmark is not proof of faster product delivery. Only end-to-end results on representative accepted tasks count.
+- The radar must prioritize technologies that remove a measured bottleneck in the current roadmap. Avoid adding tools, agents or services that increase coordination/cost without improving the delivered product.
+
+### Required record and success criteria
+
+Maintain a dated technology register with: candidate, category, source/version, discovery date, evaluation owner/agent, current baseline, benchmark, result, cost, risk, decision, follow-up date and evidence links. Add accepted changes and deferred opportunities to this project map; do not silently overwrite previous decisions.
+
+The system is operational only when:
+- scheduled scans execute reliably and their run history is inspectable;
+- source freshness and duplicate detection are tested;
+- candidate scoring is reproducible from recorded evidence;
+- at least one isolated benchmark compares a candidate against the existing baseline;
+- recommendations link to reproducible test evidence and a reviewable PR/issue;
+- false positives, stale recommendations and failed scans are surfaced;
+- no scan can directly mutate production configuration or spend.
+
+Initial implementation sequence:
+1. Add a scheduled GitHub Actions discovery workflow and a versioned technology register.
+2. Add source adapters for official GitHub releases/security advisories and selected vendor/model changelogs; keep source allowlists explicit.
+3. Add relevance filters and candidate scoring tied to the current Hub/Product Factory bottlenecks.
+4. Add isolated benchmark templates for coding-agent throughput, accepted-task quality, CI duration and cost per accepted change.
+5. Publish findings as an issue or artifact; require human/reviewer approval before any adoption PR can change runtime dependencies or provider configuration.
+
+## Technology radar — first automated implementation increment
+
+- **Status:** IMPLEMENTED IN BRANCH; CI and first scheduled/live scan are NOT YET VERIFIED.
+- Scheduled workflow: `.github/workflows/technology-radar.yml`, weekly on Monday at 09:23 UTC and manually dispatchable.
+- Scanner: `.github/scripts/technology_radar.py`. It reads public GitHub release metadata from an explicit allowlist of ten repositories covering OpenAI SDK/agents, MCP, Transformers, Ollama, vLLM, LangGraph, Vercel AI SDK, Supabase and Neon.
+- The scanner stores release tags, publication dates, prerelease flags and official release URLs; compares against the prior snapshot; separates newly observed tags from the initial baseline; reports partial source failures; and fails if every configured source is unavailable.
+- Output: Markdown summary plus JSON evidence artifact, retained for 90 days. A GitHub Actions cache provides the prior comparison snapshot; cache eviction can reset the baseline, in which case the next scan explicitly marks itself as an initial baseline rather than falsely reporting new releases.
+- Regression tests cover initial-baseline semantics, new-tag detection, source failures and the WATCH-only decision boundary. The main Hub CI now runs these tests and actionlint on the scheduled workflow.
+- The scanner is discovery-only. It does not install packages, invoke discovered code, alter providers/models, open adoption PRs or touch production settings. All findings remain WATCH-only until a separately reviewed benchmark proves value.
+- **Current scope limitation:** this first increment monitors public GitHub release feeds only. It does not yet ingest vendor RSS/changelogs, CVE/security advisories, research papers, pricing changes or API deprecations; it does not yet benchmark latency/quality/cost or rank candidates for adoption.
+- **Acceptance still required:** CI must pass on the exact latest PR head; the workflow must execute once successfully against GitHub's API; the artifact must contain a valid snapshot; a subsequent run must prove comparison against the prior baseline. Until then, the scheduled radar is configured but not operationally verified.
+
