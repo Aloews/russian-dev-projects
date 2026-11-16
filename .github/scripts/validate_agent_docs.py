@@ -55,6 +55,11 @@ REQUIRED = {
         "## Product-agnostic verification",
         "## Completion and release rules",
     ),
+    "universal-service-hub/docs/CODING_AGENTS.md": (
+        "## Instruction loading and precedence",
+        "## Provider routing status",
+        "## Self-hosting status and transition",
+    ),
 }
 
 TEMPLATE = ".github/product-factory/templates/AGENTS.md"
@@ -94,6 +99,32 @@ def main() -> None:
         fail("lifecycle must optimize for cost per accepted, verified increment")
     if "OpenAPI" not in lifecycle or "Swagger UI" not in lifecycle:
         fail("lifecycle must define the OpenAPI/Swagger contract relationship")
+
+    self_hosting_sections = {
+        "AGENTS.md": "## Universal Service Hub self-hosting rule",
+        ".github/AGENTS.md": "## Hub self-hosting and bootstrap boundary",
+        ".github/product-factory/AGENTS.md": "## Use of the Universal Service Hub",
+        TEMPLATE: "## Platform orchestration boundary",
+        "universal-service-hub/AGENTS.md": "## Self-hosting development contract",
+        "universal-service-hub/docs/CODING_AGENTS.md": "## Self-hosting status and transition",
+        "universal-service-hub/docs/MAP.md": "## Self-hosting and provider diagnosis",
+    }
+    for relative, marker in self_hosting_sections.items():
+        content = (ROOT / relative).read_text(encoding="utf-8")
+        if marker not in content:
+            fail(f"self-hosting contract section {marker!r} missing from {relative}")
+
+    claude_imports = (
+        "CLAUDE.md",
+        ".github/CLAUDE.md",
+        ".github/product-factory/CLAUDE.md",
+        "universal-service-hub/CLAUDE.md",
+        ".github/product-factory/templates/CLAUDE.md",
+    )
+    for relative in claude_imports:
+        path = ROOT / relative
+        if not path.is_file() or "@AGENTS.md" not in path.read_text(encoding="utf-8"):
+            fail(f"Claude instruction bridge must import canonical AGENTS.md: {relative}")
 
     # Check that the written policy is actually injected into both hosted and local agents.
     required_integration_markers = {

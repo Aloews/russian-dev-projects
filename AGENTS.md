@@ -108,3 +108,16 @@ A green CI badge alone does not prove product readiness. Do not fabricate tests,
 ## Definition of Done
 
 A task is done only when its user outcome and acceptance criteria are met, the relevant checks pass on the exact final commit, the diff is reviewed, documentation and project map reflect reality, security/release gates are satisfied, and reproducible evidence is retained. Otherwise use `in_progress`, `blocked` or `not_verified` and state the precise reason.
+
+
+## Universal Service Hub self-hosting rule
+
+Universal Service Hub is the repository's P0 product and must ultimately be its own engineering control plane.
+
+- **Bootstrap exception only:** while the Hub lacks a verified engineering-task API and isolated executor, a narrowly scoped external bootstrap workflow may create those missing foundations. Every such change must be labelled `bootstrap`, use an isolated PR, and pass exact-SHA checks. This exception is not evidence of dogfooding.
+- **After the self-hosting gate passes:** every implementation task against `universal-service-hub/` must be created, approved, executed and tracked through the Hub's authenticated API. The Hub owns task state, provider/model selection, budget reservation, workspace/tool authorization, execution evidence and recovery. GitHub remains the source repository, CI verifier and PR publication surface; direct GitHub file-edit operations are not the implementation path.
+- The API worker must own the isolated worktree/sandbox and produce a patch, exact base/candidate SHA, test output digests and review evidence. Provider credentials must never enter repository code, model-visible shell environments or untrusted test processes.
+- If the Hub API is unavailable after the gate passes, stop and record a service incident. Do not silently bypass it with direct CLI, GitHub file writes or a second orchestrator. A documented break-glass bootstrap requires a new, bounded recovery change and must be visible in the project map.
+- Do not claim self-hosting until a real task has been submitted to the running Hub API, persisted, executed by a registered provider, verified, recovered after worker/API restart, and published as a candidate with exact-SHA CI evidence.
+
+The current API is not yet self-hosting: inspect `universal-service-hub/docs/MAP.md` for the verified route inventory and missing capabilities. A text-only inference endpoint is not an engineering task runner.
