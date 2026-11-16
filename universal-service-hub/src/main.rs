@@ -1534,6 +1534,46 @@ struct TaskAttemptBody {
     metadata: Value,
 }
 
+fn evidence_has_nonempty_string(evidence: &Value, key: &str) -> bool {
+    evidence.get(key).and_then(Value::as_str).is_some_and(|value|!value.trim().is_empty())
+}
+
+fn worker_completion_evidence_valid(
+    role: &str,
+    next_status: &str,
+    candidate_sha: Option<&str>,
+    evidence: &Value,
+) -> bool {
+    let candidate_matches=|key:&str| candidate_sha.is_some_and(|sha|evidence.get(key).and_then(Value::as_str)==Some(sha));
+    match (role,next_status) {
+        ("architect","queued") => evidence.get("plan").and_then(Value::as_object).is_some()
+            && evidence.get("plan").and_then(|plan|plan.get("tasks")).and_then(Value::as_array).is_some_and(|tasks|!tasks.is_empty()),
+        ("implementer","queued_build" | "queued_test" | "review") =>
+            candidate_matches("commit_sha")
+            && evidence.get("changed_files").and_then(Value::as_array).is_some_and(|files|!files.is_empty())
+            && evidence.get("validation").and_then(Value::as_object).is_some(),
+        ("builder","queued_test" | "review") =>
+            evidence.get("build_status").and_then(Value::as_str)==Some("passed")
+            && evidence_has_nonempty_string(evidence,"build_run_id")
+            && candidate_matches("candidate_sha"),
+        ("tester","review") =>
+            evidence.get("test_status").and_then(Value::as_str)==Some("passed")
+            && evidence_has_nonempty_string(evidence,"test_run_id")
+            && candidate_matches("candidate_sha"),
+        ("reviewer","verified") =>
+            evidence.get("decision").and_then(Value::as_str)==Some("approved")
+            && candidate_matches("reviewed_sha")
+            && evidence.get("findings").and_then(Value::as_array).is_some(),
+        ("recovery","queued" | "failed" | "blocked") =>
+            evidence_has_nonempty_string(evidence,"recovery_reason")
+            && evidence_has_nonempty_string(evidence,"recovery_action"),
+        (_, "blocked" | "recovery" | "failed") =>
+            evidence_has_nonempty_string(evidence,"reason")
+            || evidence_has_nonempty_string(evidence,"error_code"),
+        _ => false,
+    }
+}
+
 fn valid_worktree_path(path: &str) -> bool {
     !path.ends_with('/')
         && safe_workspace_path_prefix(path)
@@ -1717,7 +1757,8 @@ async fn complete_engineering_task(
         || !body.evidence.is_object() || body.evidence.to_string().len()>16_384
         || metadata_contains_sensitive_key(&body.evidence)
         || body.candidate_sha.as_ref().is_some_and(|sha|sha.len()!=40 || !sha.chars().all(|c|c.is_ascii_hexdigit()))
-        || (["queued_build","queued_test","review","verified"].contains(&body.next_status.as_str()) && body.candidate_sha.is_none()) {
+        || (["queued_build","queued_test","review","verified"].contains(&body.next_status.as_str()) && body.candidate_sha.is_none())
+        || !worker_completion_evidence_valid(role,&body.next_status,body.candidate_sha.as_deref(),&body.evidence) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_worker_task_completion"));
     }
     let queue=match body.next_status.as_str() {
@@ -3040,6 +3081,33 @@ mod project_permission_tests {
 #[cfg(test)]
 mod integration_security_tests {
     use super::*;
+
+    #[test]
+    fn worker_completion_requires_role_specific_verifiable_evidence() {
+        let sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert!(worker_completion_evidence_valid("implementer","review",Some(sha),&json!({
+            "commit_sha":sha,"changed_files":["universal-service-hub/src/main.rs"],"validation":{"rustfmt":"passed"}
+        })));
+        assert!(!worker_completion_evidence_valid("implementer","review",Some(sha),&json!({"commit_sha":sha})));
+        assert!(worker_completion_evidence_valid("builder","queued_test",Some(sha),&json!({
+            "build_status":"passed","build_run_id":"run-123","candidate_sha":sha
+        })));
+        assert!(worker_completion_evidence_valid("tester","review",Some(sha),&json!({
+            "test_status":"passed","test_run_id":"run-456","candidate_sha":sha
+        })));
+        assert!(worker_completion_evidence_valid("reviewer","verified",Some(sha),&json!({
+            "decision":"approved","reviewed_sha":sha,"findings":[]
+        })));
+        assert!(!worker_completion_evidence_valid("reviewer","verified",Some(sha),&json!({
+            "decision":"approved","reviewed_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","findings":[]
+        })));
+        assert!(worker_completion_evidence_valid("architect","queued",None,&json!({
+            "plan":{"tasks":[{"title":"Implement API"}]}
+        })));
+        assert!(worker_completion_evidence_valid("recovery","queued",None,&json!({
+            "recovery_reason":"lease expired","recovery_action":"requeue from checkpoint"
+        })));
+    }
 
     #[test]
     fn workspace_worktree_paths_are_relative_and_cannot_escape_the_workspace_root() {
