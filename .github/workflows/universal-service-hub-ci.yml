@@ -5,6 +5,9 @@ name: universal-service-hub-ci
   push:
     paths:
       - "universal-service-hub/**"
+      - "AGENTS.md"
+      - ".github/AGENTS.md"
+      - ".github/product-factory/**"
       - ".github/workflows/universal-service-hub-ci.yml"
       - ".github/workflows/product-factory.yml"
       - ".github/workflows/universal-hub-codex-claude.yml"
@@ -16,6 +19,9 @@ name: universal-service-hub-ci
   pull_request:
     paths:
       - "universal-service-hub/**"
+      - "AGENTS.md"
+      - ".github/AGENTS.md"
+      - ".github/product-factory/**"
       - ".github/workflows/universal-service-hub-ci.yml"
       - ".github/workflows/product-factory.yml"
       - ".github/workflows/universal-hub-codex-claude.yml"
@@ -66,6 +72,9 @@ jobs:
       - name: Product Factory Qwen safety tests
         working-directory: .
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+      - name: Agent contract and product lifecycle documentation
+        working-directory: .
+        run: python3 .github/scripts/validate_agent_docs.py
       - name: Product Factory workflow validation
         working-directory: .
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/product-factory.yml .github/workflows/universal-hub-codex-claude.yml
