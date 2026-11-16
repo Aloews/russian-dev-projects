@@ -89,11 +89,11 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Rust tests
         run: cargo test
-      - name: Create non-superuser app database role
+      - name: Create non-superuser application and runtime database roles
         run: |
           docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
             psql -h 127.0.0.1 -U ush -d ush_test -v ON_ERROR_STOP=1 \
-            -c "CREATE ROLE ush_app LOGIN PASSWORD 'ush-test-password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; GRANT CONNECT ON DATABASE ush_test TO ush_app; GRANT USAGE, CREATE ON SCHEMA public TO ush_app;"
+            -c "CREATE ROLE ush_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; CREATE ROLE ush_app LOGIN PASSWORD 'ush-test-password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; GRANT ush_runtime TO ush_app; GRANT CONNECT ON DATABASE ush_test TO ush_app; GRANT USAGE, CREATE ON SCHEMA public TO ush_app;"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
