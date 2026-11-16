@@ -61,3 +61,12 @@ Work autonomously within the permissions and safety boundaries below.
 - Distinguish provider probe, code correctness, integration readiness and production readiness.
 - Mark a task `VERIFIED` only with evidence from the exact candidate commit. Otherwise use `IN PROGRESS`, `BLOCKED` or `NOT VERIFIED`.
 - A task is complete only when the intended user outcome is delivered, relevant checks pass, the diff is reviewed, documentation reflects reality and all applicable security/release gates are satisfied.
+
+## Local inference fallback
+
+- Codex CLI through Starimg Responses and Claude Code through Starimg Anthropic Messages remain the preferred sequential cloud path when both protocol probes pass.
+- If cloud preflight, CLI installation, Codex execution or Claude review fails, the Hub workflow may invoke the bounded local Ollama/Qwen fallback in the same runner workspace. A fallback run must be explicitly labelled as local; never report it as Codex/Claude work.
+- Local Qwen is one local inference session with role-separated instructions, not a multi-agent team. It may edit only allowlisted Hub source, tests and documentation. It receives no Starimg, fal.ai, GitHub publication or other provider secrets.
+- Local model output is a candidate only. It must pass path/symlink and secret-pattern checks, `git diff --check`, exact-head CI and independent review. Never auto-merge or deploy it.
+- The ephemeral GitHub-hosted runner is a temporary fallback, not proof that a persistent owner-operated GPU runner is connected. A self-hosted runner may be selected only through an explicitly configured runner-label variable and must pass the same controls.
+- Ollama endpoints are restricted to loopback or explicitly allowlisted private hosts after DNS resolution. Never expose the local inference endpoint publicly.
