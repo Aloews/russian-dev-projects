@@ -1248,7 +1248,7 @@ async fn list_engineering_task_attempts(
     } else {
         task_project_scope(&state,&principal,&project_id,false).await?;
     }
-    let rows=sqlx::query("SELECT id,attempt_no,worker_id,worker_role,provider_id,model_id,strategy,outcome,error_code,error_summary,acceptance_progress,estimated_cost_minor,actual_cost_minor,started_at,finished_at FROM engineering_task_attempts WHERE tenant_id=(SELECT tenant_id FROM projects WHERE id=$1) AND project_id=$1 AND task_id=$2 ORDER BY attempt_no ASC")
+    let rows=sqlx::query("SELECT id,attempt_no,worker_id,worker_role,provider_id,model_id,strategy,outcome,error_code,error_summary,acceptance_progress::text AS acceptance_progress,estimated_cost_minor,actual_cost_minor,started_at,finished_at FROM engineering_task_attempts WHERE tenant_id=(SELECT tenant_id FROM projects WHERE id=$1) AND project_id=$1 AND task_id=$2 ORDER BY attempt_no ASC")
         .bind(&project_id).bind(&task_id).fetch_all(&state.db).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_list_failed"))?;
     let values:Vec<Value>=rows.into_iter().map(|row|json!({
@@ -1257,7 +1257,7 @@ async fn list_engineering_task_attempts(
         "provider_id":row.get::<Option<String>,_>("provider_id"),"model_id":row.get::<Option<String>,_>("model_id"),
         "strategy":row.get::<String,_>("strategy"),"outcome":row.get::<String,_>("outcome"),
         "error_code":row.get::<Option<String>,_>("error_code"),"error_summary":row.get::<Option<String>,_>("error_summary"),
-        "acceptance_progress":row.get::<bigdecimal::BigDecimal,_>("acceptance_progress").to_string(),
+        "acceptance_progress":row.get::<String,_>("acceptance_progress"),
         "estimated_cost_minor":row.get::<Option<i64>,_>("estimated_cost_minor"),
         "actual_cost_minor":row.get::<Option<i64>,_>("actual_cost_minor"),
         "started_at":row.get::<DateTime<Utc>,_>("started_at"),"finished_at":row.get::<Option<DateTime<Utc>>,_>("finished_at")
