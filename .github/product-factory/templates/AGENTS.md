@@ -72,3 +72,11 @@ No production deployment, destructive data operation, paid provisioning, credent
 ## Definition of Done
 
 A task is complete only when acceptance criteria pass on the exact final commit, relevant tests and independent review are complete, security/privacy constraints are met, documentation reflects actual behavior, and evidence is reproducible. Otherwise mark it blocked or not verified and explain why.
+
+
+## Platform orchestration boundary
+
+- If the owning organization provides a verified Universal Service Hub engineering API, submit implementation work through that API and follow its task, approval, budget, provider, sandbox and evidence contracts.
+- Do not claim Hub orchestration from a direct CLI session, GitHub Actions job or repository write.
+- If the Hub API is not yet available or fails its published acceptance gate, use only the explicitly authorized transitional runner documented by the project owner. Record that the task is external to the Hub and do not weaken the target repository's security or release controls.
+- The Hub is an orchestrator, not the source of product truth: inspect this repository's own instructions, map, architecture, tests and runtime.

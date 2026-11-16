@@ -409,7 +409,7 @@ The objective is delivery of the intended, usable product. An agent, model, prov
 
 ## Cross-project agent governance and product lifecycle — 2026-11-16
 
-**Status: IN PROGRESS.** The shared standards are being added in a dedicated documentation PR; they are not active repository policy until that PR is merged and its checks pass.
+**Status: VERIFIED IN MAIN.** Shared standards were merged in PR #57 (merge commit `4232690152ce8e6551ecf10599532918ec51678b`); exact-PR CI and post-merge main CI both passed.
 
 - Repository-wide agent contract: `/AGENTS.md`.
 - GitHub automation and credential boundaries: `.github/AGENTS.md`.
@@ -435,3 +435,70 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - CI runs `43838620761` and `43838636167` both passed on exact PR head `25255dc3cc8ff875eebbc14efa89501852bac2d4`.
 - The change separates Codex/OpenAI Responses from Claude Code/Anthropic Messages, fixes bounded retry handling and retains bounded, redacted upstream error diagnostics.
 - **Live Starimg compatibility has not yet been re-proven after the fix.** The successful CI runs are not evidence that both live provider tool-call probes now pass.
+
+
+## Cloud-agent recovery and local inference — implementation candidate
+
+- **Status:** IN PROGRESS; isolated branch `fix/ush-cloud-failover-and-qwen-recovery`. No local fallback is considered operational until the exact candidate head passes repository CI and a controlled cloud-failure run demonstrably invokes Ollama/Qwen.
+- Preferred path remains Codex CLI via Starimg Responses followed by Claude Code via Anthropic Messages. Starimg live compatibility after PR #56 is still unverified; the earlier run #14 failed with HTTP 400 before the route fix and is not evidence about the current main.
+- The workflow now treats cloud preflight/CLI failures as recoverable and invokes the local Qwen path only when the cloud path is unavailable or incomplete. It records which path produced the candidate; a Qwen candidate is never described as a Codex/Claude result.
+- Local runner: Ollama with configurable `USH_LOCAL_CODING_MODEL`, default `qwen2.5-coder:3b`. It is a bounded single local inference session, not independent multi-agent execution. No cloud provider secrets are passed to Qwen.
+- Runtime provider adapter: local Ollama is restricted to loopback or explicitly allowlisted private hosts, validated after DNS resolution. Public and cloud-metadata destinations are rejected. Project capability/provider allowlists and existing authorization remain in force.
+- **Verified on exact candidate head** `a5625b084b56045764e77c3f58046d13d9d7efb7`: GitHub Actions run [#43850068671](https://github.com/Aloews/russian-dev-projects/actions/runs/43850068671) completed successfully. Actionlint, Product Factory/Qwen safety tests, Rust format, Clippy, Rust tests, Ruff, PostgreSQL migration smoke, Python tests, Docker build and container smoke all passed.
+- **Still not verified:** live Ollama health/model discovery/chat against a local runner, and a controlled cloud failure that successfully reaches the local fallback and produces a candidate. Passing CI proves code and workflow validation, not live fallback operation.
+- The workflow supports an optional self-hosted runner label array through repository variable `USH_DEV_RUNNER_LABELS`; without it, it uses `ubuntu-latest`. No self-hosted runner/GPU connection is currently verified.
+- **Not implemented by this increment:** cross-runner durable resume, automatic model selection by GPU/resource availability, separate independent local-model reviewer, production deployment, paid inference or customer-facing task orchestration.
+- Acceptance: exact-head CI; Rust tests for private endpoint allowlisting and existing project/provider authorization; Qwen path/symlink/secret-safety tests; controlled fallback workflow run; candidate PR exact-SHA CI; explicit review of the full diff. No auto-merge.
+
+
+## Runtime bootstrap — local launch path
+
+- **Status:** IN PROGRESS; included in PR #58. Exact-head CI must validate the Compose startup path; a persistent service is not claimed until a real local deployment is checked.
+- Production binary: Rust Axum/SQLx in `universal-service-hub/Dockerfile`; PostgreSQL 17 is mandatory; SQLx migrations run at process startup. Python/FastAPI is reference/compatibility only.
+- Added a Docker Compose stack, a one-command local startup script that creates strong local-only credentials, waits for database readiness and tests authenticated API access, and a safe stop script that retains the local database volume.
+- Added an exact-CI-head Compose startup smoke test in addition to the existing extensive Docker RBAC/rate-limit smoke test.
+- **API-only:** the current product has no browser management UI; only health/readiness endpoints are directly viewable in a browser, and administrative workflows use the authenticated HTTP API.
+- **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
+- Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
+
+
+## Self-hosting and provider diagnosis — current source-backed state
+
+### What the Hub can do now
+
+The Rust Axum API in `src/main.rs` exposes these route families: `/healthz`, `/readyz`, `/v1/projects`, project tokens, `/v1/providers`, provider model discovery, `/v1/integrations/{provider_id}/verify`, provider health/selection, `/v1/ai/chat` and `/v1/audit`. The current `/v1/ai/chat` request schema contains `messages`, `temperature`, `max_tokens` and optional `idempotency_key`; its response is normalized text plus usage/latency/attempt metadata.
+
+### What it cannot do yet
+
+- The `openai_compatible` branch calls `/chat/completions`; it does not implement OpenAI Responses or function-call continuation.
+- The `anthropic` branch calls `/v1/messages` but extracts text blocks only; it does not return `tool_use` blocks or accept `tool_result` continuation.
+- No durable engineering task/job API, repository binding, isolated worktree/container executor, typed tool registry, task budget reservation/approval, checkpoint/restart recovery, candidate patch artifact, independent review or publication gate is exposed by the Hub API.
+- Therefore a direct Starimg CLI run or a call to `/v1/ai/chat` cannot currently be called Hub self-hosting. This is a verified architectural gap, not proof that Starimg itself is incapable.
+
+### Starimg root-cause separation
+
+- Historical run [#43838020363](https://github.com/Aloews/russian-dev-projects/actions/runs/43838020363) failed on pre-PR-#56 SHA `b869071fec321cf6d53dc64ac6e96de05bf8bfce`. PR #56 documented the failure: a Fable/Claude model was selected for OpenAI Responses, causing HTTP 400. The model-family routing fix was merged in PR #56 (merge commit `b0157e6bbdec6f64a2c2c24e11e70969e1aeb1aa`).
+- That fix is in the external Codex/Claude workflow only. A fresh post-merge live probe is still required; do not claim Starimg has been verified after the fix.
+- The Rust Hub API has a separate compatibility gap: no Responses adapter and no Anthropic tool-use handling. A working direct Starimg endpoint does not make the Hub API compatible by itself.
+- The dedicated Hub workflow also contained an unrelated mandatory `FAL_AI_API` secret check despite not invoking fal.ai. Remove this coupling so an unrelated video provider cannot block Starimg coding-agent bootstrap.
+
+### Required self-hosting implementation sequence
+
+| ID | Increment | Acceptance evidence | State |
+|---|---|---|---|
+| SELF-0 | Minimal runtime bootstrap: Rust service + PostgreSQL + authenticated health/readiness | clean Compose startup, SQLx migrations, 401 unauthenticated, authenticated route, exact-head CI | IN PROGRESS; local runtime bootstrap and Qwen recovery are included in PR #58; exact-head CI is pending |
+| SELF-1 | Provider protocols: OpenAI Responses and Anthropic Messages tool-use round-trips, exact model/provider IDs, normalized tool-call envelope | live forced-tool probes through the running Hub API, mocked contract/error/retry tests | NOT STARTED |
+| SELF-2 | Durable engineering task API, project isolation, approval/budget/idempotency and state machine | PostgreSQL integration tests for create/approve/claim/complete/cancel/retry, duplicate and cross-project denial | NOT STARTED |
+| SELF-3 | Isolated workspace worker and typed tools | path/symlink/command/network/secret/CPU/memory/time/output/cancellation tests; no API-process shell | NOT STARTED |
+| SELF-4 | Candidate/evidence/review/publication pipeline | immutable base/candidate SHAs, artifact hashes, independent review, exact-SHA CI and separate publisher | NOT STARTED |
+| SELF-5 | First Hub self-development task through its own API | real API-submitted task creates a patch, passes tests, survives worker restart, and produces a PR; no direct file-edit bypass | NOT STARTED |
+
+**Gate:** do not describe the Hub as self-hosting until SELF-1 through SELF-5 pass. PR #59's local launch script and an ephemeral CI container are bootstrap aids, not a public deployment and not proof of self-hosting.
+
+### Model/provider routing diagnosis
+
+- Codex CLI expects OpenAI Responses. Claude Code expects Anthropic Messages. These protocols are not interchangeable.
+- The current Hub's `openai_compatible` adapter is Chat Completions only. The Anthropic adapter is text-only. Do not route Codex or Claude Code tool execution through `/v1/ai/chat` until the protocol/tool-call contracts above exist.
+- Direct provider tests, Hub-adapter tests and full coding-task tests must be separately recorded with exact model IDs, endpoint/protocol, request class, result, latency and measured usage. Redact prompts and secrets from logs.
+
+

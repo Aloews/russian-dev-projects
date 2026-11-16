@@ -3,10 +3,16 @@ name: universal-service-hub-ci
 
 "on":
   push:
+    branches:
+      - main
     paths:
       - "universal-service-hub/**"
       - "AGENTS.md"
+      - "CLAUDE.md"
+      - ".github/CLAUDE.md"
       - ".github/AGENTS.md"
+      - "CLAUDE.md"
+      - ".github/CLAUDE.md"
       - ".github/product-factory/**"
       - ".github/workflows/universal-service-hub-ci.yml"
       - ".github/workflows/product-factory.yml"
@@ -20,7 +26,11 @@ name: universal-service-hub-ci
     paths:
       - "universal-service-hub/**"
       - "AGENTS.md"
+      - "CLAUDE.md"
+      - ".github/CLAUDE.md"
       - ".github/AGENTS.md"
+      - "CLAUDE.md"
+      - ".github/CLAUDE.md"
       - ".github/product-factory/**"
       - ".github/workflows/universal-service-hub-ci.yml"
       - ".github/workflows/product-factory.yml"
@@ -36,7 +46,7 @@ permissions:
 
 concurrency:
   group: universal-service-hub-${{ github.event.pull_request.head.ref || github.ref_name }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -104,6 +114,24 @@ jobs:
         run: pytest -q
       - name: Docker build
         run: docker build --network=host --progress=plain -t universal-service-hub:test .
+      - name: Local runtime scripts and Compose configuration
+        env:
+          USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
+          USH_DB_PASSWORD: ush-ci-db-password-with-at-least-32-characters
+        run: |
+          bash -n scripts/dev-up.sh scripts/dev-down.sh
+          docker compose --env-file .env.example -f compose.yml config -q
+      - name: Local Compose runtime startup smoke
+        env:
+          USH_IMAGE: universal-service-hub:test
+          USH_SKIP_BUILD: "1"
+        run: |
+          set -eu
+          trap 'docker compose --env-file .env.local -f compose.yml down -v >/dev/null 2>&1 || true' EXIT
+          PORT=18000 bash scripts/dev-up.sh
+          curl -fsS http://127.0.0.1:18000/healthz >/dev/null
+          docker compose --env-file .env.local -f compose.yml ps
+          docker compose --env-file .env.local -f compose.yml logs --no-color hub
       - name: Container smoke test
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters

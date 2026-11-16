@@ -1,5 +1,7 @@
 name: Universal Hub — Codex + Claude Code
-run-name: Universal Hub coding run ${{ github.run_number }}
+# TEMPORARY BOOTSTRAP ONLY: once the Hub engineering-task API passes its dogfooding gate,
+# this workflow must call that API instead of editing Hub source directly.
+run-name: Universal Hub bootstrap (external CLI) ${{ github.run_number }}
 
 "on":
   workflow_dispatch:
@@ -33,7 +35,7 @@ jobs:
        github.actor == 'Aloews' &&
        github.event.comment.body == '/hub run' &&
        (github.event.issue.pull_request != null || github.event.issue.number == 45))
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.USH_DEV_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 180
     env:
       STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
@@ -54,14 +56,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Validate baseline and Starimg secret
-        env:
-          STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
+      - name: Validate baseline
         shell: bash
         run: |
           set -Eeuo pipefail
-          test -n "$STARIMG_API_KEY" || { echo "Missing repository secret STARIMG_API_KEY." >&2; exit 2; }
-          [[ "$STARIMG_BASE_URL" == https://* ]] || { echo "STARIMG_BASE_URL must use HTTPS." >&2; exit 2; }
           [[ "$BASE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "Invalid base_ref." >&2; exit 2; }
           git fetch --no-tags origin "$BASE_REF"
           git checkout --detach "origin/$BASE_REF"
@@ -73,26 +71,20 @@ jobs:
           test -s universal-service-hub/docs/MAP.md
           echo "BASE_SHA=$(cat "$RUNNER_TEMP/universal-hub-base.sha")" >> "$GITHUB_ENV"
 
-      - name: Verify fal.ai credential is configured without exposing its value
-        env:
-          FAL_AI_API: ${{ secrets.FAL_AI_API }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test -n "$FAL_AI_API" || { echo "Missing repository secret FAL_AI_API." >&2; exit 2; }
-          echo "fal.ai credential is configured; its value is not displayed."
-
       - name: Install Codex CLI and Claude Code CLI
+        id: cli
+        continue-on-error: true
         shell: bash
         run: |
           set -Eeuo pipefail
           npm install --global @openai/codex@latest @anthropic-ai/claude-code@latest
           codex --version
           claude --version
-          mkdir -p "$HOME/.codex"
+          mkdir -p "$HOME/.codex/agents"
 
       - name: Discover Starimg models and verify both tool-call protocols
         id: starimg
+        continue-on-error: true
         env:
           STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
         shell: bash
@@ -266,6 +258,9 @@ jobs:
           PY
 
       - name: Deep planning — highest-capability available model
+        id: planning
+        if: steps.starimg.outcome == 'success' && steps.cli.outcome == 'success'
+        continue-on-error: true
         timeout-minutes: 45
         env:
           PLANNING_MODEL: ${{ steps.starimg.outputs.planning_model }}
@@ -301,6 +296,9 @@ jobs:
           echo "Deep planning stage completed with model: $PLANNING_MODEL"
 
       - name: Run Codex CLI — primary implementation
+        id: codex
+        if: steps.starimg.outcome == 'success' && steps.cli.outcome == 'success' && steps.planning.outcome == 'success'
+        continue-on-error: true
         timeout-minutes: 65
         env:
           CODEX_MODEL: ${{ steps.starimg.outputs.codex_model }}
@@ -345,6 +343,9 @@ jobs:
           codex exec --sandbox workspace-write --cd "$GITHUB_WORKSPACE/universal-service-hub" --model "$CODEX_MODEL" "$(cat "$RUNNER_TEMP/codex-task.md")"
 
       - name: Run Claude Code CLI — independent review and repair
+        id: claude
+        if: steps.codex.outcome == 'success'
+        continue-on-error: true
         timeout-minutes: 65
         env:
           CLAUDE_MODEL: ${{ steps.starimg.outputs.claude_model }}
@@ -377,8 +378,64 @@ jobs:
           ORIGIN="${ORIGIN%/v1}"
           ANTHROPIC_BASE_URL="$ORIGIN" ANTHROPIC_API_KEY="$STARIMG_API_KEY" claude -p --tools "Read,Write,Edit,Glob,Grep" --permission-mode bypassPermissions --model "$CLAUDE_MODEL" --max-turns 60 --output-format text "$(cat "$RUNNER_TEMP/claude-review.md")"
 
+      - name: Run local Ollama/Qwen fallback after cloud-agent failure
+        id: local
+        if: ${{ !cancelled() && (steps.starimg.outcome != 'success' || steps.cli.outcome != 'success' || steps.planning.outcome != 'success' || steps.codex.outcome != 'success' || steps.claude.outcome != 'success') }}
+        timeout-minutes: 45
+        env:
+          TARGET_WORKDIR: ${{ github.workspace }}
+          OBJECTIVE: ${{ env.TASK_OBJECTIVE }}
+          OLLAMA_MODEL: ${{ vars.USH_LOCAL_CODING_MODEL || 'qwen2.5-coder:3b' }}
+          ALLOWED_PREFIXES: "universal-service-hub/src;universal-service-hub/app;universal-service-hub/tests;universal-service-hub/docs;universal-service-hub/scripts"
+          CONTEXT_FILES: "universal-service-hub/docs/MAP.md;universal-service-hub/AGENTS.md;universal-service-hub/README.md;universal-service-hub/docs/ARCHITECTURE.md;universal-service-hub/docs/SECURITY_FIRST_ROADMAP.md"
+          QWEN_REVIEW_PATH: universal-service-hub/docs/LOCAL_QWEN_REVIEW.md
+          VERIFICATION_FILE: ${{ runner.temp }}/ush-cloud-agent-status.md
+          PRODUCT_FACTORY_CONTRACT_PATH: ${{ github.workspace }}/.github/product-factory/AGENTS.md
+          TARGET_AGENTS_TEMPLATE_PATH: ${{ github.workspace }}/.github/product-factory/templates/AGENTS.md
+          REALITY_FIRST_SKILL_PATH: ${{ github.workspace }}/.github/product-factory/skills/reality-first-business/SKILL.md
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$RUNNER_TEMP/ush-cloud-agent-status.md" <<EOF
+          Starimg preflight: ${{ steps.starimg.outcome }}
+          CLI installation: ${{ steps.cli.outcome }}
+          Codex execution: ${{ steps.codex.outcome }}
+          Claude review: ${{ steps.claude.outcome }}
+          Cloud coding was unavailable or incomplete. Continue from this runner's current checked-out base and any retained candidate changes. Do not claim cloud-provider success.
+          EOF
+          mkdir -p "$HOME/.ollama/models"
+          if ! command -v ollama >/dev/null 2>&1; then
+            curl --connect-timeout 10 --max-time 120 -fsSL https://ollama.com/install.sh -o "$RUNNER_TEMP/install-ollama.sh"
+            timeout 180s sh "$RUNNER_TEMP/install-ollama.sh"
+          fi
+          if ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+            sudo systemctl stop ollama >/dev/null 2>&1 || true
+            pkill -x ollama >/dev/null 2>&1 || true
+            (OLLAMA_MODELS="$HOME/.ollama/models" nohup ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &)
+            ready=0
+            for _ in $(seq 1 60); do
+              if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null; then ready=1; break; fi
+              sleep 2
+            done
+            if [[ "$ready" != "1" ]]; then
+              tail -n 80 "$RUNNER_TEMP/ollama.log" || true
+              echo "Local Ollama did not become ready." >&2
+              exit 1
+            fi
+          fi
+          if ! timeout 30s ollama show "$OLLAMA_MODEL" >/dev/null 2>&1; then
+            timeout 600s env OLLAMA_MODELS="$HOME/.ollama/models" ollama pull "$OLLAMA_MODEL"
+          fi
+          timeout 30s ollama show "$OLLAMA_MODEL" >/dev/null
+          python3 -m py_compile .github/scripts/qwen_local_agent.py
+          python3 .github/scripts/qwen_local_agent.py
+          echo "model=$OLLAMA_MODEL" >> "$GITHUB_OUTPUT"
+          echo "Local Qwen produced a bounded candidate; exact-head CI and review gates remain mandatory."
+
+
       - name: Validate candidate scope and preserve evidence
         id: candidate
+        if: steps.local.outcome == 'success' || (steps.codex.outcome == 'success' && steps.claude.outcome == 'success')
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -404,7 +461,11 @@ jobs:
           {
             echo "## Universal Hub candidate"
             echo
-            echo "Codex CLI wrote the first implementation pass; Claude Code CLI independently reviewed and repaired it."
+            if [[ "${{ steps.local.outcome }}" == "success" ]]; then
+              echo "Cloud route unavailable or incomplete; local Ollama/Qwen produced the candidate. Exact-head CI and independent review remain mandatory."
+            else
+              echo "Codex CLI wrote the first implementation pass; Claude Code CLI independently reviewed and repaired it."
+            fi
             echo
             echo '~~~text'
             cat "$RUNNER_TEMP/candidate-stat.txt"
@@ -419,6 +480,7 @@ jobs:
           BASE_REF: ${{ inputs.base_ref || 'main' }}
           CODEX_MODEL: ${{ steps.starimg.outputs.codex_model }}
           CLAUDE_MODEL: ${{ steps.starimg.outputs.claude_model }}
+          LOCAL_MODEL: ${{ steps.local.outputs.model }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -449,19 +511,33 @@ jobs:
           echo "Waiting for exact-SHA CI run $run_id on $head_sha."
           gh run watch "$run_id" --exit-status
 
-          gh pr create             --base "$BASE_REF"             --head "$BRANCH_NAME"             --title "feat(universal-hub): Codex + Claude engineering increment"             --body "$(cat <<EOF
+          if [[ -n "$LOCAL_MODEL" ]]; then
+            pr_title="feat(universal-hub): local Qwen fallback engineering increment"
+            implementation_summary="- Local Ollama model: $LOCAL_MODEL
+          - Cloud preflight or coding stage was unavailable/incomplete; local Qwen generated the bounded candidate.
+          - Local model output is not self-certified; exact-head CI and independent review remain mandatory."
+            verification_summary="- Local Ollama API/model availability: passed in this workflow run.
+          - Qwen structured-edit and path checks: passed.
+          - Candidate scope and secret-pattern checks: passed.
+          - Full repository CI on this exact PR head is required before merge."
+          else
+            pr_title="feat(universal-hub): Codex + Claude engineering increment"
+            implementation_summary="- Codex CLI through Starimg Responses API: $CODEX_MODEL
+          - Claude Code CLI through Starimg Anthropic Messages API: $CLAUDE_MODEL
+          - Codex authored the first pass; Claude Code independently reviewed and repaired the candidate."
+            verification_summary="- Starimg Responses API function-call probe: passed before Codex started.
+          - Starimg Anthropic Messages tool-use probe: passed before Claude Code started.
+          - Candidate scope and secret-pattern checks: passed.
+          - Full repository CI on this exact PR head is required before merge."
+          fi
+          gh pr create --base "$BASE_REF" --head "$BRANCH_NAME" --title "$pr_title" --body "$(cat <<EOF
           ## Implementation
 
-          - Codex CLI through Starimg Responses API: $CODEX_MODEL
-          - Claude Code CLI through Starimg Anthropic Messages API: $CLAUDE_MODEL
-          - Codex authored the first pass; Claude Code independently reviewed and repaired the candidate.
+          $implementation_summary
 
           ## Verification
 
-          - Starimg Responses API function-call probe: passed before Codex started.
-          - Starimg Anthropic Messages tool-use probe: passed before Claude Code started.
-          - Candidate scope and secret-pattern checks: passed.
-          - Full repository CI on this exact PR head is required before merge.
+          $verification_summary
 
           ## Safety
 
