@@ -1,0 +1,41 @@
+name: Devcontainer validation
+
+on:
+  pull_request:
+    paths:
+      - ".devcontainer/**"
+      - "universal-service-hub/docs/DEVELOPMENT_ENVIRONMENT.md"
+      - "universal-service-hub/Cargo.toml"
+      - "universal-service-hub/Cargo.lock"
+      - ".github/workflows/devcontainer-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".devcontainer/**"
+      - "universal-service-hub/docs/DEVELOPMENT_ENVIRONMENT.md"
+      - "universal-service-hub/Cargo.toml"
+      - "universal-service-hub/Cargo.lock"
+      - ".github/workflows/devcontainer-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Validate devcontainer JSON
+        run: python -m json.tool .devcontainer/devcontainer.json >/dev/null
+      - name: Validate bootstrap shell
+        run: bash -n .devcontainer/post-create.sh
+      - name: Validate Rust formatting
+        working-directory: universal-service-hub
+        run: cargo fmt --all -- --check
+      - name: Validate Rust manifest
+        working-directory: universal-service-hub
+        run: cargo metadata --no-deps --format-version 1 >/dev/null
