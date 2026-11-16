@@ -185,6 +185,32 @@ jobs:
           viewer_token=$(printf '%s' "$viewer_response" | jq -r '.token')
           echo "::add-mask::$viewer_token"
 
+          architect_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workers \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"name":"architect","worker_id":"architect-smoke","worker_role":"architect"}')
+          architect_token=$(printf '%s' "$architect_response" | jq -r '.token')
+          echo "::add-mask::$architect_token"
+
+          tester_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workers \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"name":"tester","worker_id":"tester-smoke","worker_role":"tester"}')
+          tester_token=$(printf '%s' "$tester_response" | jq -r '.token')
+          echo "::add-mask::$tester_token"
+
+          curl -fsS -H "Authorization: Bearer $owner_token" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/workers | jq -e 'length == 2' >/dev/null
+
+          wrong_worker_queue=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d '{"queue":"planning","worker_id":"tester-smoke"}')
+          test "$wrong_worker_queue" = "403"
+
+          correct_worker_queue=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $architect_token" -H "Content-Type: application/json" \
+            -d '{"queue":"planning","worker_id":"architect-smoke"}')
+          printf '%s' "$correct_worker_queue" | jq -e '.task == null' >/dev/null
+
           curl -fsS -H "Authorization: Bearer $owner_token" \
             http://127.0.0.1:8000/v1/projects/smoke-project/tokens | jq -e 'length == 3' >/dev/null
 
