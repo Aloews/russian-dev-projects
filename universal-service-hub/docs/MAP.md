@@ -45,7 +45,7 @@ Planning is a first-class engineering phase, not a short preamble to coding. The
 1. **Discovery and evidence inventory** — inspect the current commit, project map, architecture, runtime, data model, migrations, auth/tenant boundaries, provider registry, UI, tests, CI and deployment constraints. Record exact paths/symbols and distinguish verified facts from assumptions and unknowns.
 2. **Product and system design** — convert the requested outcome into user journeys, functional/non-functional requirements, explicit non-goals, data/control flows, trust boundaries, failure states and operational constraints. Prefer existing abstractions; justify any new abstraction.
 3. **Task decomposition** — create a dependency DAG of small tasks. Every task must have a stable ID, owner role, objective, exact expected modules/files, prerequisites, inputs/outputs, interface/data contracts, acceptance criteria, tests, risks and required evidence. Tasks must be independently reviewable and sized to fit one bounded implementation pass.
-4. **Resource and model allocation** — reserve the strongest available reasoning model for architecture, security, ambiguity resolution and plan critique. Use a coding-specialist model for implementation and a separate strong model for adversarial review. Prefer Astra 6.1 for deep planning when its exact model ID is present in the live Starimg catalogue and it passes the Anthropic Messages tool-call probe; otherwise fall back to the strongest verified Claude model. Prefer Fable 5.2 for Codex implementation when its exact ID is present and it passes the Responses API function-call probe; otherwise use the verified Codex/GPT candidate. `STARIMG_ASTRA_MODEL`, `STARIMG_FABLE_MODEL` and `STARIMG_PLANNING_MODEL` may explicitly select exact catalogue IDs. Never claim either model was used unless the workflow log records its selected ID and successful protocol probe. Allocate more reasoning turns/time to planning than to routine code edits; preserve meaningful budget for implementation, tests, independent review and repair. Never infer capability from a model name alone: protocol probes and actual results are evidence.
+4. **Resource and model allocation** — choose the execution tool, provider, protocol adapter, exact model and reasoning effort as separate decisions. Codex CLI is the OpenAI coding tool and must use an OpenAI Responses-compatible model; Claude Code CLI is the Anthropic coding tool and must use an Anthropic Messages-compatible model. Fable 5.2 belongs to Claude Code/Messages, never Codex/Responses. Astra is eligible for Codex/Responses only after exact live Starimg catalogue discovery and a successful Responses function-call probe. These are optional specialist routes, not mandatory defaults. Use baseline verified models for ordinary work; escalate only for high-risk/ambiguous work, objective quality failure, or an approved budget route. Run Codex CLI planning followed by an independent Claude Code plan challenge before implementation; then Codex implements and Claude Code reviews. Use dedicated model/task profiles for planning, coding, review, research, classification, vision, image/video/audio/music and embeddings. Model and modality availability must be verified per provider account and endpoint. See [MODEL_SELECTION_RESEARCH.md](./MODEL_SELECTION_RESEARCH.md) for provider specialization, collaboration patterns, research and cost strategy.
 5. **Execution and integration** — execute tasks in topological order, parallelizing only tasks without shared-file or data-contract conflicts. Integrate at explicit checkpoints. Re-plan when evidence invalidates an assumption; record the change and impact before continuing.
 6. **Verification and closure** — map every acceptance criterion to a test or observable artifact. Track task state as `planned`, `in_progress`, `blocked` or `verified`; only use `verified` with exact commit/test/run evidence. A green unit suite does not substitute for API, database, authorization or user-journey checks.
 
@@ -65,6 +65,54 @@ Implementation must not begin until the planner has written the plan to this map
 - unknowns, blockers and non-goals are visible.
 
 The planner may not claim implementation or test completion. The implementation agent must follow the plan, and the independent reviewer must challenge both plan quality and implementation coverage. This protocol applies to every future Hub run and to product projects orchestrated by the Hub.
+
+
+## Evidence-driven model collaboration and token economics
+
+The Hub must optimize for **cost per accepted result**, not lowest token price, maximum agent count or brand prestige. The full research snapshot, sources, model capability taxonomy and implementation DAG are recorded in [MODEL_SELECTION_RESEARCH.md](./MODEL_SELECTION_RESEARCH.md).
+
+### Engineering execution policy
+
+- Default topology: one coordinator, a task DAG, one writer per overlapping file set, deterministic tests and bounded independent review.
+- Use parallel agents only for independent bounded work (separate modules, research streams, hypotheses or test suites). Sequential dependencies, shared mutable files and single slow external operations stay with one agent.
+- Before coding, Codex CLI writes an evidence-based plan; Claude Code CLI independently challenges the plan. After implementation, Claude Code reviews the actual diff; Codex performs shell-based verification and targeted repair where needed.
+- Use model diversity when it provides an independent perspective or a capability unavailable to the primary model. Different vendor names do not guarantee statistically independent errors.
+- Do not run open-ended debate or duplicate full-repository reviews. Every agent receives a bounded task and compact context; every handoff includes evidence and unresolved risks.
+
+### Token and cost controls
+
+Initial configurable budget envelope per engineering increment:
+- Planning/discovery 20–25%.
+- Implementation 40–45%.
+- Verification/review 15–20%.
+- Repair/model-switch reserve 15–20%.
+
+These are initial policy bands, not observed costs. Provider and user balances remain separate. The system must reserve spend before billable calls and reconcile actual usage afterward. If no authoritative balance API exists, use only an explicit approved spend ceiling; do not infer available funds from model coefficients or token credits displayed elsewhere.
+
+Track input, output, cached input, reasoning, tool and retry tokens separately where provider telemetry supports them. Persist exact provider/model/version, adapter, pricing snapshot, task profile, effort, token usage, estimated/actual cost, elapsed time, attempts, tests and acceptance outcome. Never persist credentials or private prompt contents in audit logs.
+
+Optimize in this order: trim irrelevant context; cache stable prefixes; reuse commit-pinned repository evidence; use structured outputs; filter tool logs; batch non-interactive work; tune reasoning effort; escalate only failed criteria; use modality-specific models; bound retries and agent rounds.
+
+### Progress/stagnation controller
+
+Every bounded attempt must state the acceptance criteria it is expected to close and the evidence it will produce. At each checkpoint compare:
+- verified acceptance criteria before/after;
+- previously failing checks now passing;
+- newly found and resolved defects;
+- diff scope and integration state;
+- token/cost burn and remaining verification reserve.
+
+Stop and re-plan after two consecutive attempts with no objective progress, repeated identical failure, malformed outputs/tool failures, or budget burn that threatens verification/repair. Preserve current branch, diff, logs and failing evidence. Change strategy (task split, prompt/contract, context, model family, effort, protocol, tools, tests or topology); do not simply repeat the same call with a larger token allowance. A model switch alone is not progress.
+
+### Current implementation status
+
+- Model family/task taxonomy and research policy: documented.
+- Workflow-level pre-code planner and independent Claude plan challenge: present; exact-run model use still requires logs/probes.
+- Deterministic task-aware model router in the production Rust runtime: not implemented.
+- Token usage/price snapshots and cost-per-accepted-task telemetry: not implemented end-to-end.
+- Separate provider/user balance ledger and reservation: not implemented.
+- Automatic two-no-progress strategy controller: not implemented in runtime.
+- Multimodal routing: provider model discovery exists, but modality-specific generation APIs and capability proofs are not implemented.
 
 ## Current verified state
 
