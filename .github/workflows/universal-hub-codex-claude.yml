@@ -429,7 +429,11 @@ jobs:
           {
             echo "## Universal Hub candidate"
             echo
-            echo "Codex CLI wrote the first implementation pass; Claude Code CLI independently reviewed and repaired it."
+            if [[ "${{ steps.local.outcome }}" == "success" ]]; then
+              echo "Cloud coding was unavailable or incomplete; local Ollama/Qwen produced the candidate. Exact-head CI remains the independent acceptance gate."
+            else
+              echo "Codex CLI wrote the first implementation pass; Claude Code CLI independently reviewed and repaired it."
+            fi
             echo
             echo '~~~text'
             cat "$RUNNER_TEMP/candidate-stat.txt"
@@ -444,6 +448,7 @@ jobs:
           BASE_REF: ${{ inputs.base_ref || 'main' }}
           CODEX_MODEL: ${{ steps.starimg.outputs.codex_model }}
           CLAUDE_MODEL: ${{ steps.starimg.outputs.claude_model }}
+          LOCAL_MODEL: ${{ steps.local.outputs.model }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -474,19 +479,33 @@ jobs:
           echo "Waiting for exact-SHA CI run $run_id on $head_sha."
           gh run watch "$run_id" --exit-status
 
-          gh pr create             --base "$BASE_REF"             --head "$BRANCH_NAME"             --title "feat(universal-hub): Codex + Claude engineering increment"             --body "$(cat <<EOF
+          if [[ -n "$LOCAL_MODEL" ]]; then
+            pr_title="feat(universal-hub): local Qwen fallback engineering increment"
+            implementation_summary="- Local Ollama model: $LOCAL_MODEL
+          - Cloud provider preflight or coding stage was unavailable/incomplete; local Qwen generated the bounded candidate.
+          - Local model output is not self-certified; exact-head CI and independent review remain mandatory."
+            verification_summary="- Local Ollama API and model pull: passed in this workflow run.
+          - Qwen structured-edit/path checks: passed.
+          - Candidate scope and secret-pattern checks: passed.
+          - Full repository CI on this exact PR head is required before merge."
+          else
+            pr_title="feat(universal-hub): Codex + Claude engineering increment"
+            implementation_summary="- Codex CLI through Starimg Responses API: $CODEX_MODEL
+          - Claude Code CLI through Starimg Anthropic Messages API: $CLAUDE_MODEL
+          - Codex authored the first pass; Claude Code independently reviewed and repaired the candidate."
+            verification_summary="- Starimg Responses API function-call probe: passed before Codex started.
+          - Starimg Anthropic Messages tool-use probe: passed before Claude Code started.
+          - Candidate scope and secret-pattern checks: passed.
+          - Full repository CI on this exact PR head is required before merge."
+          fi
+          gh pr create --base "$BASE_REF" --head "$BRANCH_NAME" --title "$pr_title" --body "$(cat <<EOF
           ## Implementation
 
-          - Codex CLI through Starimg Responses API: $CODEX_MODEL
-          - Claude Code CLI through Starimg Anthropic Messages API: $CLAUDE_MODEL
-          - Codex authored the first pass; Claude Code independently reviewed and repaired the candidate.
+          $implementation_summary
 
           ## Verification
 
-          - Starimg Responses API function-call probe: passed before Codex started.
-          - Starimg Anthropic Messages tool-use probe: passed before Claude Code started.
-          - Candidate scope and secret-pattern checks: passed.
-          - Full repository CI on this exact PR head is required before merge.
+          $verification_summary
 
           ## Safety
 
