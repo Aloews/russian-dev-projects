@@ -1169,6 +1169,102 @@ async fn release_engineering_workspace(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize)]
+struct TaskAttemptBody {
+    worker_id: String,
+    lease_token: String,
+    #[serde(default)]
+    provider_id: Option<String>,
+    #[serde(default)]
+    model_id: Option<String>,
+    strategy: String,
+    outcome: String,
+    #[serde(default)]
+    error_code: Option<String>,
+    #[serde(default)]
+    error_summary: Option<String>,
+    acceptance_progress: f64,
+    #[serde(default)]
+    estimated_cost_minor: Option<i64>,
+    #[serde(default)]
+    actual_cost_minor: Option<i64>,
+    #[serde(default)]
+    metadata: Value,
+}
+
+async fn record_engineering_task_attempt(
+    State(state): State<AppState>, headers: HeaderMap, Path(task_id): Path<String>,
+    Json(body): Json<TaskAttemptBody>
+) -> ApiResult<Json<Value>> {
+    let principal=require_worker_identity(&state,&headers).await?;
+    if principal.worker_id.as_deref()!=Some(body.worker_id.as_str())
+        || body.lease_token.len()<32
+        || body.strategy.trim().is_empty() || body.strategy.len()>80
+        || !["started","succeeded","failed","yielded","abandoned"].contains(&body.outcome.as_str())
+        || !body.acceptance_progress.is_finite() || !(0.0..=1.0).contains(&body.acceptance_progress)
+        || body.provider_id.as_ref().is_some_and(|v|v.is_empty() || v.len()>80)
+        || body.model_id.as_ref().is_some_and(|v|v.is_empty() || v.len()>160)
+        || body.error_code.as_ref().is_some_and(|v|v.len()>120)
+        || body.error_summary.as_ref().is_some_and(|v|v.len()>2000)
+        || body.estimated_cost_minor.is_some_and(|v|v<0)
+        || body.actual_cost_minor.is_some_and(|v|v<0)
+        || body.metadata.to_string().len()>8192 {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_task_attempt"));
+    }
+    let project_id=principal.project_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_project_scope_required"))?;
+    let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
+    let lease_hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
+    let mut tx=state.db.begin().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_transaction_failed"))?;
+    let row=sqlx::query("SELECT model_attempts FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+        .bind(&task_id).bind(tenant_id).bind(project_id).bind(&body.worker_id).bind(&lease_hash)
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_lease_check_failed"))?;
+    let Some(row)=row else{return Err(ApiError(StatusCode::CONFLICT,"task_lease_expired_or_invalid"));};
+    let attempt_no:i32=row.try_get::<i32,_>("model_attempts").unwrap_or(0)+1;
+    let attempt_id=Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO engineering_task_attempts (id,tenant_id,project_id,task_id,attempt_no,worker_id,worker_role,provider_id,model_id,strategy,outcome,error_code,error_summary,acceptance_progress,estimated_cost_minor,actual_cost_minor,metadata,finished_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,CASE WHEN $11='started' THEN NULL ELSE NOW() END)")
+        .bind(&attempt_id).bind(tenant_id).bind(project_id).bind(&task_id).bind(attempt_no)
+        .bind(&body.worker_id).bind(principal.worker_role.as_deref().unwrap_or("implementer"))
+        .bind(&body.provider_id).bind(&body.model_id).bind(&body.strategy).bind(&body.outcome)
+        .bind(&body.error_code).bind(&body.error_summary).bind(body.acceptance_progress)
+        .bind(body.estimated_cost_minor).bind(body.actual_cost_minor).bind(&body.metadata)
+        .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_write_failed"))?;
+    sqlx::query("UPDATE engineering_tasks SET model_attempts=$1,last_model_id=COALESCE($2,last_model_id),last_strategy=$3,acceptance_progress=$4,blocked_reason=CASE WHEN $5='failed' THEN $6 ELSE NULL END,updated_at=NOW(),version=version+1 WHERE id=$7 AND tenant_id=$8 AND project_id=$9")
+        .bind(attempt_no).bind(&body.model_id).bind(&body.strategy).bind(body.acceptance_progress)
+        .bind(&body.outcome).bind(&body.error_summary).bind(&task_id).bind(tenant_id).bind(project_id)
+        .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_update_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_commit_failed"))?;
+    audit(&state,&principal.actor,"engineering_task.attempt","engineering_task",&task_id,json!({"attempt_id":attempt_id,"attempt_no":attempt_no,"model_id":body.model_id,"strategy":body.strategy,"outcome":body.outcome})).await;
+    Ok(Json(json!({"id":attempt_id,"task_id":task_id,"attempt_no":attempt_no,"outcome":body.outcome,"acceptance_progress":body.acceptance_progress})))
+}
+
+async fn list_engineering_task_attempts(
+    State(state): State<AppState>, headers: HeaderMap, Path((project_id,task_id)): Path<(String,String)>
+) -> ApiResult<Json<Value>> {
+    let principal=authenticate(&state,&headers).await?;
+    if principal.worker_id.is_some() {
+        if principal.project_id.as_deref()!=Some(project_id.as_str()) {
+            return Err(ApiError(StatusCode::FORBIDDEN,"project_scope_forbidden"));
+        }
+    } else {
+        task_project_scope(&state,&principal,&project_id,false).await?;
+    }
+    let rows=sqlx::query("SELECT id,attempt_no,worker_id,worker_role,provider_id,model_id,strategy,outcome,error_code,error_summary,acceptance_progress,estimated_cost_minor,actual_cost_minor,started_at,finished_at FROM engineering_task_attempts WHERE tenant_id=(SELECT tenant_id FROM projects WHERE id=$1) AND project_id=$1 AND task_id=$2 ORDER BY attempt_no ASC")
+        .bind(&project_id).bind(&task_id).fetch_all(&state.db).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_list_failed"))?;
+    let values:Vec<Value>=rows.into_iter().map(|row|json!({
+        "id":row.get::<String,_>("id"),"attempt_no":row.get::<i32,_>("attempt_no"),
+        "worker_id":row.get::<String,_>("worker_id"),"worker_role":row.get::<String,_>("worker_role"),
+        "provider_id":row.get::<Option<String>,_>("provider_id"),"model_id":row.get::<Option<String>,_>("model_id"),
+        "strategy":row.get::<String,_>("strategy"),"outcome":row.get::<String,_>("outcome"),
+        "error_code":row.get::<Option<String>,_>("error_code"),"error_summary":row.get::<Option<String>,_>("error_summary"),
+        "acceptance_progress":row.get::<bigdecimal::BigDecimal,_>("acceptance_progress").to_string(),
+        "estimated_cost_minor":row.get::<Option<i64>,_>("estimated_cost_minor"),
+        "actual_cost_minor":row.get::<Option<i64>,_>("actual_cost_minor"),
+        "started_at":row.get::<DateTime<Utc>,_>("started_at"),"finished_at":row.get::<Option<DateTime<Utc>>,_>("finished_at")
+    })).collect();
+    Ok(Json(json!(values)))
+}
+
 async fn list_providers(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
     require_admin(&state, &headers).await?;
     let rows = sqlx::query("SELECT id,name,capabilities,priority,enabled,adapter_type,model,base_url,health_status,checked_at,latency_ms FROM providers ORDER BY priority DESC,id")
@@ -2070,6 +2166,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/tasks/claim", post(claim_engineering_task))
         .route("/v1/tasks/{task_id}/heartbeat", post(heartbeat_engineering_task))
         .route("/v1/tasks/{task_id}/checkpoints", post(create_engineering_checkpoint))
+        .route("/v1/tasks/{task_id}/attempts", post(record_engineering_task_attempt))
+        .route("/v1/projects/{project_id}/tasks/{task_id}/attempts", get(list_engineering_task_attempts))
         .route("/v1/projects/{project_id}", put(update_project).delete(delete_project))
         .route("/v1/projects/{project_id}/tokens", get(list_project_tokens).post(create_project_token))
         .route("/v1/projects/{project_id}/tokens/{token_id}", delete(revoke_project_token))
