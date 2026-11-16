@@ -59,7 +59,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           [[ "$BASE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "Invalid base_ref." >&2; exit 2; }
-          [[ "$BASE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "Invalid base_ref." >&2; exit 2; }
           git fetch --no-tags origin "$BASE_REF"
           git checkout --detach "origin/$BASE_REF"
           git checkout -b "$BRANCH_NAME"
@@ -397,6 +396,9 @@ jobs:
           CONTEXT_FILES: "universal-service-hub/docs/MAP.md;universal-service-hub/AGENTS.md;universal-service-hub/README.md;universal-service-hub/docs/ARCHITECTURE.md;universal-service-hub/docs/SECURITY_FIRST_ROADMAP.md"
           QWEN_REVIEW_PATH: universal-service-hub/docs/LOCAL_QWEN_REVIEW.md
           VERIFICATION_FILE: ${{ runner.temp }}/ush-cloud-agent-status.md
+          PRODUCT_FACTORY_CONTRACT_PATH: ${{ github.workspace }}/.github/product-factory/AGENTS.md
+          TARGET_AGENTS_TEMPLATE_PATH: ${{ github.workspace }}/.github/product-factory/templates/AGENTS.md
+          REALITY_FIRST_SKILL_PATH: ${{ github.workspace }}/.github/product-factory/skills/reality-first-business/SKILL.md
         shell: bash
         run: |
           set -Eeuo pipefail
