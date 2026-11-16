@@ -81,6 +81,40 @@ CREATE TABLE IF NOT EXISTS engineering_task_checkpoints (
 CREATE INDEX IF NOT EXISTS ix_engineering_task_checkpoints_task
     ON engineering_task_checkpoints(task_id, created_at DESC);
 
+-- Tenant ownership is immutable; moving a project requires a future audited transfer workflow.
+CREATE FUNCTION ush_prevent_project_tenant_change() RETURNS trigger LANGUAGE plpgsql AS $function$
+BEGIN
+    IF NEW.tenant_id <> OLD.tenant_id THEN
+        RAISE EXCEPTION 'project tenant ownership is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$function$;
+CREATE TRIGGER trg_projects_tenant_immutable BEFORE UPDATE OF tenant_id ON projects
+FOR EACH ROW EXECUTE FUNCTION ush_prevent_project_tenant_change();
+
+-- Attribute audit events to the tenant owning their project/task resource.
+CREATE FUNCTION ush_assign_audit_tenant() RETURNS trigger LANGUAGE plpgsql AS $function$
+BEGIN
+    IF NEW.resource_type = 'project' THEN
+        SELECT tenant_id INTO NEW.tenant_id FROM projects WHERE id=NEW.resource_id;
+    ELSIF NEW.resource_type = 'engineering_task' THEN
+        SELECT tenant_id INTO NEW.tenant_id FROM engineering_tasks WHERE id=NEW.resource_id;
+    END IF;
+    RETURN NEW;
+END;
+$function$;
+CREATE TRIGGER trg_audit_events_assign_tenant BEFORE INSERT ON audit_events
+FOR EACH ROW EXECUTE FUNCTION ush_assign_audit_tenant();
+
+ALTER TABLE tenant_usage_events
+    ADD CONSTRAINT fk_tenant_usage_project
+        FOREIGN KEY (tenant_id, project_id) REFERENCES projects(tenant_id, id) ON DELETE CASCADE,
+    ADD CONSTRAINT fk_tenant_usage_task
+        FOREIGN KEY (tenant_id, task_id) REFERENCES engineering_tasks(tenant_id, id) ON DELETE CASCADE,
+    ADD CONSTRAINT fk_tenant_usage_provider
+        FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE SET NULL;
+
 -- Child records inherit ownership from the task and cannot claim another project.
 CREATE FUNCTION ush_assign_engineering_child_tenant() RETURNS trigger LANGUAGE plpgsql AS $function$
 DECLARE
