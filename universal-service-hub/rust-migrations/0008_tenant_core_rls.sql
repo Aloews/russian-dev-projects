@@ -12,6 +12,7 @@ BEGIN
         'tenant_resource_limits',
         'tenant_budget_policies',
         'tenant_usage_events',
+        'api_rate_limits',
         'projects',
         'audit_events'
     ] LOOP
