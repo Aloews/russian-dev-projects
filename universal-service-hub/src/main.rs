@@ -2405,7 +2405,7 @@ async fn main() -> anyhow::Result<()> {
     let runtime_is_superuser: bool = runtime_role.try_get("rolsuper")?;
     let runtime_bypasses_rls: bool = runtime_role.try_get("rolbypassrls")?;
     if runtime_is_superuser || runtime_bypasses_rls {
-        anyhow::bail!("USH runtime database role must be non-superuser and NOBYPASSRLS; use the dedicated ush_app role");
+        anyhow::bail!("USH runtime database role must be non-superuser and NOBYPASSRLS; use the dedicated ush_runtime role");
     }
     let secret_backend = env::var("USH_SECRET_BACKEND").unwrap_or_else(|_| {
         if runtime_environment == "production" { "infisical".into() } else { "env".into() }
