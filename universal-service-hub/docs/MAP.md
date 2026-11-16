@@ -460,7 +460,13 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Task, event and checkpoint records carry tenant ownership. Database triggers derive ownership from the owning project/task rather than trusting request payloads.
 - Composite foreign keys prevent a task, event or checkpoint from pairing a tenant with another tenant's project/task.
 - Project-scoped PostgreSQL task intake/listing, append-only user context events, version-checked state transitions, worker claims, hashed leases, heartbeat, checkpoint metadata and lease-expiry recovery.
-- Migration version regression test and PostgreSQL tenant schema smoke test added to exact-head CI.
+- Role-bound workers for architect, implementer, builder, tester, reviewer and recovery queues; worker tokens are bound to a tenant/project and a single queue.
+- Multiple workspace records with independent leases, heartbeats, immutable base SHAs, worktree metadata and expired-lease quarantine.
+- Task-to-workspace assignments require both task and workspace leases. Overlapping writer path scopes are protected by transactional PostgreSQL locks; an independent task cannot acquire a conflicting prefix while the first lease is active.
+- Model attempt records retain provider/model, strategy, outcome, error, cost fields and acceptance progress. These are the control-plane records; model selection and retry orchestration remain in the executor adapter.
+- Transaction-local tenant context is applied to task/workspace/attempt APIs. Migration 0006 enables and forces RLS on execution-plane tables; migration 0007 creates a non-login `ush_runtime` role with `SUPERUSER` and `BYPASSRLS` disabled. The Rust API runs its application pool via `SET ROLE ush_runtime` after migrations.
+- Exact-head CI now includes a restricted-role RLS test for tenant A/B visibility, forged cross-tenant writes and transaction-context reset on one reused connection.
+- Migration version regression test and PostgreSQL tenant schema smoke test remain part of CI.
 
 ### API surface currently implemented
 
@@ -470,30 +476,36 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - POST /v1/tasks/claim
 - POST /v1/tasks/{task_id}/heartbeat
 - POST /v1/tasks/{task_id}/checkpoints
+- POST /v1/tasks/{task_id}/attempts and GET /v1/projects/{project_id}/tasks/{task_id}/attempts
+- POST/GET /v1/projects/{project_id}/workspaces; POST lease-next, heartbeat and release
+- POST/DELETE /v1/tasks/{task_id}/workspace-assignment (requires valid task and workspace leases; automatically acquires/releases path locks)
+- Tenant service-token authentication and token lifecycle endpoints are present; human OIDC membership authentication is not.
 
 ### Explicit gaps — do not call this full multi-tenancy yet
 
-- Tenant membership and tenant service-token authentication/management endpoints are not wired into the Rust principal/authentication layer.
-- Existing project tokens remain project-scoped; platform admin remains global. Tenant-level user access and scoped support elevation are outstanding.
-- PostgreSQL RLS is not enabled. It must be introduced only with transaction-scoped context, pool-reuse tests and a non-bypass application DB role.
+- RLS currently covers the execution-plane tables (tasks, events, checkpoints, dependencies, attempts, workspaces, assignments and path locks), not every tenant-owned table. Project, token, provider, usage, audit and identity surfaces still require a full route-by-route RLS/authorization review.
+- The runtime pool now verifies it is operating as `ush_runtime`, a non-login role with neither `SUPERUSER` nor `BYPASSRLS`. The migration connection remains privileged by design; the application connection is role-switched after migrations.
+- Tenant membership rows are not yet bound to a verified human OIDC identity. Tenant service tokens work, but user session identity, invitation/SCIM lifecycle and support elevation are outstanding.
 - Tenant resource limits, budget policies, usage ledger and provider-connection records are schema only; runtime enforcement and billing attribution remain outstanding.
-- Worktree/shell/network isolation, per-tenant caches/artifacts/logs/storage, fair tenant scheduling, tenant export/deletion and penetration tests remain outstanding.
+- Workspace records and path locks are implemented, but actual isolated Git worktree provisioning, persistent workspace storage, shell/network sandboxing, artifacts, caches and per-tenant logs are not yet connected to the Railway execution plane.
+- The GitHub/Starimg USH adapter is implemented behind an explicit one-repository and narrow-path feature flag, but Railway remains disabled until exact-head CI, runtime integration, provider-call and restart/recovery acceptance pass.
+- Independent queue roles and persisted attempts exist in the API. The existing Railway worker is not yet a durable API-backed multi-role scheduler; unrelated tasks are not yet proven to continue concurrently while another waits on CI/review.
+- Fair tenant scheduling, tenant export/deletion and cross-tenant penetration testing remain outstanding.
 - No public signup/onboarding, production deployment or self-hosting acceptance is enabled.
 
 ### Next implementation order
 
-1. Wire tenant identity into `Principal`, token authentication and every project/task route; tenant context must come from verified stored credentials.
-2. Add tenant/workspace/project administration and membership/token lifecycle APIs with least-privilege RBAC.
-3. Add transaction-scoped tenant context and PostgreSQL RLS using a non-owner runtime database role; prove connection-pool isolation.
-4. Add tenant-scoped worker claims, quotas, budget reservations, usage metering and fair scheduling.
-5. Add isolated workspaces, artifact storage and provider-secret references with tenant boundaries.
-6. Add cross-tenant API/database/queue/cache/security tests, tenant export/deletion and support-access audit.
-7. Continue TASK-4–TASK-9 only on the tenant-aware control plane; no Hub self-hosting claim before the API-based recovery and publication acceptance passes.
+1. Pass exact-head Rust/Clippy/migration/Compose/API/RLS tests; repair any failures without weakening gates.
+2. Connect the USH adapter to the durable task and workspace APIs, create persistent Git worktrees on the existing Railway runtime, and checkpoint each accepted unit.
+3. Split architect/implementer/builder/tester/reviewer/recovery into independent queue consumers; keep independent DAG branches moving while CI/review is pending.
+4. Route retries through validated Starimg model candidates and strategy changes, recording every attempt and cost; prove a real provider call in a bounded sandbox.
+5. Complete route-by-route tenant isolation for project/token/provider/usage/audit/artifact surfaces, then OIDC memberships, quotas/budgets, export/deletion and penetration tests.
+6. Activate only the existing Railway runtime with USH-only repo/path scope after sandbox end-to-end acceptance; never enable the other six repositories as a side effect.
+7. Continue Hub self-hosting only after API recovery, multi-workspace execution and publication acceptance passes.
 
 ### Verification evidence
 
-- Migration-collision fix and multi-tenant schema foundation passed exact-head CI run [#43870849099](https://github.com/Aloews/russian-dev-projects/actions/runs/43870849099) on `1dbb093c56975f07eee47d3bbd3f26bc802610d6`. Verified steps: Rust format, Clippy, Rust tests, Alembic/Python tests, Docker build, clean PostgreSQL Compose startup, tenant schema smoke and container smoke.
-- This verifies migration startup and database ownership constraints only. It does **not** verify tenant authentication, membership-aware authorization, RLS, per-tenant execution isolation, budgets, artifact isolation, export/deletion or penetration resistance.
-- **Next implementation increment: tenant identity and authorization.** Extend the authenticated principal with a verified tenant scope; authenticate tenant service tokens and project tokens through stored ownership; implement membership/token lifecycle and tenant/workspace/project administration with least-privilege policy checks. Add deny-by-default cross-tenant API tests before introducing RLS. RLS must use transaction-local context and a non-owner runtime DB role, with pooled-connection leakage tests.
-- Current source inspection confirms `Principal` still has no `tenant_id`; authentication still accepts only the platform admin token and project tokens. Existing task routes enforce project ID but not a first-class tenant principal. This is an explicit security gap, not a completed feature.
-- PR #64 remains open and unmerged. Production deployment and external tenant onboarding remain disabled.
+- Schema foundation passed exact-head CI run [#43870849099](https://github.com/Aloews/russian-dev-projects/actions/runs/43870849099) on `1dbb093c56975f07eee47d3bbd3f26bc802610d6`; this evidence predates the execution-role/RLS/workspace-assignment increment.
+- Current candidate includes RLS/runtime-role migration, transaction context, assignment/path-lock endpoints and expanded CI smoke tests. Exact-head run is required; do not infer success from earlier CI.
+- Current runtime role test is designed to prove non-superuser/non-bypass access, tenant A/B row isolation, denied forged writes and no context leakage across reused transactions. Until the exact run passes, RLS is **implemented but not verified**.
+- PR #64 remains open and unmerged. Railway execution, production deployment and external tenant onboarding remain disabled.
