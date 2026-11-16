@@ -28,7 +28,7 @@ These instructions apply to workflows, composite actions, scripts and agent prof
 
 The Product Factory must be product-agnostic. It may discover a target stack and invoke the appropriate verifier, but it must not impose AUREL-specific architecture, credentials, database policy or deployment assumptions on other products.
 
-The canonical shared engineering skill is `.github/product-factory/skills/reality-first-business/SKILL.md`. Composite actions must inject it from the control repository into isolated agent sessions; prompts must not assume that the target repository already contains the skill.
+The canonical shared engineering contract is `.github/product-factory/AGENTS.md`, supported by the Reality-First Business skill at `.github/product-factory/skills/reality-first-business/SKILL.md` and the target template at `.github/product-factory/templates/AGENTS.md`. Composite actions must inject these into isolated agent sessions; prompts must not assume that the target repository already contains them.
 
 Only the isolated publication job may receive the scoped GitHub write token. Model agents and verification jobs must not receive it. No automatic merge or production deployment is allowed.
 
