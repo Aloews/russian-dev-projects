@@ -1787,6 +1787,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn engineering_worker_roles_are_bound_to_one_queue() {
+        assert_eq!(worker_queue_for_role("architect"), Some("planning"));
+        assert_eq!(worker_queue_for_role("implementer"), Some("implementation"));
+        assert_eq!(worker_queue_for_role("builder"), Some("build"));
+        assert_eq!(worker_queue_for_role("tester"), Some("test"));
+        assert_eq!(worker_queue_for_role("reviewer"), Some("review"));
+        assert_eq!(worker_queue_for_role("recovery"), Some("recovery"));
+        assert_eq!(worker_queue_for_role("operator"), None);
+        assert_eq!(worker_queue_for_role("admin"), None);
+    }
+
+    #[test]
     fn bearer_parser_accepts_only_long_bearer_tokens() {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer 01234567890123456789012345678901".parse().unwrap());
