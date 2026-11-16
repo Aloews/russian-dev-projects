@@ -1193,7 +1193,8 @@ async fn assign_engineering_task_workspace(
         || body.writer_scope.is_empty() || body.writer_scope.len()>50
         || body.writer_scope.iter().any(|path| {
             path.is_empty() || path.len()>500 || path.starts_with('/') || path.contains('\\')
-            || path.split('/').any(|part|part==".." || part.is_empty())
+            || path.ends_with("//")
+            || path.trim_end_matches('/').split('/').any(|part|part==".." || part=="." || part.is_empty())
             || path.chars().any(char::is_control)
         }) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_workspace_assignment"));
