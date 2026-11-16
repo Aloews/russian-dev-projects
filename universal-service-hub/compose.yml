@@ -15,6 +15,7 @@ services:
     restart: unless-stopped
 
   hub:
+    image: universal-service-hub:test
     build:
       context: .
       dockerfile: Dockerfile
