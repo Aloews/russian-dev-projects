@@ -345,6 +345,12 @@ jobs:
               --arg base_sha "$assigned_workspace_base_sha" \
               '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"implementer",writer_scope:["universal-service-hub/src/","universal-service-hub/rust-migrations/"],base_sha:$base_sha}')")
           printf '%s' "$assignment_response" | jq -e '.assignment_id != null and (.writer_scope | length == 2)' >/dev/null
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/heartbeat" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$task_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" | jq -e '.lease_expires_at != null' >/dev/null
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$assigned_workspace_id/heartbeat" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$assigned_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" | jq -e '.lease_expires_at != null' >/dev/null
           second_task=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tasks \
             -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
             -d '{"idempotency_key":"smoke-task-2","title":"Concurrent writer task","objective":"Prove overlapping writer scopes are exclusive","acceptance_criteria":["Reject overlapping writer scope"],"dependencies":[]}')
