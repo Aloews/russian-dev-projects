@@ -287,7 +287,11 @@ async fn require_operator(state: &AppState, headers: &HeaderMap) -> ApiResult<Pr
 }
 
 fn can_access_project(principal: &Principal) -> bool {
-    principal.admin || ["owner", "operator", "viewer"].contains(&principal.role.as_str())
+    principal.admin || [
+        "owner", "operator", "viewer",
+        "tenant_owner", "tenant_admin", "workspace_admin", "project_maintainer",
+        "developer", "reviewer", "auditor",
+    ].contains(&principal.role.as_str())
 }
 
 fn can_manage_project_tokens(principal: &Principal, project_id: &str) -> bool {
@@ -309,10 +313,20 @@ async fn require_project_owner_or_admin(
     project_id: &str,
 ) -> ApiResult<Principal> {
     let principal = authenticate(state, headers).await?;
-    if !can_manage_project_tokens(&principal, project_id) {
-        return Err(ApiError(StatusCode::FORBIDDEN, "project_owner_required"));
+    if can_manage_project_tokens(&principal, project_id) {
+        return Ok(principal);
     }
-    Ok(principal)
+    let tenant_admin = ["tenant_owner", "tenant_admin"].contains(&principal.role.as_str());
+    if tenant_admin {
+        if let Some(tenant_id) = principal.tenant_id.as_deref() {
+            let owns_project = sqlx::query("SELECT id FROM projects WHERE id=$1 AND tenant_id=$2")
+                .bind(project_id).bind(tenant_id).fetch_optional(&state.db).await
+                .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_check_failed"))?
+                .is_some();
+            if owns_project { return Ok(principal); }
+        }
+    }
+    Err(ApiError(StatusCode::FORBIDDEN, "project_owner_required"))
 }
 
 async fn audit(state: &AppState, actor: &str, action: &str, resource_type: &str, resource_id: &str, details: Value) {
@@ -339,12 +353,40 @@ struct TaskCreateBody {
 }
 fn default_task_priority() -> i32 { 100 }
 
-fn task_project_scope(principal: &Principal, project_id: &str) -> ApiResult<()> {
-    if !principal.admin && principal.project_id.as_deref() != Some(project_id) {
-        return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_forbidden"));
+async fn task_project_scope(
+    state: &AppState, principal: &Principal, project_id: &str, write: bool
+) -> ApiResult<()> {
+    if principal.admin { return Ok(()); }
+
+    let project_role_allowed = if write {
+        ["owner", "operator"].contains(&principal.role.as_str())
+    } else {
+        ["owner", "operator", "viewer"].contains(&principal.role.as_str())
+    };
+    if principal.project_id.as_deref() == Some(project_id) {
+        return if project_role_allowed { Ok(()) }
+            else { Err(ApiError(StatusCode::FORBIDDEN, "project_role_forbidden")) };
     }
-    if !principal.admin && !["owner", "operator"].contains(&principal.role.as_str()) {
-        return Err(ApiError(StatusCode::FORBIDDEN, "project_operator_required"));
+
+    let tenant_role_allowed = if write {
+        ["tenant_owner", "tenant_admin", "workspace_admin", "project_maintainer", "developer", "operator"]
+            .contains(&principal.role.as_str())
+    } else {
+        ["tenant_owner", "tenant_admin", "workspace_admin", "project_maintainer", "developer", "reviewer", "operator", "auditor", "viewer"]
+            .contains(&principal.role.as_str())
+    };
+    let Some(tenant_id) = principal.tenant_id.as_deref() else {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_forbidden"));
+    };
+    if !tenant_role_allowed {
+        return Err(ApiError(StatusCode::FORBIDDEN, "tenant_role_forbidden"));
+    }
+    let belongs_to_tenant = sqlx::query("SELECT id FROM projects WHERE id=$1 AND tenant_id=$2")
+        .bind(project_id).bind(tenant_id).fetch_optional(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_check_failed"))?
+        .is_some();
+    if !belongs_to_tenant {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_forbidden"));
     }
     Ok(())
 }
@@ -354,7 +396,7 @@ async fn create_engineering_task(
     Json(body): Json<TaskCreateBody>
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let principal = authenticate(&state, &headers).await?;
-    task_project_scope(&principal, &project_id)?;
+    task_project_scope(&state, &principal, &project_id, true).await?;
     if body.idempotency_key.trim().is_empty() || body.idempotency_key.len() > 160
         || body.title.trim().is_empty() || body.title.len() > 200
         || body.objective.trim().is_empty() || body.objective.len() > 20_000
@@ -404,7 +446,7 @@ async fn list_engineering_tasks(
     State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>
 ) -> ApiResult<Json<Value>> {
     let principal = require_project_access(&state, &headers).await?;
-    task_project_scope(&principal, &project_id).or_else(|e| if principal.role == "viewer" && !principal.admin && principal.project_id.as_deref()==Some(project_id.as_str()) { Ok(()) } else { Err(e) })?;
+    task_project_scope(&state, &principal, &project_id, false).await?;
     let rows = sqlx::query("SELECT id,title,status,queue_name,priority,version,attempt_count,created_at,updated_at FROM engineering_tasks WHERE project_id=$1 ORDER BY priority ASC,created_at ASC LIMIT 200")
         .bind(&project_id).fetch_all(&state.db).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_list_failed"))?;
