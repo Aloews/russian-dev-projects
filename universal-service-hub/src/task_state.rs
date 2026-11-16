@@ -20,6 +20,20 @@ impl TaskStatus {
         }
     }
 
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "received" => Self::Received, "classified" => Self::Classified,
+            "planned" => Self::Planned, "queued" => Self::Queued,
+            "in_progress" => Self::InProgress, "candidate_ready" => Self::CandidateReady,
+            "queued_build" => Self::QueuedBuild, "building" => Self::Building,
+            "queued_test" => Self::QueuedTest, "testing" => Self::Testing,
+            "review" => Self::Review, "verified" => Self::Verified,
+            "blocked" => Self::Blocked, "stalled" => Self::Stalled,
+            "recovery" => Self::Recovery, "cancelled" => Self::Cancelled,
+            "failed" => Self::Failed, _ => return None,
+        })
+    }
+
     pub fn can_transition_to(self, next: Self) -> bool {
         use TaskStatus::*;
         matches!((self, next),
