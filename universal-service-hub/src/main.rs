@@ -1562,7 +1562,7 @@ mod outbound_tests {
             let request = String::from_utf8_lossy(&request[..count]).to_ascii_lowercase();
             assert!(request.contains(&format!("host: ollama.test:{}", address.port())));
             assert!(request.starts_with("get /api/tags "));
-            stream.write_all(b"HTTP/1.1 302 Found\\r\\nLocation: http://169.254.169.254/latest/meta-data/\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n").unwrap();
+            stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/latest/meta-data/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
         });
         let url = url::Url::parse(&format!("http://ollama.test:{}/api/tags", address.port())).unwrap();
         let pinned = SocketAddr::new("127.0.0.1".parse().unwrap(), address.port());
