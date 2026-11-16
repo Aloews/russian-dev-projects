@@ -1,93 +1,111 @@
 # Autonomous Product Factory
 
-## Purpose
+## Purpose and scope
 
-Universal Service Hub is the shared engineering control plane for owned products. Product Factory turns a bounded product objective into implemented code, independent review, automated verification evidence and a pull request. It must deliver working user journeys, not a proposal, demo scaffold or claim based on compilation alone.
+Universal Service Hub is the shared engineering control plane for owned products. Product Factory turns a bounded product objective into an implemented candidate, independent review, automated verification evidence and a pull request. It must deliver working user journeys, not a proposal, demo scaffold or claim based on compilation alone.
 
-The first target is AUREL / Elite Estate in `Aloews/full`. The control repository `Aloews/russian-dev-projects` is private. The current workflow supports private target repositories using a fine-grained GitHub token and stores candidate/verification artifacts in the private Actions run. The first validation target is AUREL, but the platform architecture must remain product-agnostic; do not encode AUREL assumptions into shared orchestration, provider routing or verification.
+The first validation target is AUREL / Elite Estate in `Aloews/full`. The factory architecture must remain product-agnostic: it discovers each target repository's real stack, domain, security boundaries and deployment constraints. It must not impose AUREL assumptions on other products.
 
-## Execution architecture
+## Current workflow configuration
 
-Product Factory runs on GitHub-hosted Ubuntu runners. Railway Cloud Agent Tasks are not used.
+The canonical implementation is `.github/workflows/product-factory.yml`; this section describes the checked-in workflow configuration, not a claim that the latest run delivered a product.
 
-- **Orchestrator:** `.github/workflows/product-factory.yml`. While the control workflow is still on its feature branch, a narrowly scoped push to that workflow file bootstraps a run without merging. After the workflow is merged into the default branch, the owner can also comment exactly `/factory run` on an issue or PR. The comment trigger is restricted to the repository owner and starts the default AUREL objective. `workflow_dispatch` is available after the workflow exists on the default branch.
-- **Senior implementation authority:** Claude Code running Claude Fable 5.2 through the Starimg Anthropic Messages endpoint. Fable reviews the Qwen team's evidence and actual changes, fixes hard problems and owns the final candidate; live tool-call compatibility remains under test.
-- **Local Qwen team:** sequential architecture, product, security, QA, implementation and independent QA roles using Qwen2.5-Coder 3B through Ollama. Findings are written to a transient review file for Fable; the file is removed before candidate publication.
-- **Independent specialists:** read-only architecture reviewer (Claude Opus 5.5), security/privacy reviewer (Claude Sonnet 5.5), product/user-journey analyst (Claude Haiku 5.5), and independent post-change reviewer (Claude Opus 5.5).
-- **Single writer:** Fable is the only agent allowed to modify product files. Specialist agents receive read-only tools.
-- **Agent isolation:** implementation and repair sessions run on separate ephemeral jobs. The model receives repository file tools only; it has no shell, network, Git push, GitHub API, deployment or production-data tool. The shared Reality-First Business skill is injected into the agent session and every specialist profile. Project-level `.claude` and `.mcp.json` configuration is moved out of the agent workspace for the session and restored byte-for-byte afterward; untrusted project hooks/MCP configuration is not loaded. The model cannot modify `.github/workflows/**` or `.github/actions/**`; those controls are maintained separately.
-- **Verification isolation:** each candidate is applied on a fresh runner. stack-aware checks for Rust, Python, Go, Gradle/Maven and Node, plus browser Playwright E2E for detected browser applications and applicable container builds run without the Starimg key or a write token in the test process environment.
-- **Repair:** up to two bounded repair cycles run on new isolated agent jobs and receive the actual failed verification report. The complete gate set is rerun after each repair; tests are never weakened or skipped to manufacture a pass.
-- **Publication isolation:** a separate fresh job receives only the verified patch artifact and the write token. It does not execute project code, package scripts or tests. It checks both the target branch SHA and PR base SHA before applying the patch, disables Git hooks, then creates or updates a PR. An existing working branch must already contain the current PR base; stale branches are rejected rather than silently rebased.
+- **Runner/orchestrator:** GitHub Actions on ephemeral Ubuntu runners. Railway Cloud Agent Tasks are not used.
+- **Initial local team:** Qwen2.5-Coder 3B through Ollama runs a bounded multi-role pass and writes evidence-backed findings for the senior engineer. The workflow allows this step to fail without immediately aborting the run.
+- **Primary hosted route:** OpenRouter Claude Sonnet 4.5, model ID `anthropic/claude-sonnet-4.5`, after a live Anthropic Messages tool-call compatibility check. The workflow sets a per-invocation budget ceiling of USD 15 for the primary implementation action.
+- **Fallback:** local Qwen2.5-Coder 3B is attempted when the OpenRouter implementation action does not succeed. This fallback is not proof that the local model can complete every product task; candidate verification remains mandatory.
+- **Specialists:** architecture, product, security and independent review roles are injected from `.github/product-factory/agents/`. Their tool access is read-only; the primary writer owns product-file edits.
+- **Skill injection:** the canonical Reality-First Business skill is stored at `.github/product-factory/skills/reality-first-business/SKILL.md` and copied into the isolated agent workspace by the composite action. Do not assume the target repository already contains this skill.
+- **Isolation:** model sessions receive repository file tools, not shell, network, Git push, GitHub API, deployment or production-data tools. Target `.claude` and `.mcp.json` configuration is temporarily removed and restored byte-for-byte. The model cannot modify `.github/workflows/**` or `.github/actions/**`.
+- **Verification:** a fresh runner applies the candidate patch and runs stack-aware checks for supported Rust, Python, Go, Gradle/Maven and Node projects, with applicable migration, container and browser E2E checks. Verification does not receive model-provider or publication credentials.
+- **Repair:** up to two bounded repair cycles receive the actual verification report. The complete relevant gate set is rerun; tests must not be weakened or deleted to obtain a pass.
+- **Publication:** a separate fresh job receives only the verified patch artifact and scoped GitHub write token. It checks base and target branch SHAs and publishes a PR. It does not execute candidate code.
 - **Release:** no automatic merge, production deployment, DNS change, paid infrastructure provisioning or production-data mutation.
 
-The agent sessions use per-invocation Claude Code budget ceilings and turn limits: up to $35 for implementation and $20 for each repair cycle. These are local CLI ceilings, not a guarantee of Starimg billing equivalence. Starimg account-level spend limits remain authoritative; verify gateway pricing and budget accounting against the actual account.
+## Provider and model truth
+
+The Product Factory workflow currently uses OpenRouter and local Qwen; Fable/Starimg is not the primary Product Factory route in the checked-in workflow. Do not describe Fable as the current primary implementation model unless a later merged workflow and live run prove that change.
+
+A catalogue listing, configured key, HTTP 200 or successful CLI process exit is not sufficient proof of tool compatibility. The live compatibility check must produce the expected Anthropic tool-use result. Record the exact model ID, endpoint/protocol, tool-call evidence and redacted failure category.
+
+The workflow's `max_budget_usd` is a Claude Code invocation ceiling. It is not proof of actual OpenRouter invoice cost, remaining provider balance or account-level spend. Reconcile provider billing separately. GitHub runner compute is also a separate cost bucket.
+
+## Agent roles and coordination
+
+- **Coordinator:** owns task state, acceptance criteria, budget, dependencies and evidence reconciliation.
+- **Product analyst:** validates user problem, journeys and scope; does not invent demand or market evidence.
+- **Architect:** read-only inspection of existing architecture, data and interfaces.
+- **Security reviewer:** read-only inspection of trust boundaries, authorization, privacy and abuse cases.
+- **Implementation writer:** one writer for each overlapping file set.
+- **Independent reviewer:** inspects the actual diff and surrounding code, not the writer's summary.
+- **Verification runner:** deterministic checks in an isolated job.
+- **Publisher:** receives only a verified patch and narrowly scoped write access.
+
+Do not spawn agents merely to increase headcount. Parallelize only independent work. Preserve one accountable coordinator and a durable task DAG.
 
 ## Required GitHub configuration
 
-The latest workflow run passed the checks for both required repository Actions secrets and the target repository write permission. Keep the values in GitHub Secrets; never paste or print them. The required names are:
+The current workflow references these secrets:
+- `PRODUCT_FACTORY_GITHUB_TOKEN`: fine-grained token scoped to target product repositories, with Contents read/write and Pull requests read/write. It is used for checkout/publication only, never passed to model agents or verification commands.
+- `OPENROUTER_API_KEY`: used for the hosted Claude Sonnet route.
 
-- `STARIMG_API_KEY`: the Starimg API key for the Anthropic-compatible Messages endpoint.
-- `PRODUCT_FACTORY_GITHUB_TOKEN`: fine-grained token scoped only to the target product repositories, with **Contents: read/write** and **Pull requests: read/write**. The workflow preflights target repository write access. The token is used by checkout and the isolated publication job; it is never passed to the model or verification commands.
+The workflow's local Qwen fallback downloads/runs Ollama and Qwen2.5-Coder 3B on the ephemeral runner. No Starimg secret is required by the current Product Factory workflow.
 
-Optional repository Actions variables:
-
-- `STARIMG_ANTHROPIC_BASE_URL`: gateway base URL. Defaults to `https://ai.starimg.ru`; verify the exact endpoint path and Anthropic Messages compatibility against the current Starimg account documentation.
-- `STARIMG_FABLE_MODEL`: defaults to `claude-fable-5-2`.
-
-A model name in a catalogue is not proof that the selected gateway endpoint supports Messages API tool calls. Run 43599416331 passed credential preflight, target write permission and checkout. Fable's action step concluded success but its outcome triggered the Qwen fallback; the Qwen step was still running at last inspection. A green action conclusion alone is not proof of a valid model response or working tool calls; inspect the redacted provider result, candidate artifact and verification output before declaring compatibility. Do not silently substitute a model or provider.
-
-## Current activation blocker
-
-Run `43599416331` on 2026-11-14 passed secret-presence preflight, target repository write-permission check, target checkout and branch preparation. The Fable 5.2 composite action completed with success; the local Qwen fallback step was then observed in progress. The final outcome, provider request/tool-call compatibility, candidate patch and verification result remain unverified until the run and its artifacts complete.
+Never paste or print secret values. A secret's presence is not proof that the associated provider works.
 
 ## Standard run
 
-1. Before merge, a change to `.github/workflows/product-factory.yml` on `feat/ush-autonomous-product-factory` starts the bootstrap run. After merge, the owner can use **Autonomous Product Factory** (`workflow_dispatch`) or comment `/factory run` to start the default AUREL task.
-2. The runner validates the repository/branch allowlist and required credentials, checks target write access, fetches the selected branches and records both starting SHAs.
-3. Fable inspects the real code, project map, delivery plan, tests and CI. Architecture, security and product specialists independently challenge scope and acceptance criteria.
-4. Fable implements the bounded increment and requests read-only review of the actual changes. The runner exports a patch artifact; it does not commit or push from the agent job.
-5. A fresh verification job applies that patch at the recorded SHA and executes the complete gate set. The report is retained as a 30-day workflow artifact.
-6. If any gate fails, Fable receives the captured report in a new isolated job and may repair. The complete gate set is rerun; at most two repair cycles are allowed.
-7. Only a candidate with all gates green reaches the isolated publication job. It rechecks both branch SHAs, pushes the candidate branch and creates or updates a PR. The PR is not merged or deployed.
-8. If no candidate passes, the workflow fails and retains the available verification evidence. It does not publish an unverified candidate.
+1. Validate target repository and branch names, token permissions and the selected target/base branches.
+2. Record exact base and working-branch SHAs.
+3. Run the bounded Qwen multi-role review/implementation pass.
+4. Probe OpenRouter Anthropic Messages tool use.
+5. Run Claude Sonnet 4.5 as the primary hosted implementation writer if the probe succeeds.
+6. Use local Qwen fallback if the primary implementation action fails.
+7. Apply the candidate on a fresh verification runner and execute the complete applicable gate set.
+8. If checks fail and the candidate is repairable, run a bounded repair with actual failure evidence; rerun the complete gate set.
+9. Publish only a candidate that passes verification and SHA checks. Open or update a PR; do not merge or deploy.
+10. Preserve failed logs and evidence. A failed or skipped candidate is not a product delivery.
 
-## First product: AUREL / Elite Estate
+## First validation product: AUREL / Elite Estate
 
 - Repository: `Aloews/full`
-- Default working branch: `factory/elite-estate`
-- Default PR base: `foundation/luxury-estate-platform`
+- Current default working branch input: `factory/elite-estate-rc3`
+- Current default PR base input: `foundation/luxury-estate-platform`
 
-The current branch already contains a Rust/Axum API, PostgreSQL persistence and row-level tenant isolation, evidence-backed property review/publication and a Next.js presentation layer. These are a technical foundation, not a production release. The current target does not yet have a Playwright configuration; the factory must add browser-level tests for the critical user journeys before a candidate can pass.
-
-The factory must close the remaining blockers with evidence:
-
-- Dedicated AUREL PostgreSQL instance and isolated credentials; never reuse Sherlock Scholes or Novel Forge production data.
-- Real identity provider and JWT issuance; the current API's JWT validation contract is not a token-issuing identity system.
-- Rate limits and abuse controls for public enquiries, email verification and a documented PII retention policy.
-- Real licensed property supply, provenance and partner authorization; never fabricate inventory or relationships.
-- Launch jurisdiction, legal entity and licensing/partner model.
-- Staging deployment, browser end-to-end journeys and rollback rehearsal.
-
-The factory may implement jurisdiction-neutral foundations while owner-only legal, partner, credential or infrastructure approvals remain pending. It must record those blockers rather than pretending to complete them.
-
-## Durable evidence and operating rules
-
-- Every product has one authoritative `docs/MAP.md` or explicitly configured equivalent.
-- The project map records implemented behavior, exact checks, verified external connections and remaining blockers separately.
-- Workflow artifacts are temporary evidence; durable architecture and delivery decisions belong in the product repository.
-- Never include API keys, JWT secrets, database URLs, private keys, raw personal data or model credentials in prompts, logs, commits, PRs or artifacts.
-- Review agents are read-only. One writer per run. Concurrency is serialized by target repository and branch.
-- Agents may work only in allowlisted `Aloews/*` repositories and the selected working branch.
-- No agent may merge, deploy production, alter production data, rotate credentials, change DNS, provision paid infrastructure or change billing.
-- A run is not complete until the final PR head has green verification evidence and all product-specific release gates are satisfied.
+The target objective is a functional staging MVP, not a production release. The factory must inspect the current target repository and its own map before making product-specific assumptions. The target still requires evidence for identity/token issuance, public enquiry abuse controls, PII retention, licensed property supply/provenance, launch jurisdiction and legal/partner approvals, staging E2E and rollback. Never fabricate listings, partner relationships or approvals.
 
 ## Product-agnostic verification
 
-The target repository and objective are selected through workflow inputs. Agents infer the stack and domain from the actual project map and source; they must not impose AUREL's Rust/PostgreSQL architecture on other products. Current automated verification covers Rust, Python, Go, Gradle/Maven and Node projects. Playwright is required when a browser application is detected; non-browser Node services are not forced to install a browser stack. Other ecosystems require an explicit verifier adapter before the factory may claim coverage. The first acceptance target remains AUREL, but the orchestration and provider registry are shared.
+The workflow must infer the target stack from source and manifests. It must not impose AUREL's Rust/PostgreSQL architecture on another project. Current verifier coverage is limited to explicitly implemented adapters; an unsupported ecosystem requires a verifier adapter before the factory may claim coverage. Browser products require critical-journey browser E2E before release readiness.
 
-## Cost and runtime limits
+## Durable project evidence
 
-GitHub-hosted runner usage for private repositories is subject to the account's included Actions compute allowance and any overage billing. Starimg model inference is billed separately by Starimg. Configure provider-side spend limits before repeated runs; do not interpret a workflow's successful start as proof of remaining account balance.
+Every target product must maintain:
+- one authoritative project map (normally `docs/MAP.md`);
+- local `AGENTS.md` generated from `.github/product-factory/templates/AGENTS.md` and filled with verified facts;
+- architecture and significant decision records;
+- API contract (OpenAPI) when HTTP APIs exist;
+- setup/build/test instructions;
+- security, privacy and data-lifecycle notes;
+- operational and rollback runbooks;
+- acceptance test matrix and known blockers.
 
-The workflow is bounded by a six-hour agent-job timeout, a maximum of two repair cycles, Claude Code turn/budget limits and one active run per target repository/branch. Qwen's role team runs before Fable; Fable is the senior fixer and the Qwen action remains a bounded fallback if Fable fails.
+The control repository's workflow artifacts are temporary evidence. Product-specific durable decisions belong in the target repository.
+
+## Cost and stop policy
+
+Track model input/output/cache/reasoning usage, tool calls, retries, elapsed time, runner/CI compute, review, repair and provider invoices separately. Optimize cost per accepted, verified increment rather than raw token price or agent count.
+
+Use bounded attempts. After two consecutive attempts without measurable acceptance progress, change the task decomposition, context, model/effort, tool/runtime or verification strategy. Preserve the partial diff and failure evidence. Never infer provider balance or exceed an approved spend ceiling.
+
+## Completion and release rules
+
+A workflow run is not complete merely because an agent action or workflow job reports success. A candidate is publishable only when:
+- requested acceptance criteria map to tests or observable evidence;
+- required checks pass on the exact candidate SHA;
+- independent review has no unresolved blocker;
+- secret/path checks pass;
+- project documentation is updated;
+- limitations and owner-only blockers are explicit.
+
+A PR is a verified candidate, not proof of production readiness. No automatic merge, production deployment, paid provisioning, production-data mutation, DNS change, billing change or credential rotation is permitted.
