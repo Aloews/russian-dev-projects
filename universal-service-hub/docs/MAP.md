@@ -416,6 +416,7 @@ The objective is delivery of the intended, usable product. An agent, model, prov
 - Product Factory orchestration contract: `.github/product-factory/AGENTS.md`.
 - Reusable target-product instruction template: `.github/product-factory/templates/AGENTS.md`.
 - Product development lifecycle and stage gates: `.github/product-factory/PRODUCT_DEVELOPMENT_LIFECYCLE.md`.
+- CI structural validation: `.github/scripts/validate_agent_docs.py`; the CI workflow checks required sections and verifies that the shared contract/template are injected into hosted and local agent runtimes.
 - Universal Service Hub local agent contract: `universal-service-hub/AGENTS.md`.
 - Product Factory runtime description: this map's [Product Factory architecture](./PRODUCT_FACTORY.md).
 
