@@ -11,6 +11,13 @@ This repository contains the Universal Service Hub and the control-plane compone
 
 A nested file may add precision but must not weaken security, evidence, privacy, approval or release requirements in a parent instruction. If instructions conflict, stop the conflicting action, preserve work and record the exact conflict.
 
+## Coding-agent compatibility
+
+- Codex CLI discovers applicable `AGENTS.md` files from repository root through the current working directory; keep root rules general and nested rules scoped.
+- Claude Code can read `AGENTS.md` directly in supported versions/configurations. If a target runtime does not load it, or a project-level `CLAUDE.md` takes precedence, make `CLAUDE.md` import the canonical file with `@AGENTS.md` rather than duplicating the rules.
+- Non-interactive workflows must explicitly read applicable project instructions and must not assume they were auto-loaded. Verify loaded instruction files when the runtime exposes that evidence.
+- Do not maintain divergent copies of the same rules for different models. Add only genuinely tool-specific behavior in a small supplemental file.
+
 ## Repository boundaries
 
 - Distinguish the control repository from every target product repository.
