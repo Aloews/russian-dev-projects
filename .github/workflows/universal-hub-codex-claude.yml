@@ -140,6 +140,8 @@ jobs:
               raise SystemExit("STARIMG_CLAUDE_MODEL is not present in the live Starimg model catalogue.")
           if explicit_planning and explicit_planning not in ids:
               raise SystemExit("STARIMG_PLANNING_MODEL is not present in the live Starimg model catalogue.")
+          if explicit_planning and "claude" not in explicit_planning.lower():
+              raise SystemExit("STARIMG_PLANNING_MODEL must identify a Claude model supported by the Anthropic Messages API.")
 
           codex_candidates = [m for m in ids if re.search(r"codex", m, re.I)]
           if not codex_candidates:
