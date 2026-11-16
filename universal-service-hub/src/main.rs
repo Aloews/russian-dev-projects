@@ -735,7 +735,13 @@ async fn heartbeat_engineering_task(
         .fetch_optional(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_heartbeat_failed"))?;
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let Some(row) = row else { return Err(ApiError(StatusCode::CONFLICT, "task_lease_expired_or_invalid")); };
-    Ok(Json(json!({"task_id":task_id,"lease_generation":row.try_get::<i64,_>("lease_generation").unwrap_or(0),"lease_expires_at":row.try_get::<DateTime<Utc>,_>("lease_expires_at").ok()})))
+    let task_expires:DateTime<Utc>=row.try_get("lease_expires_at")
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_heartbeat_failed"))?;
+    sqlx::query("UPDATE engineering_task_path_locks l SET lease_expires_at=LEAST($1,w.lease_expires_at) FROM engineering_workspaces w WHERE l.tenant_id=$2 AND l.project_id=$3 AND l.task_id=$4 AND l.workspace_id=w.id AND w.state='leased' AND w.lease_expires_at>NOW()")
+        .bind(task_expires).bind(tenant_id).bind(project_id).bind(&task_id)
+        .execute(&state.db).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_path_lock_heartbeat_failed"))?;
+    Ok(Json(json!({"task_id":task_id,"lease_generation":row.try_get::<i64,_>("lease_generation").unwrap_or(0),"lease_expires_at":Some(task_expires)})))
 }
 
 
@@ -1413,7 +1419,14 @@ async fn heartbeat_engineering_workspace(
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_heartbeat_failed"))?;
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let Some(row)=row else{return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));};
-    Ok(Json(json!({"workspace_id":workspace_id,"lease_expires_at":row.try_get::<DateTime<Utc>,_>("lease_expires_at").ok()})))
+    let workspace_expires:DateTime<Utc>=row.try_get("lease_expires_at")
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_heartbeat_failed"))?;
+    sqlx::query("UPDATE engineering_task_path_locks l SET lease_expires_at=LEAST($1,t.lease_expires_at) FROM engineering_tasks t WHERE l.tenant_id=$2 AND l.project_id=$3 AND l.workspace_id=$4 AND l.task_id=t.id AND t.lease_expires_at>NOW()")
+        .bind(workspace_expires).bind(tenant_id).bind(&project_id).bind(&workspace_id)
+        .execute(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_heartbeat_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
+    Ok(Json(json!({"workspace_id":workspace_id,"lease_expires_at":Some(workspace_expires)})))
 }
 
 async fn release_engineering_workspace(
@@ -1432,6 +1445,12 @@ async fn release_engineering_workspace(
     }
     let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
     let hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
+    let active_assignment=sqlx::query("SELECT task_id FROM engineering_task_workspace_assignments WHERE tenant_id=$1 AND project_id=$2 AND workspace_id=$3 AND released_at IS NULL LIMIT 1")
+        .bind(tenant_id).bind(&project_id).bind(&workspace_id).fetch_optional(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_release_check_failed"))?;
+    if active_assignment.is_some() {
+        return Err(ApiError(StatusCode::CONFLICT,"active_task_workspace_assignment_must_be_released"));
+    }
     let result=sqlx::query("UPDATE engineering_workspaces SET state='idle',lease_owner=NULL,lease_token_hash=NULL,lease_expires_at=NULL,last_heartbeat_at=NOW(),head_sha=COALESCE($6,head_sha),updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW()")
         .bind(&workspace_id).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(hash).bind(&body.head_sha)
         .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_release_failed"))?;
