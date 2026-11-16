@@ -514,6 +514,23 @@ async fn create_engineering_checkpoint(
 }
 
 
+async fn recover_expired_task_leases(db: &PgPool) -> Result<u64, sqlx::Error> {
+    let rows = sqlx::query(
+        "UPDATE engineering_tasks SET status=CASE WHEN attempt_count>=max_attempts THEN 'failed' ELSE 'recovery' END, queue_name='recovery', worker_id=NULL, lease_token_hash=NULL, lease_expires_at=NULL, last_error_code='worker_lease_expired', version=version+1, updated_at=NOW() WHERE lease_expires_at IS NOT NULL AND lease_expires_at<NOW() AND status IN ('in_progress','building','testing','review') RETURNING id,project_id,status,attempt_count"
+    ).fetch_all(db).await?;
+    for row in &rows {
+        let id: String = row.try_get("id")?;
+        let project_id: String = row.try_get("project_id")?;
+        let status: String = row.try_get("status")?;
+        let attempts: i32 = row.try_get("attempt_count")?;
+        sqlx::query("INSERT INTO engineering_task_events (id,task_id,project_id,actor,event_type,payload) VALUES ($1,$2,$3,'system:lease-reaper','task.lease_expired',$4)")
+            .bind(Uuid::new_v4().to_string()).bind(&id).bind(&project_id)
+            .bind(json!({"status":status,"attempt_count":attempts}))
+            .execute(db).await?;
+    }
+    Ok(rows.len() as u64)
+}
+
 async fn healthz() -> Json<Value> { Json(json!({"status":"ok","runtime":"rust"})) }
 
 async fn readyz(State(state): State<AppState>) -> ApiResult<Json<Value>> {
@@ -1474,6 +1491,19 @@ async fn main() -> anyhow::Result<()> {
                 Ok(removed) if removed > 0 => info!(removed, "Expired API rate-limit fingerprints pruned"),
                 Ok(_) => {}
                 Err(err) => error!(error = %err, "Failed to prune expired API rate-limit fingerprints"),
+            }
+        }
+    });
+    let recovery_db = db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match recover_expired_task_leases(&recovery_db).await {
+                Ok(recovered) if recovered > 0 => info!(recovered, "Expired engineering task leases recovered"),
+                Ok(_) => {}
+                Err(err) => error!(error = %err, "Engineering task lease recovery failed"),
             }
         }
     });
