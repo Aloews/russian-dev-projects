@@ -32,6 +32,7 @@ REQUIRED = {
         "## Model, provider and budget policy",
         "## Completion contract",
     ),
+    "universal-service-hub/docs/PROJECT_ONBOARDING.md": ("## Agent instruction onboarding",),
     ".github/product-factory/PRODUCT_DEVELOPMENT_LIFECYCLE.md": (
         "## Governing metric",
         "## Stage gates",
@@ -89,6 +90,35 @@ def main() -> None:
         fail("lifecycle must optimize for cost per accepted, verified increment")
     if "OpenAPI" not in lifecycle or "Swagger UI" not in lifecycle:
         fail("lifecycle must define the OpenAPI/Swagger contract relationship")
+
+    # Check that the written policy is actually injected into both hosted and local agents.
+    required_integration_markers = {
+        ".github/actions/product-factory-agent/action.yml": (
+            "product-factory-governance/SKILL.md",
+            "TARGET_AGENTS_TEMPLATE.md",
+        ),
+        ".github/actions/product-factory-qwen-agent/action.yml": (
+            "PRODUCT_FACTORY_CONTRACT_PATH",
+            "TARGET_AGENTS_TEMPLATE_PATH",
+        ),
+        ".github/scripts/qwen_local_agent.py": (
+            "PRODUCT_FACTORY_CONTRACT_PATH",
+            "TARGET_AGENTS_TEMPLATE_PATH",
+            "Apply this shared Product Factory agent contract",
+        ),
+        ".github/workflows/product-factory.yml": (
+            "product-factory-governance/SKILL.md",
+            "Audit the target repository's root and nested AGENTS.md",
+        ),
+    }
+    for relative, markers in required_integration_markers.items():
+        path = ROOT / relative
+        if not path.is_file():
+            fail(f"agent integration file missing: {relative}")
+        content = path.read_text(encoding="utf-8")
+        for marker in markers:
+            if marker not in content:
+                fail(f"agent policy injection marker {marker!r} missing from {relative}")
 
     print(
         "Agent documentation validation passed: "
