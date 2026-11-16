@@ -469,7 +469,7 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - POST /v1/tasks/{task_id}/checkpoints
 
 ### Not implemented or not yet proven
-- Lease-expiry reaper and automatic recovery/requeue.
+- Automatic lease expiry detection and bounded recovery/requeue are implemented; recovery worker execution still requires an external worker.
 - Isolated Git worktrees, path-scoped writer locks and candidate patch packaging.
 - Independent build/test/review workers and trusted evidence ingestion.
 - Budget reservations/enforcement, full DAG scheduling and cycle detection.
