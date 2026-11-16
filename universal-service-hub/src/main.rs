@@ -2173,8 +2173,32 @@ async fn main() -> anyhow::Result<()> {
     if !(1..=10_000).contains(&rate_limit_per_minute) {
         anyhow::bail!("USH_RATE_LIMIT_PER_MINUTE must be between 1 and 10000");
     }
-    let db = PgPoolOptions::new().max_connections(20).acquire_timeout(Duration::from_secs(10)).connect(&database_url).await?;
-    sqlx::migrate!("./rust-migrations").run(&db).await?;
+    // Migrations run with the configured database login. Application traffic must
+    // always execute as ush_runtime, a non-login role with SUPERUSER/BYPASSRLS disabled.
+    let migration_db = PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect(&database_url).await?;
+    sqlx::migrate!("./rust-migrations").run(&migration_db).await?;
+    migration_db.close().await;
+
+    let db = PgPoolOptions::new()
+        .max_connections(20)
+        .acquire_timeout(Duration::from_secs(10))
+        .after_connect(|connection, _metadata| Box::pin(async move {
+            sqlx::query("SET ROLE ush_runtime").execute(connection).await?;
+            Ok(())
+        }))
+        .connect(&database_url).await?;
+    let runtime_role = sqlx::query(
+        "SELECT current_user, r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname=current_user"
+    ).fetch_one(&db).await?;
+    let runtime_role_name: String = runtime_role.try_get("current_user")?;
+    let runtime_is_superuser: bool = runtime_role.try_get("rolsuper")?;
+    let runtime_bypasses_rls: bool = runtime_role.try_get("rolbypassrls")?;
+    if runtime_role_name != "ush_runtime" || runtime_is_superuser || runtime_bypasses_rls {
+        anyhow::bail!("USH runtime database role must be ush_runtime with SUPERUSER and BYPASSRLS disabled");
+    }
     prune_rate_limit_rows(&db).await?;
     let cleanup_db = db.clone();
     tokio::spawn(async move {
