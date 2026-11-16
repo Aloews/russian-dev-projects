@@ -109,6 +109,10 @@ def main() -> None:
             "TARGET_AGENTS_TEMPLATE_PATH",
             "Apply this shared Product Factory agent contract",
         ),
+        ".github/workflows/universal-hub-codex-claude.yml": (
+            "test -s AGENTS.md",
+            "Read repository-root AGENTS.md, .github/AGENTS.md and universal-service-hub/AGENTS.md",
+        ),
         ".github/workflows/product-factory.yml": (
             "product-factory-governance/SKILL.md",
             "Audit the target repository's root and nested AGENTS.md",
