@@ -3,6 +3,7 @@ name: Starimg live protocol compatibility probe
 on:
   workflow_dispatch:
   pull_request:
+    types: [opened, reopened]
     paths:
       - ".github/workflows/starimg-compatibility-probe.yml"
 
