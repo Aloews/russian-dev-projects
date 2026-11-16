@@ -505,6 +505,6 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Root `.devcontainer/devcontainer.json` defines a Linux Rust development container with Docker Engine/Compose v2, GitHub CLI, editor tooling and port forwarding for the Hub API.
 - The post-create script installs Rust formatting/lint components and fetches dependencies. It does not build, test, deploy or access production.
 - `universal-service-hub/docs/DEVELOPMENT_ENVIRONMENT.md` documents Codespaces and local VS Code startup, local app lifecycle, Git worktrees and security limits.
-- A dedicated GitHub Actions workflow validates devcontainer JSON, bootstrap shell syntax, Rust formatting and Cargo manifest metadata.
+- A dedicated GitHub Actions workflow validates devcontainer JSON, bootstrap shell syntax and Cargo manifest metadata.
 - This is a developer workspace for trusted contributors, not the future multi-tenant untrusted-agent sandbox. Tenant-isolated compute, network egress policy, ephemeral credentials, per-tenant budgets and evidence-backed job orchestration remain separate USH implementation gates.
 - No Codespace was provisioned by this change and no paid compute was started. A live Codespace launch plus `bash universal-service-hub/scripts/dev-up.sh` remains required before marking the environment operational.
