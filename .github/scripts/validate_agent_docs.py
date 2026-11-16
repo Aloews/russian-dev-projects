@@ -13,6 +13,7 @@ REQUIRED = {
     "AGENTS.md": (
         "## Instruction hierarchy",
         "## Coding-agent compatibility",
+        "## Coding-agent compatibility",
         "## Required discovery before changes",
         "## Product development lifecycle",
         "## Agent coordination",
