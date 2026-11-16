@@ -33,7 +33,7 @@ jobs:
        github.actor == 'Aloews' &&
        github.event.comment.body == '/hub run' &&
        (github.event.issue.pull_request != null || github.event.issue.number == 45))
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.USH_DEV_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 180
     env:
       STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
