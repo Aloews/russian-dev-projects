@@ -1306,11 +1306,15 @@ async fn assign_engineering_task_workspace(
     let task_lease_hash=hex::encode(Sha256::digest(body.task_lease_token.as_bytes()));
     let workspace_lease_hash=hex::encode(Sha256::digest(body.workspace_lease_token.as_bytes()));
     let mut tx=begin_principal_transaction(&state,&principal).await?;
-    let task=sqlx::query("SELECT queue_name,lease_expires_at FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+    let task=sqlx::query("SELECT queue_name,lease_expires_at,candidate_sha FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
         .bind(&task_id).bind(tenant_id).bind(project_id).bind(worker_id).bind(&task_lease_hash)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_task_check_failed"))?;
     let Some(task)=task else{return Err(ApiError(StatusCode::CONFLICT,"task_lease_expired_or_invalid"));};
     let task_queue:String=task.try_get("queue_name").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_task_check_failed"))?;
+    let task_candidate:Option<String>=task.try_get("candidate_sha").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_task_check_failed"))?;
+    if body.worker_role=="reviewer" && body.candidate_sha.as_deref()!=task_candidate.as_deref() {
+        return Err(ApiError(StatusCode::CONFLICT,"reviewer_candidate_sha_not_current"));
+    }
     if principal.queue_name.as_deref()!=Some(task_queue.as_str()) {
         return Err(ApiError(StatusCode::FORBIDDEN,"worker_queue_scope_forbidden"));
     }
