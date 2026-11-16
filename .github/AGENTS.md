@@ -5,7 +5,7 @@ These instructions apply to workflows, composite actions, scripts and agent prof
 ## Control-plane safety
 
 - Treat GitHub Actions, tokens, workflow permissions, artifacts and publication steps as security boundaries.
-- Use pinned third-party actions by immutable commit SHA.
+- Pin newly added or changed third-party actions by immutable commit SHA. Treat existing mutable action references as legacy debt and migrate them in a separately verified dependency-update change.
 - Grant the minimum permissions per job; do not expose write tokens to model sessions, build/test commands or untrusted project code.
 - Keep implementation, verification and publication in separate jobs/runners where practical.
 - Never execute candidate code in the publication job.
