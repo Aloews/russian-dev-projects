@@ -903,7 +903,7 @@ async fn delete_project(State(state): State<AppState>, headers: HeaderMap, Path(
 async fn list_project_tokens(State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>) -> ApiResult<Json<Value>> {
     require_project_owner_or_admin(&state, &headers, &project_id).await?;
     let rows = sqlx::query("SELECT id,project_id,name,role,created_at,last_used_at,revoked_at FROM project_tokens WHERE project_id=$1 ORDER BY created_at DESC")
-        .bind(&project_id).fetch_all(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_list_failed"))?;
+        .bind(&project_id).fetch_all(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_list_failed"))?;
     let values: Vec<Value> = rows.into_iter().map(|r| json!({
         "id":r.get::<String,_>("id"),"project_id":r.get::<String,_>("project_id"),
         "name":r.get::<String,_>("name"),"role":r.get::<String,_>("role"),
@@ -1018,7 +1018,7 @@ async fn revoke_engineering_worker(
     let principal = require_project_owner_or_admin(&state, &headers, &project_id).await?;
     let mut tx=begin_principal_transaction(&state,&principal).await?;
     let result = sqlx::query("UPDATE engineering_worker_tokens SET revoked_at=NOW() WHERE project_id=$1 AND worker_id=$2 AND revoked_at IS NULL")
-        .bind(&project_id).bind(&worker_id).execute(&state.db).await
+        .bind(&project_id).bind(&worker_id).execute(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "engineering_worker_revoke_failed"))?;
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     if result.rows_affected()==0 { return Err(ApiError(StatusCode::NOT_FOUND, "engineering_worker_not_found")); }
