@@ -1466,10 +1466,14 @@ async fn acquire_engineering_task_path_locks(
     let mut tx=begin_principal_transaction(&state,&principal).await?;
     let task_hash=hex::encode(Sha256::digest(body.task_lease_token.as_bytes()));
     let workspace_hash=hex::encode(Sha256::digest(body.workspace_lease_token.as_bytes()));
-    let task=sqlx::query("SELECT lease_expires_at FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+    let task=sqlx::query("SELECT queue_name,lease_expires_at FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
         .bind(&task_id).bind(tenant_id).bind(&project_id).bind(worker_id).bind(task_hash)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_task_lease_check_failed"))?;
     let Some(task)=task else{return Err(ApiError(StatusCode::CONFLICT,"task_lease_expired_or_invalid"));};
+    let task_queue:String=task.try_get("queue_name").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_task_lease_check_failed"))?;
+    if principal.queue_name.as_deref()!=Some(task_queue.as_str()) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"worker_queue_scope_forbidden"));
+    }
     let task_expiry:DateTime<Utc>=task.try_get("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_task_lease_check_failed"))?;
     let workspace=sqlx::query("SELECT lease_expires_at FROM engineering_workspaces WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
         .bind(&body.workspace_id).bind(tenant_id).bind(&project_id).bind(worker_id).bind(workspace_hash)
@@ -1558,10 +1562,14 @@ async fn record_engineering_task_attempt(
     let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
     let lease_hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
     let mut tx=begin_principal_transaction(&state,&principal).await?;
-    let row=sqlx::query("SELECT model_attempts FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+    let row=sqlx::query("SELECT model_attempts,queue_name FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
         .bind(&task_id).bind(tenant_id).bind(project_id).bind(&body.worker_id).bind(&lease_hash)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_lease_check_failed"))?;
     let Some(row)=row else{return Err(ApiError(StatusCode::CONFLICT,"task_lease_expired_or_invalid"));};
+    let task_queue:String=row.try_get("queue_name").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_lease_check_failed"))?;
+    if principal.queue_name.as_deref()!=Some(task_queue.as_str()) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"worker_queue_scope_forbidden"));
+    }
     let attempt_no:i32=row.try_get::<i32,_>("model_attempts").unwrap_or(0)+1;
     let attempt_id=Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO engineering_task_attempts (id,tenant_id,project_id,task_id,attempt_no,worker_id,worker_role,provider_id,model_id,strategy,outcome,error_code,error_summary,acceptance_progress,estimated_cost_minor,actual_cost_minor,metadata,finished_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,($14::double precision)::numeric,$15,$16,$17,CASE WHEN $11='started' THEN NULL ELSE NOW() END)")
