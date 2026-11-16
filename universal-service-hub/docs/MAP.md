@@ -485,3 +485,11 @@ The Rust Axum API in `src/main.rs` exposes these route families: `/healthz`, `/r
 - It independently checks the live model catalogue, OpenAI Responses function calling and Anthropic Messages tool use using the repository's configured Starimg secret. It prints exact model IDs and bounded redacted error details only; it never prints credentials.
 - This probe tests Starimg directly. It does **not** test the Rust Hub adapter or prove that the Hub can execute a coding task. The Hub adapter needs its own integration tests after Responses/tool-use support is implemented.
 - A partial result is possible: one protocol may pass while the other is unavailable/incompatible. Report each separately; do not mark the provider globally healthy based on one route.
+
+
+### Direct Starimg probe result — 2026-11-16
+
+- **PASS — OpenAI Responses:** model `gpt-5.6-luna`, HTTP 200, returned the expected `function_call` object in run [#43853363812](https://github.com/Aloews/russian-dev-projects/actions/runs/43853363812), workflow commit `0c8e2467052d26f2db48999b3288fe9c00976770`.
+- **PASS — Anthropic Messages:** model `claude-fable-5-2`, HTTP 200, returned the expected `tool_use` object with `tool_choice: auto` in the same run.
+- **Known protocol constraint:** Fable 5.2 rejects forced Anthropic `tool_choice: {type: tool, name: ...}` with HTTP 400 and explicitly instructs use of `auto` or `none`. The direct probe's auto-mode test passes. The external CLI workflow has been changed to use `auto` for its Claude probe; exact-head workflow verification is pending.
+- **Conclusion:** Starimg itself is not shown to be incapable. Its tested Responses and Anthropic Messages routes both support tool use with the tested model/protocol settings. This does not yet prove full Codex CLI/Claude Code CLI task quality, nor the Hub Rust adapter; those are separate gates.
