@@ -591,8 +591,23 @@ async fn claim_engineering_task(
               AND t.project_id=$2 AND t.tenant_id=$6
               AND NOT EXISTS (
                   SELECT 1
+                  FROM engineering_task_dependencies d
+                  JOIN engineering_tasks parent
+                    ON parent.id=d.parent_task_id
+                   AND parent.tenant_id=d.tenant_id
+                   AND parent.project_id=d.project_id
+                  WHERE d.child_task_id=t.id
+                    AND d.tenant_id=t.tenant_id
+                    AND d.project_id=t.project_id
+                    AND parent.status <> 'verified'
+              )
+              AND NOT EXISTS (
+                  SELECT 1
                   FROM jsonb_array_elements_text(t.dependencies) AS dep(dependency_id)
-                  LEFT JOIN engineering_tasks parent ON parent.id=dep.dependency_id
+                  LEFT JOIN engineering_tasks parent
+                    ON parent.id=dep.dependency_id
+                   AND parent.tenant_id=t.tenant_id
+                   AND parent.project_id=t.project_id
                   WHERE parent.id IS NULL OR parent.status <> 'verified'
               )
             ORDER BY t.priority ASC,t.available_at ASC,t.created_at ASC
