@@ -208,8 +208,21 @@ jobs:
           }
           _, response_result = request(origin + "/v1/responses", responses_body)
           response_items = response_result.get("output") or []
-          if not any(item.get("type") == "function_call" and item.get("name") == "ping" for item in response_items if isinstance(item, dict)):
-              raise SystemExit("Starimg Responses API returned no function_call for the Codex compatibility probe.")
+          response_tool_ok = False
+          for item in response_items:
+              if not isinstance(item, dict) or item.get("type") != "function_call" or item.get("name") != "ping":
+                  continue
+              arguments = item.get("arguments") or "{}"
+              if isinstance(arguments, str):
+                  try:
+                      arguments = json.loads(arguments)
+                  except json.JSONDecodeError:
+                      continue
+              if isinstance(arguments, dict) and arguments.get("value") == "CODEX_TOOL_OK":
+                  response_tool_ok = True
+                  break
+          if not response_tool_ok:
+              raise SystemExit("Starimg Responses API returned no valid ping function_call arguments for the Codex compatibility probe.")
 
           claude_headers = {
               "x-api-key": key,
@@ -234,8 +247,12 @@ jobs:
           }
           _, message_result = request(origin + "/v1/messages", messages_body, claude_headers)
           blocks = message_result.get("content") or []
-          if not any(block.get("type") == "tool_use" and block.get("name") == "ping" for block in blocks if isinstance(block, dict)):
-              raise SystemExit("Starimg Messages API returned no tool_use for the Claude Code compatibility probe.")
+          if not any(
+              block.get("type") == "tool_use" and block.get("name") == "ping"
+              and isinstance(block.get("input"), dict) and block["input"].get("value") == "CLAUDE_TOOL_OK"
+              for block in blocks if isinstance(block, dict)
+          ):
+              raise SystemExit("Starimg Messages API returned no valid ping tool_use arguments for the Claude Code compatibility probe.")
 
           if planning_model != claude_model:
               planning_probe = dict(messages_body)
