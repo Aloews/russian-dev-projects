@@ -13,7 +13,6 @@ REQUIRED = {
     "AGENTS.md": (
         "## Instruction hierarchy",
         "## Coding-agent compatibility",
-        "## Coding-agent compatibility",
         "## Required discovery before changes",
         "## Product development lifecycle",
         "## Agent coordination",
@@ -78,7 +77,7 @@ def main() -> None:
         for heading in headings:
             if heading not in text:
                 fail(f"required section {heading!r} missing from {relative}")
-        if relative != TEMPLATE and "{{" in text:
+        if "{{" in text:
             fail(f"unresolved template placeholder found in operational document: {relative}")
 
     template = ROOT / TEMPLATE
