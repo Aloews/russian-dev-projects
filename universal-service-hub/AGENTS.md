@@ -40,7 +40,7 @@ Work autonomously within the permissions and safety boundaries below.
 - Until the Hub API passes its self-hosting acceptance gate, the dedicated GitHub Actions workflow Universal Hub — Codex + Claude Code may be used only as a bounded bootstrap runner to implement missing API/worker capabilities. It is not the permanent engineering path.
 - Codex CLI through Starimg's OpenAI Responses API is the primary implementation writer.
 - Claude Code CLI through Starimg's Anthropic Messages API is the sequential independent reviewer and repair writer. Planning through Claude Code must also use an Anthropic Messages-compatible model; do not silently pass an OpenAI-only model to that client.
-- The workflow discovers exact model IDs from the live Starimg model catalogue and verifies forced tool calling on both protocols before starting either CLI.
+- The workflow discovers exact model IDs from the live Starimg model catalogue, verifies OpenAI Responses function calling, and verifies Anthropic Messages tool use with `tool_choice: auto` before starting either CLI.
 - Keep the two coding agents sequential; never let them write overlapping files concurrently.
 - Both agents may change only `universal-service-hub/`. They must not read or expose secrets, commit, push, create PRs, merge, deploy or mutate production data.
 - GitHub CI validates the exact PR head. A passing model probe is not proof that code is correct; a passing build is not proof of production readiness.
