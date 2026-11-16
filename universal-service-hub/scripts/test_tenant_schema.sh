@@ -270,6 +270,16 @@ INSERT INTO engineering_tasks (id,tenant_id,project_id,idempotency_key,title,obj
 VALUES
  ('aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa','aloews','rls-alpha-project','rls-alpha','Alpha visible','Alpha','test'),
  ('bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb','aloews','rls-beta-project','rls-beta','Beta visible','Beta','test');
+INSERT INTO tenant_usage_events
+  (id,tenant_id,project_id,task_id,idempotency_key,usage_type)
+VALUES
+  ('33333333-3333-4333-8333-333333333333','aloews','rls-beta-project',
+   'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb','rls-beta-usage','model_call');
+INSERT INTO audit_events
+  (id,actor,action,resource_type,resource_id,details)
+VALUES
+  ('44444444-4444-4444-8444-444444444444','rls-test','task.test','engineering_task',
+   'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb','{}'::jsonb);
 COMMIT;
 
 SET ROLE ush_app;
@@ -296,6 +306,17 @@ BEGIN
     OR EXISTS (SELECT 1 FROM engineering_worker_tokens WHERE worker_id='rls-beta-worker') THEN
    RAISE EXCEPTION 'tenant alpha can see another tenant worker credential';
  END IF;
+ IF EXISTS (SELECT 1 FROM projects WHERE id='rls-beta-project')
+    OR NOT EXISTS (SELECT 1 FROM projects WHERE id='rls-alpha-project') THEN
+   RAISE EXCEPTION 'tenant alpha project RLS failed';
+ END IF;
+ IF EXISTS (SELECT 1 FROM tenants WHERE id='tenant-beta') THEN
+   RAISE EXCEPTION 'tenant alpha can read another tenant record';
+ END IF;
+ IF EXISTS (SELECT 1 FROM tenant_usage_events WHERE id='33333333-3333-4333-8333-333333333333')
+    OR EXISTS (SELECT 1 FROM audit_events WHERE id='44444444-4444-4444-8444-444444444444') THEN
+   RAISE EXCEPTION 'tenant alpha can read tenant beta usage or audit data';
+ END IF;
 END;
 $alpha_test$;
 COMMIT;
@@ -311,6 +332,17 @@ BEGIN
  IF (SELECT COUNT(*) FROM engineering_worker_tokens) <> 1
     OR EXISTS (SELECT 1 FROM engineering_worker_tokens WHERE worker_id='rls-alpha-worker') THEN
    RAISE EXCEPTION 'tenant beta can see another tenant worker credential';
+ END IF;
+ IF EXISTS (SELECT 1 FROM projects WHERE id='rls-alpha-project')
+    OR NOT EXISTS (SELECT 1 FROM projects WHERE id='rls-beta-project') THEN
+   RAISE EXCEPTION 'tenant beta project RLS failed';
+ END IF;
+ IF EXISTS (SELECT 1 FROM tenants WHERE id='aloews') THEN
+   RAISE EXCEPTION 'tenant beta can read tenant alpha record';
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM tenant_usage_events WHERE id='33333333-3333-4333-8333-333333333333')
+    OR NOT EXISTS (SELECT 1 FROM audit_events WHERE id='44444444-4444-4444-8444-444444444444') THEN
+   RAISE EXCEPTION 'tenant beta cannot read its own usage or audit data';
  END IF;
  BEGIN
    INSERT INTO engineering_tasks (id,tenant_id,project_id,idempotency_key,title,objective,created_by)
@@ -332,6 +364,10 @@ BEGIN
  END IF;
  IF (SELECT COUNT(*) FROM engineering_worker_tokens) <> 0 THEN
    RAISE EXCEPTION 'missing tenant context exposed worker credentials';
+ END IF;
+ IF EXISTS (SELECT 1 FROM projects) OR EXISTS (SELECT 1 FROM tenants)
+    OR EXISTS (SELECT 1 FROM tenant_usage_events) OR EXISTS (SELECT 1 FROM audit_events) THEN
+   RAISE EXCEPTION 'missing tenant context exposed core tenant data';
  END IF;
 END;
 $no_context_test$;
