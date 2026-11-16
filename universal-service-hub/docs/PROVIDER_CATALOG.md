@@ -119,7 +119,7 @@ Only candidates with a working sandbox integration and automated contract tests 
 
 ## Local inference operating boundary
 
-- Ollama is a first-class local chat/model-discovery adapter in the Rust runtime branch `feat/ush-local-agent-failover`; this is not yet a verified live deployment.
+- Ollama is a first-class local chat/model-discovery adapter in the Rust runtime candidate in PR #58; exact-head CI has passed, but a live Ollama endpoint and deployment are not yet verified.
 - The Hub accepts only loopback or explicitly allowlisted private Ollama hosts via `USH_OLLAMA_ALLOWED_HOSTS`. Public hosts, metadata endpoints and DNS answers outside private/loopback ranges are rejected.
 - Local model routing must retain project capability/provider allowlists, explicit model IDs, health status and audit attribution. Do not silently route a cloud-only or billable workload to local inference if required capabilities (tools, vision, structured output, context length) are missing.
 - The Hub coding workflow now has a bounded Ollama/Qwen fallback path for Starimg/CLI/Codex/Claude unavailability. It reuses an existing local Ollama server/model when present, otherwise installs Ollama and pulls the configured model. The live failure-triggered path remains unverified until an actual fallback workflow run completes.
