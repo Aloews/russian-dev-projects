@@ -112,5 +112,143 @@ BEGIN
   END IF;
 END;
 $test$;
+-- 0005 execution schema: worker role binding, workspace tenancy, DAG and attempt isolation.
+INSERT INTO engineering_tasks
+  (id, tenant_id, project_id, idempotency_key, title, objective, created_by)
+VALUES
+  ('33333333-3333-4333-8333-333333333333', 'aloews', 'tenant-beta-project',
+   'beta-child', 'Beta child task', 'Beta child objective', 'test');
+
+INSERT INTO engineering_workspaces
+  (id, tenant_id, project_id, workspace_key, runtime_provider, repository,
+   base_branch, base_sha, git_worktree_path, git_branch)
+VALUES
+  ('44444444-4444-4444-8444-444444444444', 'aloews', 'tenant-alpha-project',
+   'alpha-workspace', 'railway', 'Aloews/russian-dev-projects', 'main',
+   repeat('a', 40), '/tmp/alpha-worktree', 'ai/alpha'),
+  ('55555555-5555-4555-8555-555555555555', 'aloews', 'tenant-beta-project',
+   'beta-workspace', 'railway', 'Aloews/russian-dev-projects',
+   'feat/ush-durable-task-dispatcher-bootstrap', repeat('b', 40),
+   '/tmp/beta-worktree', 'ai/beta');
+
+INSERT INTO engineering_worker_tokens
+  (id, tenant_id, project_id, name, worker_id, worker_role, queue_name, token_hash)
+VALUES
+  ('66666666-6666-4666-8666-666666666666', 'aloews', 'tenant-beta-project',
+   'beta tester', 'tester-beta', 'tester', 'test', repeat('c', 64));
+
+INSERT INTO engineering_task_attempts
+  (id, tenant_id, project_id, task_id, attempt_no, worker_id, worker_role,
+   provider_id, model_id, strategy, outcome, acceptance_progress)
+VALUES
+  ('77777777-7777-4777-8777-777777777777', 'aloews', 'tenant-beta-project',
+   'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 1, 'tester-beta', 'tester',
+   NULL, 'test-model', 'baseline', 'started', 0.25);
+
+INSERT INTO engineering_task_dependencies
+  (tenant_id, project_id, parent_task_id, child_task_id)
+VALUES
+  ('aloews', 'tenant-beta-project',
+   'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+   '33333333-3333-4333-8333-333333333333');
+
+INSERT INTO engineering_task_workspace_assignments
+  (id, tenant_id, project_id, task_id, workspace_id, worker_role, writer_scope, base_sha)
+VALUES
+  ('88888888-8888-4888-8888-888888888888', 'aloews', 'tenant-beta-project',
+   'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+   '55555555-5555-4555-8555-555555555555', 'implementer',
+   '["universal-service-hub/src/"]'::jsonb, repeat('b', 40));
+
+INSERT INTO engineering_task_path_locks
+  (id, tenant_id, project_id, task_id, workspace_id, path_prefix, lock_owner, lease_expires_at)
+VALUES
+  ('99999999-9999-4999-8999-999999999999', 'aloews', 'tenant-beta-project',
+   'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+   '55555555-5555-4555-8555-555555555555',
+   'universal-service-hub/src/', 'implementer-beta', NOW() + INTERVAL '2 minutes');
+
+UPDATE engineering_task_checkpoints
+SET workspace_id='55555555-5555-4555-8555-555555555555',
+    git_ref='ai/beta',
+    worktree_path='/tmp/beta-worktree'
+WHERE id='ffffffff-ffff-4fff-8fff-ffffffffffff';
+UPDATE engineering_tasks
+SET last_checkpoint_id='ffffffff-ffff-4fff-8fff-ffffffffffff'
+WHERE id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+DO $execution_test$
+BEGIN
+  IF (SELECT tenant_id FROM engineering_workspaces
+      WHERE id='55555555-5555-4555-8555-555555555555') <> 'tenant-beta' THEN
+    RAISE EXCEPTION 'workspace tenant was not derived from project';
+  END IF;
+  IF (SELECT tenant_id FROM engineering_worker_tokens
+      WHERE id='66666666-6666-4666-8666-666666666666') <> 'tenant-beta' THEN
+    RAISE EXCEPTION 'worker token tenant was not derived from project';
+  END IF;
+  IF (SELECT tenant_id FROM engineering_task_attempts
+      WHERE id='77777777-7777-4777-8777-777777777777') <> 'tenant-beta' THEN
+    RAISE EXCEPTION 'task attempt tenant was not derived from task';
+  END IF;
+  IF (SELECT tenant_id FROM engineering_task_dependencies
+      WHERE parent_task_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+        AND child_task_id='33333333-3333-4333-8333-333333333333') <> 'tenant-beta' THEN
+    RAISE EXCEPTION 'task dependency tenant was not derived from parent task';
+  END IF;
+  IF (SELECT tenant_id FROM engineering_task_workspace_assignments
+      WHERE id='88888888-8888-4888-8888-888888888888') <> 'tenant-beta' THEN
+    RAISE EXCEPTION 'workspace assignment tenant was not derived from task';
+  END IF;
+  IF (SELECT tenant_id FROM engineering_task_path_locks
+      WHERE id='99999999-9999-4999-8999-999999999999') <> 'tenant-beta' THEN
+    RAISE EXCEPTION 'path lock tenant was not derived from task';
+  END IF;
+  IF (SELECT workspace_id FROM engineering_task_checkpoints
+      WHERE id='ffffffff-ffff-4fff-8fff-ffffffffffff') <> '55555555-5555-4555-8555-555555555555' THEN
+    RAISE EXCEPTION 'checkpoint workspace association was not persisted';
+  END IF;
+  IF (SELECT lease_generation FROM engineering_tasks
+      WHERE id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb') <> 0 THEN
+    RAISE EXCEPTION 'new task lease generation must start at zero';
+  END IF;
+
+  BEGIN
+    INSERT INTO engineering_worker_tokens
+      (id, tenant_id, project_id, name, worker_id, worker_role, queue_name, token_hash)
+    VALUES
+      ('aaaaaaaa-0000-4000-8000-000000000001', 'aloews', 'tenant-beta-project',
+       'invalid reviewer token', 'bad-reviewer', 'reviewer', 'implementation', repeat('d', 64));
+    RAISE EXCEPTION 'worker role was allowed to claim a mismatched queue';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+
+  BEGIN
+    INSERT INTO engineering_task_workspace_assignments
+      (id, tenant_id, project_id, task_id, workspace_id, worker_role, writer_scope, base_sha)
+    VALUES
+      ('aaaaaaaa-0000-4000-8000-000000000002', 'aloews', 'tenant-beta-project',
+       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+       '44444444-4444-4444-8444-444444444444', 'tester', '[]'::jsonb, repeat('b', 40));
+    RAISE EXCEPTION 'cross-tenant workspace assignment unexpectedly succeeded';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM = 'cross-tenant workspace assignment unexpectedly succeeded' THEN RAISE; END IF;
+  END;
+
+  BEGIN
+    INSERT INTO engineering_task_dependencies
+      (tenant_id, project_id, parent_task_id, child_task_id)
+    VALUES
+      ('aloews', 'tenant-beta-project',
+       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    RAISE EXCEPTION 'cross-tenant task dependency unexpectedly succeeded';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM = 'cross-tenant task dependency unexpectedly succeeded' THEN RAISE; END IF;
+  END;
+END;
+$execution_test$;
+
 ROLLBACK;
 SQL
