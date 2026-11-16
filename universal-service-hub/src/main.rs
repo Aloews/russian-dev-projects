@@ -141,6 +141,26 @@ struct Principal {
     admin: bool,
 }
 
+async fn begin_principal_transaction(
+    state: &AppState,
+    principal: &Principal,
+) -> ApiResult<sqlx::Transaction<'static, sqlx::Postgres>> {
+    let mut tx=state.db.begin().await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_failed"))?;
+    if principal.admin {
+        sqlx::query("SELECT set_config('app.is_admin','true',true), set_config('app.tenant_id','',true)")
+            .execute(&mut *tx).await
+            .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_tenant_context_failed"))?;
+    } else {
+        let tenant_id=principal.tenant_id.as_deref()
+            .ok_or(ApiError(StatusCode::FORBIDDEN,"tenant_context_required"))?;
+        sqlx::query("SELECT set_config('app.is_admin','false',true), set_config('app.tenant_id',$1,true)")
+            .bind(tenant_id).execute(&mut *tx).await
+            .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_tenant_context_failed"))?;
+    }
+    Ok(tx)
+}
+
 fn bearer(headers: &HeaderMap) -> ApiResult<&str> {
     let value = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok())
         .ok_or(ApiError(StatusCode::UNAUTHORIZED, "bearer_token_required"))?;
