@@ -261,6 +261,11 @@ INSERT INTO projects (id,tenant_id,workspace_id,name,allowed_capabilities,allowe
 VALUES
  ('rls-alpha-project','aloews','default','RLS Alpha','["ai.chat"]'::jsonb,'[]'::jsonb),
  ('rls-beta-project','tenant-beta','default','RLS Beta','["ai.chat"]'::jsonb,'[]'::jsonb);
+INSERT INTO engineering_worker_tokens
+ (id,tenant_id,project_id,name,worker_id,worker_role,queue_name,token_hash)
+VALUES
+ ('aaaaaaaa-2222-4222-8222-aaaaaaaaaaaa','aloews','rls-alpha-project','Alpha implementer','rls-alpha-worker','implementer','implementation',repeat('a',64)),
+ ('bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb','tenant-beta','rls-beta-project','Beta tester','rls-beta-worker','tester','test',repeat('b',64));
 INSERT INTO engineering_tasks (id,tenant_id,project_id,idempotency_key,title,objective,created_by)
 VALUES
  ('aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa','aloews','rls-alpha-project','rls-alpha','Alpha visible','Alpha','test'),
@@ -287,6 +292,10 @@ BEGIN
     OR EXISTS (SELECT 1 FROM engineering_tasks WHERE id='bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb') THEN
    RAISE EXCEPTION 'tenant alpha can see another tenant task or row count is incorrect';
  END IF;
+ IF (SELECT COUNT(*) FROM engineering_worker_tokens) <> 1
+    OR EXISTS (SELECT 1 FROM engineering_worker_tokens WHERE worker_id='rls-beta-worker') THEN
+   RAISE EXCEPTION 'tenant alpha can see another tenant worker credential';
+ END IF;
 END;
 $alpha_test$;
 COMMIT;
@@ -298,6 +307,10 @@ BEGIN
  IF (SELECT COUNT(*) FROM engineering_tasks) <> 1
     OR EXISTS (SELECT 1 FROM engineering_tasks WHERE id='aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa') THEN
    RAISE EXCEPTION 'tenant beta can see another tenant task or row count is incorrect';
+ END IF;
+ IF (SELECT COUNT(*) FROM engineering_worker_tokens) <> 1
+    OR EXISTS (SELECT 1 FROM engineering_worker_tokens WHERE worker_id='rls-alpha-worker') THEN
+   RAISE EXCEPTION 'tenant beta can see another tenant worker credential';
  END IF;
  BEGIN
    INSERT INTO engineering_tasks (id,tenant_id,project_id,idempotency_key,title,objective,created_by)
@@ -316,6 +329,9 @@ DO $no_context_test$
 BEGIN
  IF (SELECT COUNT(*) FROM engineering_tasks) <> 0 THEN
    RAISE EXCEPTION 'missing tenant context must fail closed';
+ END IF;
+ IF (SELECT COUNT(*) FROM engineering_worker_tokens) <> 0 THEN
+   RAISE EXCEPTION 'missing tenant context exposed worker credentials';
  END IF;
 END;
 $no_context_test$;
