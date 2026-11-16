@@ -409,7 +409,7 @@ The objective is delivery of the intended, usable product. An agent, model, prov
 
 ## Cross-project agent governance and product lifecycle — 2026-11-16
 
-**Status: IN PROGRESS.** The shared standards are being added in a dedicated documentation PR; they are not active repository policy until that PR is merged and its checks pass.
+**Status: VERIFIED IN MAIN.** Shared standards were merged in PR #57 (merge commit `4232690152ce8e6551ecf10599532918ec51678b`); exact-PR CI and post-merge main CI both passed.
 
 - Repository-wide agent contract: `/AGENTS.md`.
 - GitHub automation and credential boundaries: `.github/AGENTS.md`.
@@ -435,3 +435,15 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - CI runs `43838620761` and `43838636167` both passed on exact PR head `25255dc3cc8ff875eebbc14efa89501852bac2d4`.
 - The change separates Codex/OpenAI Responses from Claude Code/Anthropic Messages, fixes bounded retry handling and retains bounded, redacted upstream error diagnostics.
 - **Live Starimg compatibility has not yet been re-proven after the fix.** The successful CI runs are not evidence that both live provider tool-call probes now pass.
+
+
+## Cloud-agent recovery and local inference — implementation candidate
+
+- **Status:** IN PROGRESS; isolated branch `fix/ush-cloud-failover-and-qwen-recovery`. No local fallback is considered operational until the exact candidate head passes repository CI and a controlled cloud-failure run demonstrably invokes Ollama/Qwen.
+- Preferred path remains Codex CLI via Starimg Responses followed by Claude Code via Anthropic Messages. Starimg live compatibility after PR #56 is still unverified; the earlier run #14 failed with HTTP 400 before the route fix and is not evidence about the current main.
+- The workflow now treats cloud preflight/CLI failures as recoverable and invokes the local Qwen path only when the cloud path is unavailable or incomplete. It records which path produced the candidate; a Qwen candidate is never described as a Codex/Claude result.
+- Local runner: Ollama with configurable `USH_LOCAL_CODING_MODEL`, default `qwen2.5-coder:3b`. It is a bounded single local inference session, not independent multi-agent execution. No cloud provider secrets are passed to Qwen.
+- Runtime provider adapter: local Ollama is restricted to loopback or explicitly allowlisted private hosts, validated after DNS resolution. Public and cloud-metadata destinations are rejected. Project capability/provider allowlists and existing authorization remain in force.
+- **Not yet verified:** exact-head Rust/Python CI, Docker/container smoke, local Ollama health/model discovery/chat against a live local runner, and a controlled cloud failure that successfully reaches the local fallback and produces a candidate.
+- **Not implemented by this increment:** persistent owner-operated GPU runner, cross-runner durable resume, automatic model selection by GPU/resource availability, separate independent local-model reviewer, production deployment, paid inference or customer-facing task orchestration.
+- Acceptance: exact-head CI; Rust tests for private endpoint allowlisting and existing project/provider authorization; Qwen path/symlink/secret-safety tests; controlled fallback workflow run; candidate PR exact-SHA CI; explicit review of the full diff. No auto-merge.
