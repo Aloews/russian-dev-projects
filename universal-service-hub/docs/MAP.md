@@ -477,3 +477,11 @@ The Rust Axum API in `src/main.rs` exposes these route families: `/healthz`, `/r
 - Direct provider tests, Hub-adapter tests and full coding-task tests must be separately recorded with exact model IDs, endpoint/protocol, request class, result, latency and measured usage. Redact prompts and secrets from logs.
 
 
+
+
+### Direct Starimg protocol probe
+
+- Workflow: `.github/workflows/starimg-compatibility-probe.yml`.
+- It independently checks the live model catalogue, OpenAI Responses function calling and Anthropic Messages tool use using the repository's configured Starimg secret. It prints exact model IDs and bounded redacted error details only; it never prints credentials.
+- This probe tests Starimg directly. It does **not** test the Rust Hub adapter or prove that the Hub can execute a coding task. The Hub adapter needs its own integration tests after Responses/tool-use support is implemented.
+- A partial result is possible: one protocol may pass while the other is unavailable/incompatible. Report each separately; do not mark the provider globally healthy based on one route.
