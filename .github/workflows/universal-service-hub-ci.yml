@@ -112,11 +112,11 @@ jobs:
           USH_DB_PASSWORD: ush-ci-db-password-with-at-least-32-characters
         run: |
           bash -n scripts/dev-up.sh scripts/dev-down.sh
-          docker compose -f compose.yml config -q
+          docker compose --env-file .env.example -f compose.yml config -q
       - name: Local Compose runtime startup smoke
         run: |
           set -eu
-          trap 'docker compose -f compose.yml down -v >/dev/null 2>&1 || true' EXIT
+          trap 'docker compose --env-file .env.local -f compose.yml down -v >/dev/null 2>&1 || true' EXIT
           PORT=18000 bash scripts/dev-up.sh
           curl -fsS http://127.0.0.1:18000/healthz >/dev/null
           docker compose -f compose.yml ps
