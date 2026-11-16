@@ -262,6 +262,17 @@ CREATE TRIGGER trg_engineering_task_dependencies_assign_tenant
     BEFORE INSERT ON engineering_task_dependencies FOR EACH ROW
     EXECUTE FUNCTION ush_assign_task_dependency_tenant();
 
+-- Backfill only valid same-project dependency edges from the original JSON representation.
+INSERT INTO engineering_task_dependencies (tenant_id,project_id,parent_task_id,child_task_id)
+SELECT task.tenant_id,task.project_id,dependency.dependency_id,task.id
+FROM engineering_tasks task
+CROSS JOIN LATERAL jsonb_array_elements_text(task.dependencies) AS dependency(dependency_id)
+JOIN engineering_tasks parent
+  ON parent.id=dependency.dependency_id
+ AND parent.tenant_id=task.tenant_id
+ AND parent.project_id=task.project_id
+ON CONFLICT DO NOTHING;
+
 CREATE FUNCTION ush_assign_task_workspace_assignment_tenant() RETURNS trigger LANGUAGE plpgsql AS $function$
 DECLARE task_tenant VARCHAR(80); task_project VARCHAR(80); workspace_tenant VARCHAR(80); workspace_project VARCHAR(80);
 BEGIN
