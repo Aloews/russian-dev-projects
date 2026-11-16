@@ -998,7 +998,7 @@ async fn list_engineering_workers(
     let principal=require_project_owner_or_admin(&state, &headers, &project_id).await?;
     let mut tx=begin_principal_transaction(&state,&principal).await?;
     let rows = sqlx::query("SELECT id,name,worker_id,worker_role,queue_name,created_at,expires_at,last_used_at,revoked_at FROM engineering_worker_tokens WHERE project_id=$1 ORDER BY created_at DESC LIMIT 200")
-        .bind(&project_id).fetch_all(&state.db).await
+        .bind(&project_id).fetch_all(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "engineering_worker_list_failed"))?;
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let values: Vec<Value> = rows.into_iter().map(|row| json!({
