@@ -251,4 +251,81 @@ END;
 $execution_test$;
 
 ROLLBACK;
+
+-- Exercise RLS as the actual non-owner, non-superuser runtime role. All
+-- transactions below share one psql connection to catch pooled-session leakage.
+BEGIN;
+INSERT INTO tenants (id,slug,name) VALUES ('tenant-beta','tenant-beta','Tenant Beta');
+INSERT INTO workspaces (tenant_id,id,slug,name) VALUES ('tenant-beta','default','default','Default workspace');
+INSERT INTO projects (id,tenant_id,workspace_id,name,allowed_capabilities,allowed_provider_ids)
+VALUES
+ ('rls-alpha-project','aloews','default','RLS Alpha','["ai.chat"]'::jsonb,'[]'::jsonb),
+ ('rls-beta-project','tenant-beta','default','RLS Beta','["ai.chat"]'::jsonb,'[]'::jsonb);
+INSERT INTO engineering_tasks (id,tenant_id,project_id,idempotency_key,title,objective,created_by)
+VALUES
+ ('aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa','aloews','rls-alpha-project','rls-alpha','Alpha visible','Alpha','test'),
+ ('bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb','aloews','rls-beta-project','rls-beta','Beta visible','Beta','test');
+COMMIT;
+
+SET ROLE ush_runtime;
+DO $role_test$
+DECLARE is_superuser BOOLEAN; bypasses_rls BOOLEAN;
+BEGIN
+ SELECT rolsuper,rolbypassrls INTO is_superuser,bypasses_rls
+ FROM pg_roles WHERE rolname=current_user;
+ IF current_user <> 'ush_runtime' OR is_superuser OR bypasses_rls THEN
+   RAISE EXCEPTION 'runtime role must be non-superuser and must not bypass RLS';
+ END IF;
+END;
+$role_test$;
+
+BEGIN;
+SELECT set_config('app.is_admin','false',true),set_config('app.tenant_id','aloews',true);
+DO $alpha_test$
+BEGIN
+ IF (SELECT COUNT(*) FROM engineering_tasks) <> 1
+    OR EXISTS (SELECT 1 FROM engineering_tasks WHERE id='bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb') THEN
+   RAISE EXCEPTION 'tenant alpha can see another tenant task or row count is incorrect';
+ END IF;
+END;
+$alpha_test$;
+COMMIT;
+
+BEGIN;
+SELECT set_config('app.is_admin','false',true),set_config('app.tenant_id','tenant-beta',true);
+DO $beta_test$
+BEGIN
+ IF (SELECT COUNT(*) FROM engineering_tasks) <> 1
+    OR EXISTS (SELECT 1 FROM engineering_tasks WHERE id='aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa') THEN
+   RAISE EXCEPTION 'tenant beta can see another tenant task or row count is incorrect';
+ END IF;
+ BEGIN
+   INSERT INTO engineering_tasks (id,tenant_id,project_id,idempotency_key,title,objective,created_by)
+   VALUES ('cccccccc-1111-4111-8111-cccccccccccc','tenant-beta','rls-alpha-project','forged','Forged','Cross tenant','test');
+   RAISE EXCEPTION 'tenant beta inserted a task into tenant alpha project';
+ EXCEPTION WHEN insufficient_privilege THEN
+   NULL;
+ END;
+END;
+$beta_test$;
+COMMIT;
+
+BEGIN;
+SELECT set_config('app.is_admin','false',true),set_config('app.tenant_id','',true);
+DO $no_context_test$
+BEGIN
+ IF (SELECT COUNT(*) FROM engineering_tasks) <> 0 THEN
+   RAISE EXCEPTION 'missing tenant context must fail closed';
+ END IF;
+END;
+$no_context_test$;
+COMMIT;
+
+RESET ROLE;
+DELETE FROM engineering_tasks WHERE id IN (
+ 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa','bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb'
+);
+DELETE FROM projects WHERE id IN ('rls-alpha-project','rls-beta-project');
+DELETE FROM workspaces WHERE tenant_id='tenant-beta' AND id='default';
+DELETE FROM tenants WHERE id='tenant-beta';
 SQL
