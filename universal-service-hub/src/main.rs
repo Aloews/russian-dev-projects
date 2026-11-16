@@ -1195,6 +1195,8 @@ struct WorkspaceAssignmentBody {
     worker_role: String,
     writer_scope: Vec<String>,
     base_sha: String,
+    #[serde(default)]
+    candidate_sha: Option<String>,
 }
 
 async fn assign_engineering_task_workspace(
@@ -1210,34 +1212,35 @@ async fn assign_engineering_task_workspace(
         || body.task_lease_token.len()<32 || body.workspace_lease_token.len()<32
         || Uuid::parse_str(&body.workspace_id).is_err()
         || body.base_sha.len()!=40 || !body.base_sha.chars().all(|c|c.is_ascii_hexdigit())
-        || body.writer_scope.is_empty() || body.writer_scope.len()>50
-        || body.writer_scope.iter().any(|path| {
-            path.is_empty() || path.len()>500 || path.starts_with('/') || path.contains('\\')
-            || path.ends_with("//")
-            || path.trim_end_matches('/').split('/').any(|part|part==".." || part=="." || part.is_empty())
-            || path.chars().any(char::is_control)
-        }) {
+        || (body.writer_scope.is_empty() && body.worker_role!="reviewer") || body.writer_scope.len()>50
+        || body.writer_scope.iter().any(|path| !safe_workspace_path_prefix(path))
+        || body.candidate_sha.as_ref().is_some_and(|sha|sha.len()!=40 || !sha.chars().all(|c|c.is_ascii_hexdigit()))
+        || (body.worker_role=="reviewer" && body.candidate_sha.as_deref()!=Some(body.base_sha.as_str())) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_workspace_assignment"));
     }
     let task_lease_hash=hex::encode(Sha256::digest(body.task_lease_token.as_bytes()));
     let workspace_lease_hash=hex::encode(Sha256::digest(body.workspace_lease_token.as_bytes()));
     let mut tx=begin_principal_transaction(&state,&principal).await?;
-    let task=sqlx::query("SELECT lease_expires_at FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+    let task=sqlx::query("SELECT queue_name,lease_expires_at FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
         .bind(&task_id).bind(tenant_id).bind(project_id).bind(worker_id).bind(&task_lease_hash)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_task_check_failed"))?;
     let Some(task)=task else{return Err(ApiError(StatusCode::CONFLICT,"task_lease_expired_or_invalid"));};
+    let task_queue:String=task.try_get("queue_name").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_task_check_failed"))?;
+    if principal.queue_name.as_deref()!=Some(task_queue.as_str()) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"worker_queue_scope_forbidden"));
+    }
     let workspace=sqlx::query("SELECT base_sha,lease_expires_at FROM engineering_workspaces WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
         .bind(&body.workspace_id).bind(tenant_id).bind(project_id).bind(worker_id).bind(&workspace_lease_hash)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_workspace_check_failed"))?;
     let Some(workspace)=workspace else{return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));};
     let workspace_base_sha:String=workspace.try_get("base_sha").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_workspace_check_failed"))?;
-    if workspace_base_sha!=body.base_sha {
+    if workspace_base_sha!=body.base_sha || (body.worker_role=="reviewer" && body.candidate_sha.as_deref()!=Some(workspace_base_sha.as_str())) {
         return Err(ApiError(StatusCode::CONFLICT,"workspace_base_sha_mismatch"));
     }
     let assignment_id=Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO engineering_task_workspace_assignments (id,project_id,task_id,workspace_id,worker_role,writer_scope,base_sha) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+    sqlx::query("INSERT INTO engineering_task_workspace_assignments (id,project_id,task_id,workspace_id,worker_role,writer_scope,base_sha,candidate_sha) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
         .bind(&assignment_id).bind(project_id).bind(&task_id).bind(&body.workspace_id)
-        .bind(&body.worker_role).bind(json!(body.writer_scope)).bind(&body.base_sha)
+        .bind(&body.worker_role).bind(json!(body.writer_scope)).bind(&body.base_sha).bind(&body.candidate_sha)
         .execute(&mut *tx).await.map_err(|error| {
             if error.as_database_error().is_some_and(|db|db.code().as_deref()==Some("23505")) {
                 ApiError(StatusCode::CONFLICT,"task_already_has_active_workspace")
@@ -1247,7 +1250,7 @@ async fn assign_engineering_task_workspace(
     let workspace_expires:DateTime<Utc>=workspace.try_get("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_workspace_check_failed"))?;
     let lock_expires=std::cmp::min(task_expires,workspace_expires);
     for path_prefix in &body.writer_scope {
-        let conflict=sqlx::query("SELECT id FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND lease_expires_at>NOW() AND (left(path_prefix,length($3))=$3 OR left($3,length(path_prefix))=path_prefix) LIMIT 1")
+        let conflict=sqlx::query("SELECT id FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND lease_expires_at>NOW() AND (path_prefix=$3 OR left(path_prefix,length($3)+1)=$3||'/' OR left($3,length(path_prefix)+1)=path_prefix||'/') LIMIT 1")
             .bind(tenant_id).bind(project_id).bind(path_prefix).fetch_optional(&mut *tx).await
             .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_check_failed"))?;
         if conflict.is_some() {
@@ -1260,7 +1263,7 @@ async fn assign_engineering_task_workspace(
     }
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_commit_failed"))?;
     audit(&state,&principal.actor,"engineering_task.workspace_assigned","engineering_task",&task_id,json!({"workspace_id":body.workspace_id,"assignment_id":assignment_id,"writer_scope":body.writer_scope})).await;
-    Ok(Json(json!({"assignment_id":assignment_id,"task_id":task_id,"workspace_id":body.workspace_id,"worker_role":body.worker_role,"writer_scope":body.writer_scope,"lease_expires_at":lock_expires})))
+    Ok(Json(json!({"assignment_id":assignment_id,"task_id":task_id,"workspace_id":body.workspace_id,"worker_role":body.worker_role,"writer_scope":body.writer_scope,"candidate_sha":body.candidate_sha,"lease_expires_at":lock_expires})))
 }
 
 #[derive(Deserialize)]
