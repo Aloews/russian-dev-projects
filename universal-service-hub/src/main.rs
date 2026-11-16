@@ -1202,7 +1202,7 @@ async fn create_engineering_workspace(
         || !valid_repository
         || !valid_branch(&body.base_branch) || !valid_sha
         || body.git_branch.as_ref().is_some_and(|v| !valid_branch(v))
-        || body.git_worktree_path.as_ref().is_some_and(|v| v.is_empty() || v.len()>1000 || v.contains('\0'))
+        || body.git_worktree_path.as_ref().is_some_and(|v| !valid_worktree_path(v))
         || body.metadata.to_string().len()>8192 {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_engineering_workspace"));
     }
@@ -1447,7 +1447,7 @@ async fn heartbeat_engineering_workspace(
         || principal.worker_id.as_deref()!=Some(body.worker_id.as_str())
         || body.lease_token.len()<32
         || body.head_sha.as_ref().is_some_and(|sha|sha.len()!=40 || !sha.chars().all(|c|c.is_ascii_hexdigit()))
-        || body.git_worktree_path.as_ref().is_some_and(|path|path.is_empty() || path.len()>1024 || path.contains('\\') || path.contains('\0'))
+        || body.git_worktree_path.as_ref().is_some_and(|path|!valid_worktree_path(path))
         || body.git_branch.as_ref().is_some_and(|branch|branch.is_empty() || branch.len()>200 || branch.starts_with('/') || branch.split('/').any(|part|part.is_empty() || part=="." || part=="..") || !branch.chars().all(|c|c.is_ascii_alphanumeric() || "._/-".contains(c)))
         || body.runtime_id.as_ref().is_some_and(|id|id.is_empty() || id.len()>128 || id.chars().any(char::is_control)) {
         return Err(ApiError(StatusCode::FORBIDDEN,"workspace_worker_scope_forbidden"));
@@ -1528,6 +1528,13 @@ struct TaskAttemptBody {
     actual_cost_minor: Option<i64>,
     #[serde(default)]
     metadata: Value,
+}
+
+fn valid_worktree_path(path: &str) -> bool {
+    !path.ends_with('/')
+        && safe_workspace_path_prefix(path)
+        && !path.split('/').any(|part|part.eq_ignore_ascii_case(".git"))
+        && path.chars().all(|c|c.is_ascii_alphanumeric() || "._/-".contains(c))
 }
 
 fn safe_workspace_path_prefix(path: &str) -> bool {
@@ -3028,6 +3035,17 @@ mod project_permission_tests {
 #[cfg(test)]
 mod integration_security_tests {
     use super::*;
+
+    #[test]
+    fn workspace_worktree_paths_are_relative_and_cannot_escape_the_workspace_root() {
+        assert!(valid_worktree_path("tenants/aloews/projects/ush/tasks/task-123"));
+        assert!(!valid_worktree_path("/tmp/worktree"));
+        assert!(!valid_worktree_path("../escape"));
+        assert!(!valid_worktree_path("tenants/aloews/../../etc"));
+        assert!(!valid_worktree_path("tenants/aloews/.git"));
+        assert!(!valid_worktree_path("tenants\\aloews\\worktree"));
+        assert!(!valid_worktree_path("tenants/aloews/worktree/"));
+    }
 
     #[test]
     fn postgres_connection_url_discards_untrusted_query_options() {
