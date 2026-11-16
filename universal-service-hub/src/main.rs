@@ -590,10 +590,10 @@ fn build_pinned_ollama_client(url: &url::Url, resolved: &[SocketAddr]) -> ApiRes
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_destination_not_private"));
     }
     let pinned = resolved[0];
-    if let Ok(literal_ip) = host.parse::<IpAddr>() {
-        if resolved.iter().any(|address| address.ip() != literal_ip) {
-            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_ip_literal_mismatch"));
-        }
+    if let Ok(literal_ip) = host.parse::<IpAddr>()
+        && resolved.iter().any(|address| address.ip() != literal_ip)
+    {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_ip_literal_mismatch"));
     }
     let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
