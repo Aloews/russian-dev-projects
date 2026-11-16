@@ -1122,6 +1122,13 @@ async fn create_tenant_token(
     Json(body): Json<TenantTokenCreateBody>
 ) -> ApiResult<Json<Value>> {
     let principal = require_tenant_admin(&state, &headers, &tenant_id).await?;
+    let mut platform_tx=begin_platform_transaction(&state).await?;
+    let exists = sqlx::query("SELECT id FROM tenants WHERE id=$1 AND status='active'")
+        .bind(&tenant_id).fetch_optional(&mut *platform_tx).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "tenant_lookup_failed"))?;
+    platform_tx.commit().await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "database_transaction_commit_failed"))?;
+    if exists.is_none() { return Err(ApiError(StatusCode::NOT_FOUND, "tenant_not_found")); }
     let mut tx=begin_principal_transaction(&state,&principal).await?;
     let allowed_roles = [
         "tenant_owner", "tenant_admin", "workspace_admin", "project_maintainer",
@@ -1135,10 +1142,6 @@ async fn create_tenant_token(
     if !principal.admin && body.role == "tenant_owner" {
         return Err(ApiError(StatusCode::FORBIDDEN, "administrator_required_for_tenant_owner_token"));
     }
-    let exists = sqlx::query("SELECT id FROM tenants WHERE id=$1 AND status='active'")
-        .bind(&tenant_id).fetch_optional(&mut *tx).await
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "tenant_lookup_failed"))?;
-    if exists.is_none() { return Err(ApiError(StatusCode::NOT_FOUND, "tenant_not_found")); }
     let raw: String = rand::rng().sample_iter(&Alphanumeric).take(48).map(char::from).collect();
     let hash = hex::encode(Sha256::digest(raw.as_bytes()));
     let id = Uuid::new_v4().to_string();
