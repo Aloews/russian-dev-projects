@@ -434,7 +434,7 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - PR #56 was merged as `b0157e6bbdec6f64a2c2c24e11e70969e1aeb1aa`.
 - CI runs `43838620761` and `43838636167` both passed on exact PR head `25255dc3cc8ff875eebbc14efa89501852bac2d4`.
 - The change separates Codex/OpenAI Responses from Claude Code/Anthropic Messages, fixes bounded retry handling and retains bounded, redacted upstream error diagnostics.
-- **Live Starimg compatibility has not yet been re-proven after the fix.** The successful CI runs are not evidence that both live provider tool-call probes now pass.
+- Direct Starimg compatibility was re-proven in run [#43853589729](https://github.com/Aloews/russian-dev-projects/actions/runs/43853589729) on exact PR head `7195d3044e4ef8714f455926e3e82041c561ab5f`: both OpenAI Responses and Anthropic Messages tool-use probes passed. This is direct-provider evidence, not Hub-adapter evidence.
 
 
 ## Runtime bootstrap — local launch path
@@ -446,3 +446,61 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - **API-only:** the current product has no browser management UI; only health/readiness endpoints are directly viewable in a browser, and administrative workflows use the authenticated HTTP API.
 - **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
 - Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
+
+
+## Self-hosting and provider diagnosis — current source-backed state
+
+### What the Hub can do now
+
+The Rust Axum API in `src/main.rs` exposes these route families: `/healthz`, `/readyz`, `/v1/projects`, project tokens, `/v1/providers`, provider model discovery, `/v1/integrations/{provider_id}/verify`, provider health/selection, `/v1/ai/chat` and `/v1/audit`. The current `/v1/ai/chat` request schema contains `messages`, `temperature`, `max_tokens` and optional `idempotency_key`; its response is normalized text plus usage/latency/attempt metadata.
+
+### What it cannot do yet
+
+- The `openai_compatible` branch calls `/chat/completions`; it does not implement OpenAI Responses or function-call continuation.
+- The `anthropic` branch calls `/v1/messages` but extracts text blocks only; it does not return `tool_use` blocks or accept `tool_result` continuation.
+- No durable engineering task/job API, repository binding, isolated worktree/container executor, typed tool registry, task budget reservation/approval, checkpoint/restart recovery, candidate patch artifact, independent review or publication gate is exposed by the Hub API.
+- Therefore a direct Starimg CLI run or a call to `/v1/ai/chat` cannot currently be called Hub self-hosting. This is a verified architectural gap, not proof that Starimg itself is incapable.
+
+### Starimg root-cause separation
+
+- Historical run [#43838020363](https://github.com/Aloews/russian-dev-projects/actions/runs/43838020363) failed on pre-PR-#56 SHA `b869071fec321cf6d53dc64ac6e96de05bf8bfce`. PR #56 documented the failure: a Fable/Claude model was selected for OpenAI Responses, causing HTTP 400. The model-family routing fix was merged in PR #56 (merge commit `b0157e6bbdec6f64a2c2c24e11e70969e1aeb1aa`).
+- That fix is in the external Codex/Claude workflow only. The direct Starimg probe now passes both routes; the Rust Hub adapter remains separately unverified and incompatible with these tool-use contracts.
+- The Rust Hub API has a separate compatibility gap: no Responses adapter and no Anthropic tool-use handling. A working direct Starimg endpoint does not make the Hub API compatible by itself.
+- PR #60 removes the unrelated mandatory `FAL_AI_API` secret check from the Hub bootstrap workflow; Starimg bootstrap no longer depends on the separate video provider.
+
+### Required self-hosting implementation sequence
+
+| ID | Increment | Acceptance evidence | State |
+|---|---|---|---|
+| SELF-0 | Minimal runtime bootstrap: Rust service + PostgreSQL + authenticated health/readiness | clean Compose startup, SQLx migrations, 401 unauthenticated, authenticated route, exact-head CI | VERIFIED IN MAIN at `50169f3b003ec6420fb25dd2474f7023fea4c52e`; PR #59 exact-head run #43852744350 passed; post-merge main CI run #43854038768 was still in progress at map update |
+| SELF-1 | Provider protocols: OpenAI Responses and Anthropic Messages tool-use round-trips, exact model/provider IDs, normalized tool-call envelope | live protocol tool-use probes through the running Hub API, mocked contract/error/retry tests | NOT STARTED |
+| SELF-2 | Durable engineering task API, project isolation, approval/budget/idempotency and state machine | PostgreSQL integration tests for create/approve/claim/complete/cancel/retry, duplicate and cross-project denial | NOT STARTED |
+| SELF-3 | Isolated workspace worker and typed tools | path/symlink/command/network/secret/CPU/memory/time/output/cancellation tests; no API-process shell | NOT STARTED |
+| SELF-4 | Candidate/evidence/review/publication pipeline | immutable base/candidate SHAs, artifact hashes, independent review, exact-SHA CI and separate publisher | NOT STARTED |
+| SELF-5 | First Hub self-development task through its own API | real API-submitted task creates a patch, passes tests, survives worker restart, and produces a PR; no direct file-edit bypass | NOT STARTED |
+
+**Gate:** do not describe the Hub as self-hosting until SELF-1 through SELF-5 pass. PR #59's local launch script and an ephemeral CI container are bootstrap aids, not a public deployment and not proof of self-hosting.
+
+### Model/provider routing diagnosis
+
+- Codex CLI expects OpenAI Responses. Claude Code expects Anthropic Messages. These protocols are not interchangeable.
+- The current Hub's `openai_compatible` adapter is Chat Completions only. The Anthropic adapter is text-only. Do not route Codex or Claude Code tool execution through `/v1/ai/chat` until the protocol/tool-call contracts above exist.
+- Direct provider tests, Hub-adapter tests and full coding-task tests must be separately recorded with exact model IDs, endpoint/protocol, request class, result, latency and measured usage. Redact prompts and secrets from logs.
+
+
+
+
+### Direct Starimg protocol probe
+
+- Workflow: `.github/workflows/starimg-compatibility-probe.yml`.
+- It independently checks the live model catalogue, OpenAI Responses function calling and Anthropic Messages tool use using the repository's configured Starimg secret. It prints exact model IDs and bounded redacted error details only; it never prints credentials.
+- This probe tests Starimg directly. It does **not** test the Rust Hub adapter or prove that the Hub can execute a coding task. The Hub adapter needs its own integration tests after Responses/tool-use support is implemented.
+- A partial result is possible: one protocol may pass while the other is unavailable/incompatible. Report each separately; do not mark the provider globally healthy based on one route.
+
+
+### Direct Starimg probe result — 2026-11-16
+
+- **PASS — OpenAI Responses:** model `gpt-5.6-luna`, HTTP 200, returned the expected `function_call` object in run [#43853363812](https://github.com/Aloews/russian-dev-projects/actions/runs/43853363812), exact PR head `7195d3044e4ef8714f455926e3e82041c561ab5f`.
+- **PASS — Anthropic Messages:** model `claude-fable-5-2`, HTTP 200, returned the expected `tool_use` object with `tool_choice: auto` in the same run.
+- **Known protocol constraint:** Fable 5.2 rejects forced Anthropic `tool_choice: {type: tool, name: ...}` with HTTP 400 and explicitly instructs use of `auto` or `none`. The direct probe's auto-mode test passes. The external CLI workflow has been changed to use `auto` for its Claude probe; exact-head workflow verification is pending.
+- **Conclusion:** Starimg itself is not shown to be incapable. Its tested Responses and Anthropic Messages routes both support tool use with the tested model/protocol settings. This does not yet prove full Codex CLI/Claude Code CLI task quality, nor the Hub Rust adapter; those are separate gates.
