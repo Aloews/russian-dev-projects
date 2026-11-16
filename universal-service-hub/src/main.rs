@@ -898,6 +898,69 @@ async fn revoke_engineering_worker(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn require_tenant_admin(state: &AppState, headers: &HeaderMap, tenant_id: &str) -> ApiResult<Principal> {
+    let principal = authenticate(state, headers).await?;
+    if principal.admin || (
+        principal.tenant_id.as_deref() == Some(tenant_id)
+        && ["tenant_owner", "tenant_admin"].contains(&principal.role.as_str())
+    ) {
+        return Ok(principal);
+    }
+    Err(ApiError(StatusCode::FORBIDDEN, "tenant_admin_required"))
+}
+
+#[derive(Deserialize)]
+struct TenantTokenCreateBody {
+    name: String,
+    role: String,
+    #[serde(default)]
+    expires_in_seconds: Option<i64>,
+}
+
+async fn create_tenant_token(
+    State(state): State<AppState>, headers: HeaderMap, Path(tenant_id): Path<String>,
+    Json(body): Json<TenantTokenCreateBody>
+) -> ApiResult<Json<Value>> {
+    let principal = require_tenant_admin(&state, &headers, &tenant_id).await?;
+    let allowed_roles = [
+        "tenant_owner", "tenant_admin", "workspace_admin", "project_maintainer",
+        "developer", "reviewer", "operator", "auditor", "viewer", "service_agent",
+    ];
+    if !allowed_roles.contains(&body.role.as_str()) || body.name.trim().is_empty()
+        || body.name.len()>120
+        || body.expires_in_seconds.is_some_and(|v| !(60..=31_536_000).contains(&v)) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_tenant_token"));
+    }
+    if !principal.admin && body.role == "tenant_owner" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "administrator_required_for_tenant_owner_token"));
+    }
+    let exists = sqlx::query("SELECT id FROM tenants WHERE id=$1 AND status='active'")
+        .bind(&tenant_id).fetch_optional(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "tenant_lookup_failed"))?;
+    if exists.is_none() { return Err(ApiError(StatusCode::NOT_FOUND, "tenant_not_found")); }
+    let raw: String = rand::rng().sample_iter(&Alphanumeric).take(48).map(char::from).collect();
+    let hash = hex::encode(Sha256::digest(raw.as_bytes()));
+    let id = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO tenant_tokens (id,tenant_id,name,role,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,CASE WHEN $6::bigint IS NULL THEN NULL ELSE NOW()+($6::text||' seconds')::interval END)")
+        .bind(&id).bind(&tenant_id).bind(&body.name).bind(&body.role).bind(hash).bind(body.expires_in_seconds)
+        .execute(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "tenant_token_create_failed"))?;
+    audit(&state, &principal.actor, "tenant.token.create", "tenant", &tenant_id, json!({"token_id":id,"role":body.role})).await;
+    Ok(Json(json!({"id":id,"tenant_id":tenant_id,"name":body.name,"role":body.role,"token":raw})))
+}
+
+async fn revoke_tenant_token(
+    State(state): State<AppState>, headers: HeaderMap, Path((tenant_id,token_id)): Path<(String,String)>
+) -> ApiResult<StatusCode> {
+    let principal = require_tenant_admin(&state, &headers, &tenant_id).await?;
+    let result = sqlx::query("UPDATE tenant_tokens SET revoked_at=NOW() WHERE id=$1 AND tenant_id=$2 AND revoked_at IS NULL")
+        .bind(&token_id).bind(&tenant_id).execute(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "tenant_token_revoke_failed"))?;
+    if result.rows_affected()==0 { return Err(ApiError(StatusCode::NOT_FOUND, "tenant_token_not_found")); }
+    audit(&state, &principal.actor, "tenant.token.revoke", "tenant", &tenant_id, json!({"token_id":token_id})).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn list_providers(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
     require_admin(&state, &headers).await?;
     let rows = sqlx::query("SELECT id,name,capabilities,priority,enabled,adapter_type,model,base_url,health_status,checked_at,latency_ms FROM providers ORDER BY priority DESC,id")
@@ -1804,6 +1867,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/projects/{project_id}/tokens/{token_id}", delete(revoke_project_token))
         .route("/v1/projects/{project_id}/workers", get(list_engineering_workers).post(create_engineering_worker))
         .route("/v1/projects/{project_id}/workers/{worker_id}", delete(revoke_engineering_worker))
+        .route("/v1/tenants/{tenant_id}/tokens", post(create_tenant_token))
+        .route("/v1/tenants/{tenant_id}/tokens/{token_id}", delete(revoke_tenant_token))
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers/{provider_id}", put(upsert_provider).delete(delete_provider))
         .route("/v1/providers/{provider_id}/models", get(provider_models))
