@@ -1168,6 +1168,120 @@ struct WorkspaceLeaseBody {
     head_sha: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct WorkspaceAssignmentBody {
+    worker_id: String,
+    task_lease_token: String,
+    workspace_id: String,
+    workspace_lease_token: String,
+    worker_role: String,
+    writer_scope: Vec<String>,
+    base_sha: String,
+}
+
+async fn assign_engineering_task_workspace(
+    State(state): State<AppState>, headers: HeaderMap, Path(task_id): Path<String>,
+    Json(body): Json<WorkspaceAssignmentBody>
+) -> ApiResult<Json<Value>> {
+    let principal=require_worker_identity(&state,&headers).await?;
+    let project_id=principal.project_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_project_scope_required"))?;
+    let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
+    let worker_id=principal.worker_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_identity_required"))?;
+    if body.worker_id!=worker_id || body.worker_role!=principal.worker_role.as_deref().unwrap_or("")
+        || !["implementer","builder","tester","reviewer","recovery"].contains(&body.worker_role.as_str())
+        || body.task_lease_token.len()<32 || body.workspace_lease_token.len()<32
+        || Uuid::parse_str(&body.workspace_id).is_err()
+        || body.base_sha.len()!=40 || !body.base_sha.chars().all(|c|c.is_ascii_hexdigit())
+        || body.writer_scope.is_empty() || body.writer_scope.len()>50
+        || body.writer_scope.iter().any(|path| {
+            path.is_empty() || path.len()>500 || path.starts_with('/') || path.contains('\\')
+            || path.split('/').any(|part|part==".." || part.is_empty())
+            || path.chars().any(char::is_control)
+        }) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_workspace_assignment"));
+    }
+    let task_lease_hash=hex::encode(Sha256::digest(body.task_lease_token.as_bytes()));
+    let workspace_lease_hash=hex::encode(Sha256::digest(body.workspace_lease_token.as_bytes()));
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
+    let task=sqlx::query("SELECT lease_expires_at FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+        .bind(&task_id).bind(tenant_id).bind(project_id).bind(worker_id).bind(&task_lease_hash)
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_task_check_failed"))?;
+    let Some(task)=task else{return Err(ApiError(StatusCode::CONFLICT,"task_lease_expired_or_invalid"));};
+    let workspace=sqlx::query("SELECT base_sha,lease_expires_at FROM engineering_workspaces WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+        .bind(&body.workspace_id).bind(tenant_id).bind(project_id).bind(worker_id).bind(&workspace_lease_hash)
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_workspace_check_failed"))?;
+    let Some(workspace)=workspace else{return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));};
+    let workspace_base_sha:String=workspace.try_get("base_sha").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_workspace_check_failed"))?;
+    if workspace_base_sha!=body.base_sha {
+        return Err(ApiError(StatusCode::CONFLICT,"workspace_base_sha_mismatch"));
+    }
+    let assignment_id=Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO engineering_task_workspace_assignments (id,project_id,task_id,workspace_id,worker_role,writer_scope,base_sha) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+        .bind(&assignment_id).bind(project_id).bind(&task_id).bind(&body.workspace_id)
+        .bind(&body.worker_role).bind(json!(body.writer_scope)).bind(&body.base_sha)
+        .execute(&mut *tx).await.map_err(|error| {
+            if error.as_database_error().is_some_and(|db|db.code().as_deref()==Some("23505")) {
+                ApiError(StatusCode::CONFLICT,"task_already_has_active_workspace")
+            } else { ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_create_failed") }
+        })?;
+    let task_expires:DateTime<Utc>=task.try_get("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_task_check_failed"))?;
+    let workspace_expires:DateTime<Utc>=workspace.try_get("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_workspace_check_failed"))?;
+    let lock_expires=std::cmp::min(task_expires,workspace_expires);
+    for path_prefix in &body.writer_scope {
+        let conflict=sqlx::query("SELECT id FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND lease_expires_at>NOW() AND (left(path_prefix,length($3))=$3 OR left($3,length(path_prefix))=path_prefix) LIMIT 1")
+            .bind(tenant_id).bind(project_id).bind(path_prefix).fetch_optional(&mut *tx).await
+            .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_check_failed"))?;
+        if conflict.is_some() {
+            return Err(ApiError(StatusCode::CONFLICT,"workspace_writer_scope_conflict"));
+        }
+        sqlx::query("INSERT INTO engineering_task_path_locks (id,project_id,task_id,workspace_id,path_prefix,lock_owner,lease_expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+            .bind(Uuid::new_v4().to_string()).bind(project_id).bind(&task_id).bind(&body.workspace_id)
+            .bind(path_prefix).bind(worker_id).bind(lock_expires)
+            .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_create_failed"))?;
+    }
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_commit_failed"))?;
+    audit(&state,&principal.actor,"engineering_task.workspace_assigned","engineering_task",&task_id,json!({"workspace_id":body.workspace_id,"assignment_id":assignment_id,"writer_scope":body.writer_scope})).await;
+    Ok(Json(json!({"assignment_id":assignment_id,"task_id":task_id,"workspace_id":body.workspace_id,"worker_role":body.worker_role,"writer_scope":body.writer_scope,"lease_expires_at":lock_expires})))
+}
+
+#[derive(Deserialize)]
+struct WorkspaceAssignmentReleaseBody {
+    worker_id: String,
+    task_lease_token: String,
+    workspace_id: String,
+    workspace_lease_token: String,
+}
+
+async fn release_engineering_task_workspace(
+    State(state): State<AppState>, headers: HeaderMap, Path(task_id): Path<String>,
+    Json(body): Json<WorkspaceAssignmentReleaseBody>
+) -> ApiResult<StatusCode> {
+    let principal=require_worker_identity(&state,&headers).await?;
+    let project_id=principal.project_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_project_scope_required"))?;
+    let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
+    let worker_id=principal.worker_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_identity_required"))?;
+    if body.worker_id!=worker_id || body.task_lease_token.len()<32 || body.workspace_lease_token.len()<32 {
+        return Err(ApiError(StatusCode::FORBIDDEN,"workspace_assignment_worker_scope_forbidden"));
+    }
+    let task_hash=hex::encode(Sha256::digest(body.task_lease_token.as_bytes()));
+    let workspace_hash=hex::encode(Sha256::digest(body.workspace_lease_token.as_bytes()));
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
+    let valid=sqlx::query("SELECT t.id FROM engineering_tasks t JOIN engineering_workspaces w ON w.tenant_id=t.tenant_id AND w.project_id=t.project_id WHERE t.id=$1 AND t.tenant_id=$2 AND t.project_id=$3 AND t.worker_id=$4 AND t.lease_token_hash=$5 AND t.lease_expires_at>NOW() AND w.id=$6 AND w.lease_owner=$4 AND w.lease_token_hash=$7 AND w.lease_expires_at>NOW()")
+        .bind(&task_id).bind(tenant_id).bind(project_id).bind(worker_id).bind(task_hash)
+        .bind(&body.workspace_id).bind(workspace_hash).fetch_optional(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_lease_check_failed"))?;
+    if valid.is_none(){return Err(ApiError(StatusCode::CONFLICT,"workspace_assignment_lease_expired_or_invalid"));}
+    let released=sqlx::query("UPDATE engineering_task_workspace_assignments SET released_at=NOW() WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND workspace_id=$4 AND released_at IS NULL")
+        .bind(tenant_id).bind(project_id).bind(&task_id).bind(&body.workspace_id)
+        .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_release_failed"))?;
+    sqlx::query("DELETE FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND workspace_id=$4")
+        .bind(tenant_id).bind(project_id).bind(&task_id).bind(&body.workspace_id)
+        .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_release_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_release_commit_failed"))?;
+    audit(&state,&principal.actor,"engineering_task.workspace_released","engineering_task",&task_id,json!({"workspace_id":body.workspace_id,"released":released.rows_affected()})).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn lease_next_engineering_workspace(
     State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>,
     Json(body): Json<WorkspaceLeaseRequest>
@@ -2287,6 +2401,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/tasks/claim", post(claim_engineering_task))
         .route("/v1/tasks/{task_id}/heartbeat", post(heartbeat_engineering_task))
         .route("/v1/tasks/{task_id}/checkpoints", post(create_engineering_checkpoint))
+        .route("/v1/tasks/{task_id}/workspace-assignment", post(assign_engineering_task_workspace).delete(release_engineering_task_workspace))
         .route("/v1/tasks/{task_id}/attempts", post(record_engineering_task_attempt))
         .route("/v1/projects/{project_id}/tasks/{task_id}/attempts", get(list_engineering_task_attempts))
         .route("/v1/projects/{project_id}", put(update_project).delete(delete_project))
