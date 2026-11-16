@@ -70,3 +70,14 @@ Codex CLI also discovers applicable AGENTS.md files by directory. Claude Code su
 ## Provider routing status
 
 PR #56 corrected the workflow's model-family selection so Codex/OpenAI models use Responses and Claude Code/Anthropic models use Messages. Exact-head CI passed on the PR commit before merge. The merge is recorded in the project map. A fresh live Starimg tool-call probe after that correction is still required before claiming provider compatibility is restored.
+
+
+## Self-hosting status and transition
+
+The existing Codex/Claude GitHub Actions workflow is currently an external bootstrap runner. It checks Starimg directly, invokes Codex CLI and Claude Code CLI directly, and then publishes a candidate through GitHub. This is useful for bootstrapping missing capabilities, but it is not the Hub executing its own development task through its API.
+
+The Hub's Rust `/v1/ai/chat` endpoint is currently a text-only inference proxy. It does not accept/return tool-call objects or start durable engineering jobs. The OpenAI-compatible adapter currently targets `/chat/completions`; it does not implement OpenAI Responses. The Anthropic adapter targets `/v1/messages` but extracts text blocks only. There is no verified repository workspace, isolated code executor, checkpointed task worker or Hub-controlled PR publisher.
+
+**Transition rule:** external CLI/GitHub file editing is permitted only to bootstrap those missing capabilities. Once the running Hub API has passed the self-hosting acceptance tests in `docs/MAP.md`, all Hub implementation tasks must be submitted and executed through that API. GitHub remains the checkout/CI/review/PR surface, not the coding control plane.
+
+Starimg diagnosis must keep three claims separate: (1) direct Starimg protocol probe; (2) the Hub's own provider adapter probe; (3) a full Hub task producing and verifying a patch. PR #56 fixes the external workflow's earlier Fable-to-Responses mismatch; it does not prove the Rust adapter supports Responses or tool use.
