@@ -1535,6 +1535,16 @@ mod outbound_tests {
         assert!(build_pinned_ollama_client(&url, &[private, public]).is_err());
         assert!(build_pinned_ollama_client(&url, &[metadata]).is_err());
         assert!(build_pinned_ollama_client(&url, &[]).is_err());
+
+        let private_mapped = "[::ffff:10.2.3.4]:11434".parse::<SocketAddr>().unwrap();
+        assert!(build_pinned_ollama_client(&url, &[private_mapped]).is_ok());
+        let literal_url = url::Url::parse("http://10.0.0.2:11434").unwrap();
+        let wrong_literal = "10.0.0.3:11434".parse::<SocketAddr>().unwrap();
+        let wrong_port = "10.0.0.2:11435".parse::<SocketAddr>().unwrap();
+        let matching_literal = "10.0.0.2:11434".parse::<SocketAddr>().unwrap();
+        assert!(build_pinned_ollama_client(&literal_url, &[wrong_literal]).is_err());
+        assert!(build_pinned_ollama_client(&literal_url, &[wrong_port]).is_err());
+        assert!(build_pinned_ollama_client(&literal_url, &[matching_literal]).is_ok());
     }
 
     #[test]
