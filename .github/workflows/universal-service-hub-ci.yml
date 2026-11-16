@@ -304,6 +304,36 @@ jobs:
             -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
             -d "$(jq -nc --arg worker_id "tester-smoke" --arg lease_token "$tester_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
 
+          task_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tasks \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"idempotency_key":"smoke-task-1","title":"Smoke task","objective":"Exercise worker attempt persistence","acceptance_criteria":["Persist an attempt"],"dependencies":[]}')
+          task_id=$(printf '%s' "$task_response" | jq -r '.id')
+          task_version=$(printf '%s' "$task_response" | jq -r '.version')
+          for next_status in classified planned queued; do
+            transition_response=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$task_id/transition" \
+              -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+              -d "$(jq -nc --arg next_status "$next_status" --argjson expected_version "$task_version" '{next_status:$next_status,expected_version:$expected_version}')")
+            task_version=$(printf '%s' "$transition_response" | jq -r '.version')
+          done
+
+          claimed_task=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d '{"queue":"implementation","worker_id":"implementer-smoke"}')
+          claimed_task_id=$(printf '%s' "$claimed_task" | jq -r '.task.id')
+          task_lease=$(printf '%s' "$claimed_task" | jq -r '.lease_token')
+          test "$claimed_task_id" = "$task_id"
+          echo "::add-mask::$task_lease"
+
+          attempt_response=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/attempts" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$task_lease" \
+              '{worker_id:$worker_id,lease_token:$lease_token,model_id:"smoke-model",strategy:"baseline",outcome:"failed",acceptance_progress:0.25,error_code:"smoke_failure",error_summary:"Expected smoke-test failure"}')")
+          printf '%s' "$attempt_response" | jq -e '.attempt_no == 1 and .outcome == "failed"' >/dev/null
+
+          attempt_history=$(curl -fsS -H "Authorization: Bearer $tenant_alpha_token" \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$task_id/attempts")
+          printf '%s' "$attempt_history" | jq -e 'length == 1 and .[0].model_id == "smoke-model" and .[0].outcome == "failed"' >/dev/null
+
           curl -fsS -H "Authorization: Bearer $owner_token" \
             http://127.0.0.1:8000/v1/projects/smoke-project/tokens | jq -e 'length == 3' >/dev/null
 
