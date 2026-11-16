@@ -14,6 +14,22 @@ services:
       retries: 20
     restart: unless-stopped
 
+  db-init:
+    image: postgres:17-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: ush
+      PGDATABASE: ush
+      PGPASSWORD: ${USH_DB_PASSWORD:?Run ./scripts/dev-up.sh to generate local credentials}
+      USH_APP_DB_PASSWORD: ${USH_APP_DB_PASSWORD:?Run ./scripts/dev-up.sh to generate local credentials}
+    volumes:
+      - ./scripts/init-app-db-role.sh:/usr/local/bin/init-app-db-role.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/init-app-db-role.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   hub:
     image: universal-service-hub:local
     build:
@@ -22,15 +38,15 @@ services:
     environment:
       USH_ENVIRONMENT: development
       USH_SECRET_BACKEND: env
-      USH_DATABASE_URL: postgres://ush:${USH_DB_PASSWORD:?Run ./scripts/dev-up.sh to generate local credentials}@postgres:5432/ush
+      USH_DATABASE_URL: postgres://ush_app:${USH_APP_DB_PASSWORD:?Run ./scripts/dev-up.sh to generate local credentials}@postgres:5432/ush
       USH_API_TOKEN: ${USH_API_TOKEN:?Run ./scripts/dev-up.sh to generate local credentials}
       USH_RATE_LIMIT_PER_MINUTE: ${USH_RATE_LIMIT_PER_MINUTE:-120}
       HOST: 0.0.0.0
       PORT: 8000
       RUST_LOG: info
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:${PORT:-8000}:8000"
     restart: unless-stopped
