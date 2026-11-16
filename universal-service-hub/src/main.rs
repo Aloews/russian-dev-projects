@@ -1196,7 +1196,10 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
             Ok(response) => response,
             Err(err) => {
                 audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":if err.is_connect() {"connection_failed"} else {"network_error"}})).await;
-                if err.is_connect() && idempotent && body.idempotency_key.is_some() { continue; }
+                if err.is_connect() {
+                    audit(&state, &principal.actor, "ai.chat.failover", "provider", &provider_id, json!({"reason":"connection_failed","next_candidate":true})).await;
+                    continue;
+                }
                 return Err(ApiError(StatusCode::BAD_GATEWAY, "provider_connection_failed"));
             }
         };
@@ -1261,6 +1264,7 @@ async fn list_audit(State(state): State<AppState>, headers: HeaderMap, Query(que
     Ok(Json(json!(values)))
 }
 
+    #[cfg(test)]
     #[test]
     fn ollama_adapter_requires_private_allowlisted_endpoint() {
         assert!(is_ai_adapter("ollama"));
