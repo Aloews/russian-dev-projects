@@ -1518,7 +1518,7 @@ async fn acquire_engineering_task_path_locks(
     let allowed_scopes:Vec<String>=serde_json::from_value(writer_scope).unwrap_or_default();
     if body.path_prefixes.iter().any(|path|!allowed_scopes.iter().any(|scope|{
         let scope=scope.trim_end_matches('/');
-        path==scope || path.starts_with(&format!("{scope}/")) || scope.starts_with(&format!("{}/",path.trim_end_matches('/')))
+        path==scope || path.starts_with(&format!("{scope}/"))
     })) {
         return Err(ApiError(StatusCode::FORBIDDEN,"path_lock_outside_assigned_writer_scope"));
     }
