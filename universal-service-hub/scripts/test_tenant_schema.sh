@@ -3,6 +3,7 @@ set -euo pipefail
 
 compose=(docker compose --env-file .env.local -f compose.yml)
 "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U ush -d ush <<'SQL'
+BEGIN;
 INSERT INTO tenants (id, slug, name) VALUES ('tenant-beta', 'tenant-beta', 'Tenant Beta');
 INSERT INTO workspaces (tenant_id, id, slug, name)
 VALUES ('tenant-beta', 'default', 'default', 'Default workspace');
@@ -111,4 +112,5 @@ BEGIN
   END IF;
 END;
 $test$;
+ROLLBACK;
 SQL
