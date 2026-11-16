@@ -27,33 +27,15 @@ CREATE TABLE IF NOT EXISTS engineering_tasks (
     CONSTRAINT fk_engineering_tasks_tenant_project FOREIGN KEY (tenant_id, project_id) REFERENCES projects(tenant_id, id) ON DELETE CASCADE
 );
 -- Derive tenant ownership from the owning project; never trust request-supplied tenant IDs.
-CREATE FUNCTION ush_assign_engineering_task_tenant() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE FUNCTION ush_assign_engineering_task_tenant() RETURNS trigger LANGUAGE plpgsql AS $function$
 BEGIN
     SELECT tenant_id INTO NEW.tenant_id FROM projects WHERE id=NEW.project_id;
     IF NEW.tenant_id IS NULL THEN RAISE EXCEPTION 'engineering task project tenant not found'; END IF;
     RETURN NEW;
 END;
-$;
+$function$;
 CREATE TRIGGER trg_engineering_tasks_assign_tenant BEFORE INSERT ON engineering_tasks
 FOR EACH ROW EXECUTE FUNCTION ush_assign_engineering_task_tenant();
-
-CREATE FUNCTION ush_assign_engineering_child_tenant() RETURNS trigger LANGUAGE plpgsql AS $
-DECLARE
-    owning_tenant VARCHAR(80);
-    owning_project VARCHAR(80);
-BEGIN
-    SELECT tenant_id, project_id INTO owning_tenant, owning_project
-      FROM engineering_tasks WHERE id=NEW.task_id;
-    IF owning_tenant IS NULL THEN RAISE EXCEPTION 'engineering task tenant not found'; END IF;
-    IF NEW.project_id <> owning_project THEN RAISE EXCEPTION 'engineering task project mismatch'; END IF;
-    NEW.tenant_id := owning_tenant;
-    RETURN NEW;
-END;
-$;
-CREATE TRIGGER trg_engineering_task_events_assign_tenant BEFORE INSERT ON engineering_task_events
-FOR EACH ROW EXECUTE FUNCTION ush_assign_engineering_child_tenant();
-CREATE TRIGGER trg_engineering_task_checkpoints_assign_tenant BEFORE INSERT ON engineering_task_checkpoints
-FOR EACH ROW EXECUTE FUNCTION ush_assign_engineering_child_tenant();
 
 CREATE INDEX IF NOT EXISTS ix_engineering_tasks_dispatch
     ON engineering_tasks(queue_name, priority ASC, created_at ASC)
@@ -98,3 +80,22 @@ CREATE TABLE IF NOT EXISTS engineering_task_checkpoints (
 );
 CREATE INDEX IF NOT EXISTS ix_engineering_task_checkpoints_task
     ON engineering_task_checkpoints(task_id, created_at DESC);
+
+-- Child records inherit ownership from the task and cannot claim another project.
+CREATE FUNCTION ush_assign_engineering_child_tenant() RETURNS trigger LANGUAGE plpgsql AS $function$
+DECLARE
+    owning_tenant VARCHAR(80);
+    owning_project VARCHAR(80);
+BEGIN
+    SELECT tenant_id, project_id INTO owning_tenant, owning_project
+      FROM engineering_tasks WHERE id=NEW.task_id;
+    IF owning_tenant IS NULL THEN RAISE EXCEPTION 'engineering task tenant not found'; END IF;
+    IF NEW.project_id <> owning_project THEN RAISE EXCEPTION 'engineering task project mismatch'; END IF;
+    NEW.tenant_id := owning_tenant;
+    RETURN NEW;
+END;
+$function$;
+CREATE TRIGGER trg_engineering_task_events_assign_tenant BEFORE INSERT ON engineering_task_events
+FOR EACH ROW EXECUTE FUNCTION ush_assign_engineering_child_tenant();
+CREATE TRIGGER trg_engineering_task_checkpoints_assign_tenant BEFORE INSERT ON engineering_task_checkpoints
+FOR EACH ROW EXECUTE FUNCTION ush_assign_engineering_child_tenant();
