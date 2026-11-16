@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REQUIRED = {
     "AGENTS.md": (
         "## Instruction hierarchy",
+        "## Coding-agent compatibility",
         "## Required discovery before changes",
         "## Product development lifecycle",
         "## Agent coordination",
@@ -82,6 +83,8 @@ def main() -> None:
     template = ROOT / TEMPLATE
     template_text = template.read_text(encoding="utf-8")
     placeholders = re.findall(r"\{\{[A-Z0-9_]+\}\}", template_text)
+    if "Claude Code" not in template_text or "@AGENTS.md" not in template_text:
+        fail("target-project AGENTS template must define Claude Code AGENTS.md compatibility")
     if len(placeholders) < 10:
         fail("target-project AGENTS template appears incomplete: expected explicit project placeholders")
 
