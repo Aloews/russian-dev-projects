@@ -13,7 +13,7 @@ cd universal-service-hub
 bash scripts/dev-up.sh
 ~~~
 
-The script generates a 256-bit root API token and PostgreSQL password in a local .env file with mode 0600, builds the Rust image, starts PostgreSQL 17 and the Hub, waits for the database-backed /readyz endpoint, verifies /healthz, confirms unauthenticated API requests receive 401, and confirms authenticated provider-list access. It never prints the root token.
+The script generates a 256-bit root API token and PostgreSQL password in a local .env.local file with mode 0600, builds the Rust image, starts PostgreSQL 17 and the Hub, waits for the database-backed /readyz endpoint, verifies /healthz, confirms unauthenticated API requests receive 401, and confirms authenticated provider-list access. It never prints the root token.
 
 Local endpoints:
 
@@ -21,7 +21,7 @@ Local endpoints:
 - http://localhost:8000/readyz
 - http://localhost:8000/v1/providers (Bearer token required)
 
-The root API token is stored in universal-service-hub/.env; do not commit or share it. The local compose profile explicitly uses development mode and environment-backed secrets. It is not a production deployment configuration.
+The root API token is stored in universal-service-hub/.env.local; do not commit or share it. The local compose profile explicitly uses development mode and environment-backed secrets. It is not a production deployment configuration.
 
 Stop the service without deleting local database data:
 
