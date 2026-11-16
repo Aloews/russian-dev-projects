@@ -61,3 +61,15 @@ Work autonomously within the permissions and safety boundaries below.
 - Distinguish provider probe, code correctness, integration readiness and production readiness.
 - Mark a task `VERIFIED` only with evidence from the exact candidate commit. Otherwise use `IN PROGRESS`, `BLOCKED` or `NOT VERIFIED`.
 - A task is complete only when the intended user outcome is delivered, relevant checks pass, the diff is reviewed, documentation reflects reality and all applicable security/release gates are satisfied.
+
+
+## Adaptive multi-agent execution
+
+- The Hub coding workflow enables Codex subagent orchestration and provides four narrow roles: codebase exploration, application security, provider/API contracts and QA/test analysis.
+- Use two or three read-only specialists by default; activate a fourth only when it has a distinct, decision-relevant workstream. Maximum four concurrent subagents, nesting depth one.
+- The primary Codex session is the sole writer and integrator. Subagents return evidence-backed findings only; do not permit overlapping writes or duplicate broad scans.
+- Keep the selected, verified Starimg-compatible model as the default subagent model unless the live catalogue and protocol checks establish a cheaper compatible model with sufficient capability. Do not guess model quality or pricing from names.
+- The primary agent must consolidate findings, implement one coherent vertical slice, and request a read-only diff review before the sequential Claude review. If subagent orchestration is unsupported by the selected model, continue safely with one writer and record the limitation.
+- A checkpoint step captures the candidate patch and status after the Codex phase, including when that phase fails or times out. The checkpoint is uploaded as a short-lived Actions artifact only after a basic secret-pattern scan. It is recovery evidence, not a validated deliverable.
+
+- **Isolation limitation:** the read-only boundary for Codex subagents is currently an instruction, not a separately enforced filesystem permission. Subagents inherit the parent session's sandbox. The primary must inspect the complete diff and reject unintended edits; never describe these roles as technically sandbox-isolated until a tested enforcement mechanism is added.
