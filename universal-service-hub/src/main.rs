@@ -141,6 +141,17 @@ struct Principal {
     admin: bool,
 }
 
+async fn begin_platform_transaction(
+    state: &AppState,
+) -> ApiResult<sqlx::Transaction<'static, sqlx::Postgres>> {
+    let mut tx=state.db.begin().await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_failed"))?;
+    sqlx::query("SELECT set_config('app.is_admin','true',true), set_config('app.tenant_id','',true)")
+        .execute(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_tenant_context_failed"))?;
+    Ok(tx)
+}
+
 async fn begin_principal_transaction(
     state: &AppState,
     principal: &Principal,
@@ -206,9 +217,10 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
         });
     }
 
+    let mut worker_auth_tx=begin_platform_transaction(state).await?;
     let worker_row = sqlx::query(
         "SELECT id,tenant_id,project_id,worker_id,worker_role,queue_name FROM engineering_worker_tokens WHERE token_hash=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>NOW())"
-    ).bind(&digest).fetch_optional(&state.db).await
+    ).bind(&digest).fetch_optional(&mut *worker_auth_tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     if let Some(row) = worker_row {
         enforce_rate_limit(state, &digest).await?;
@@ -218,13 +230,15 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
         let worker_id: String = row.try_get("worker_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let worker_role: String = row.try_get("worker_role").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let queue_name: String = row.try_get("queue_name").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
-        let _ = sqlx::query("UPDATE engineering_worker_tokens SET last_used_at=NOW() WHERE id=$1").bind(&id).execute(&state.db).await;
+        let _ = sqlx::query("UPDATE engineering_worker_tokens SET last_used_at=NOW() WHERE id=$1").bind(&id).execute(&mut *worker_auth_tx).await;
+        worker_auth_tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
         return Ok(Principal {
             actor: format!("worker:{tenant_id}:{project_id}:{worker_id}:{id}"),
             role: "worker".into(), tenant_id: Some(tenant_id), project_id: Some(project_id),
             worker_id: Some(worker_id), worker_role: Some(worker_role), queue_name: Some(queue_name), admin: false
         });
     }
+    worker_auth_tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
 
     let tenant_row = sqlx::query(
         "SELECT id,tenant_id,role FROM tenant_tokens WHERE token_hash=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>NOW())"
@@ -961,17 +975,19 @@ async fn create_engineering_worker(
     let raw: String = rand::rng().sample_iter(&Alphanumeric).take(48).map(char::from).collect();
     let hash = hex::encode(Sha256::digest(raw.as_bytes()));
     let id = Uuid::new_v4().to_string();
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let result = sqlx::query(
         "INSERT INTO engineering_worker_tokens (id,project_id,name,worker_id,worker_role,queue_name,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,CASE WHEN $8::bigint IS NULL THEN NULL ELSE NOW()+($8::text||' seconds')::interval END)"
     ).bind(&id).bind(&project_id).bind(&body.name).bind(&body.worker_id)
      .bind(&body.worker_role).bind(queue_name).bind(hash).bind(body.expires_in_seconds)
-     .execute(&state.db).await;
+     .execute(&mut *tx).await;
     if let Err(error) = result {
         if error.as_database_error().is_some_and(|db_error| db_error.code().as_deref()==Some("23505")) {
             return Err(ApiError(StatusCode::CONFLICT, "engineering_worker_id_already_active"));
         }
         return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "engineering_worker_create_failed"));
     }
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     audit(&state, &principal.actor, "engineering_worker.create", "project", &project_id, json!({"worker_id":body.worker_id,"worker_role":body.worker_role,"queue":queue_name})).await;
     Ok(Json(json!({"id":id,"project_id":project_id,"name":body.name,"worker_id":body.worker_id,"worker_role":body.worker_role,"queue":queue_name,"token":raw})))
 }
@@ -979,10 +995,12 @@ async fn create_engineering_worker(
 async fn list_engineering_workers(
     State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>
 ) -> ApiResult<Json<Value>> {
-    require_project_owner_or_admin(&state, &headers, &project_id).await?;
+    let principal=require_project_owner_or_admin(&state, &headers, &project_id).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let rows = sqlx::query("SELECT id,name,worker_id,worker_role,queue_name,created_at,expires_at,last_used_at,revoked_at FROM engineering_worker_tokens WHERE project_id=$1 ORDER BY created_at DESC LIMIT 200")
         .bind(&project_id).fetch_all(&state.db).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "engineering_worker_list_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let values: Vec<Value> = rows.into_iter().map(|row| json!({
         "id":row.get::<String,_>("id"),"name":row.get::<String,_>("name"),
         "worker_id":row.get::<String,_>("worker_id"),"worker_role":row.get::<String,_>("worker_role"),
@@ -998,9 +1016,11 @@ async fn revoke_engineering_worker(
     State(state): State<AppState>, headers: HeaderMap, Path((project_id,worker_id)): Path<(String,String)>
 ) -> ApiResult<StatusCode> {
     let principal = require_project_owner_or_admin(&state, &headers, &project_id).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let result = sqlx::query("UPDATE engineering_worker_tokens SET revoked_at=NOW() WHERE project_id=$1 AND worker_id=$2 AND revoked_at IS NULL")
         .bind(&project_id).bind(&worker_id).execute(&state.db).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "engineering_worker_revoke_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     if result.rows_affected()==0 { return Err(ApiError(StatusCode::NOT_FOUND, "engineering_worker_not_found")); }
     audit(&state, &principal.actor, "engineering_worker.revoke", "project", &project_id, json!({"worker_id":worker_id})).await;
     Ok(StatusCode::NO_CONTENT)
