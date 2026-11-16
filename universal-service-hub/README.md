@@ -15,7 +15,7 @@ The execution-plane API now includes:
 - Read-only reviewer assignments: candidate SHA required, writer scope empty, and path-lock acquisition denied.
 - Checkpoint and model-attempt history, including strategy/model changes.
 - Transaction-local tenant context and fail-closed PostgreSQL RLS across tenant-owned core data, tokens, rate limits and engineering execution tables.
-- Runtime startup rejects database roles with superuser or BYPASSRLS privileges. Local Compose and CI use a dedicated non-superuser `ush_app` role.
+- Runtime startup rejects database roles with superuser or BYPASSRLS privileges. Local Compose and CI use `ush_app` as the restricted migration login; after migrations, every API pool connection switches to the non-login `ush_runtime` role (`NOLOGIN`, `NOSUPERUSER`, `NOBYPASSRLS).
 
 **Not yet production-ready:** the Railway worker is not yet consuming the USH task queue. The API primitives and database controls do not by themselves create a working autonomous runtime. The remaining work is to connect the Railway project adapter, create real Git worktrees in leased workspaces, separate the role-specific executors, and prove the complete task-to-PR-to-independent-review-and-recovery flow in a sandbox.
 
