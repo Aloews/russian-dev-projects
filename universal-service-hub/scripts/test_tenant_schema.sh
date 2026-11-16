@@ -266,6 +266,10 @@ INSERT INTO engineering_worker_tokens
 VALUES
  ('aaaaaaaa-2222-4222-8222-aaaaaaaaaaaa','aloews','rls-alpha-project','Alpha implementer','rls-alpha-worker','implementer','implementation',repeat('a',64)),
  ('bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb','tenant-beta','rls-beta-project','Beta tester','rls-beta-worker','tester','test',repeat('b',64));
+INSERT INTO tenant_tokens (id,tenant_id,name,role,token_hash)
+VALUES ('77777777-7777-4777-8777-777777777777','tenant-beta','Beta tenant token','viewer',repeat('c',64));
+INSERT INTO project_tokens (id,tenant_id,project_id,name,role,token_hash)
+VALUES ('88888888-8888-4888-8888-888888888888','tenant-beta','rls-beta-project','Beta project token','viewer',repeat('d',64));
 INSERT INTO engineering_tasks (id,tenant_id,project_id,idempotency_key,title,objective,created_by)
 VALUES
  ('aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa','aloews','rls-alpha-project','rls-alpha','Alpha visible','Alpha','test'),
@@ -283,7 +287,6 @@ VALUES
 COMMIT;
 
 SET ROLE ush_app;
-SET ROLE ush_runtime;
 DO $role_test$
 DECLARE is_superuser BOOLEAN; bypasses_rls BOOLEAN;
 BEGIN
@@ -318,6 +321,10 @@ BEGIN
     OR EXISTS (SELECT 1 FROM audit_events WHERE id='44444444-4444-4444-8444-444444444444') THEN
    RAISE EXCEPTION 'tenant alpha can read tenant beta usage or audit data';
  END IF;
+ IF EXISTS (SELECT 1 FROM tenant_tokens WHERE id='77777777-7777-4777-8777-777777777777')
+    OR EXISTS (SELECT 1 FROM project_tokens WHERE id='88888888-8888-4888-8888-888888888888') THEN
+   RAISE EXCEPTION 'tenant alpha can read tenant beta tokens';
+ END IF;
 END;
 $alpha_test$;
 COMMIT;
@@ -345,6 +352,10 @@ BEGIN
     OR NOT EXISTS (SELECT 1 FROM audit_events WHERE id='44444444-4444-4444-8444-444444444444') THEN
    RAISE EXCEPTION 'tenant beta cannot read its own usage or audit data';
  END IF;
+ IF NOT EXISTS (SELECT 1 FROM tenant_tokens WHERE id='77777777-7777-4777-8777-777777777777')
+    OR NOT EXISTS (SELECT 1 FROM project_tokens WHERE id='88888888-8888-4888-8888-888888888888') THEN
+   RAISE EXCEPTION 'tenant beta cannot read its own tokens';
+ END IF;
  BEGIN
    INSERT INTO engineering_tasks (id,tenant_id,project_id,idempotency_key,title,objective,created_by)
    VALUES ('cccccccc-1111-4111-8111-cccccccccccc','tenant-beta','rls-alpha-project','forged','Forged','Cross tenant','test');
@@ -370,11 +381,16 @@ BEGIN
     OR EXISTS (SELECT 1 FROM tenant_usage_events) OR EXISTS (SELECT 1 FROM audit_events) THEN
    RAISE EXCEPTION 'missing tenant context exposed core tenant data';
  END IF;
+ IF EXISTS (SELECT 1 FROM tenant_tokens) OR EXISTS (SELECT 1 FROM project_tokens) THEN
+   RAISE EXCEPTION 'missing tenant context exposed token records';
+ END IF;
 END;
 $no_context_test$;
 COMMIT;
 
 RESET ROLE;
+DELETE FROM tenant_tokens WHERE id='77777777-7777-4777-8777-777777777777';
+DELETE FROM project_tokens WHERE id='88888888-8888-4888-8888-888888888888';
 DELETE FROM audit_events WHERE id='44444444-4444-4444-8444-444444444444';
 DELETE FROM tenant_usage_events WHERE id='33333333-3333-4333-8333-333333333333';
 DELETE FROM engineering_worker_tokens WHERE id IN (
