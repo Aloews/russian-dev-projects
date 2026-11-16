@@ -39,6 +39,7 @@ jobs:
       STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
       STARIMG_CODEX_MODEL: ${{ vars.STARIMG_CODEX_MODEL }}
       STARIMG_CLAUDE_MODEL: ${{ vars.STARIMG_CLAUDE_MODEL }}
+      STARIMG_PLANNING_MODEL: ${{ vars.STARIMG_PLANNING_MODEL }}
       BASE_REF: ${{ inputs.base_ref || 'main' }}
       TASK_OBJECTIVE: "${{ inputs.objective || 'Complete the first genuinely usable Universal Hub control-center vertical slice. Inspect the existing Rust runtime, UI, auth, database, provider registry, migrations and tests before editing. Implement real AI-generated multi-step plans from user ideas using the existing authorized project/provider registry; validate structured model output, reject malformed plans safely, and never show a hardcoded or fabricated plan as generated. Persist ideas, plans, steps, attempts and outputs in PostgreSQL with project scoping, membership authorization, idempotency and audit-safe metadata. The browser journey must support create idea, preview the actual generated plan, approve only with a configured positive spend ceiling, start the approved work, and observe durable step states and results. If a durable executor exists, complete and test its real path; otherwise implement the smallest safe bounded executor compatible with current architecture and do not claim provider work is running until a real attempt is recorded. Never submit billable work without explicit per-job approval and spend ceiling; use mocked provider HTTP in tests. Add Rust unit/integration tests for success, malformed model output, provider errors, tenant isolation, duplicate requests, approval and budget rejection, plus an automated HTTP or browser end-to-end test for the full idea-to-result journey against PostgreSQL. Run formatting, lint, Rust tests, migration smoke and Docker/container smoke; fix all failures. Update docs/MAP.md and README with exact commit/test evidence and explicit blockers. Defer Music and Video workspaces to later isolated increments; do not add placeholders or imply they exist. No paid generation, production data changes, secret changes, deployment or resource provisioning. Prefer one complete tested vertical slice over broad scaffolding.' }}"
       BRANCH_NAME: agent/universal-hub-${{ github.run_id }}
@@ -132,17 +133,20 @@ jobs:
 
           explicit_codex = os.environ.get("STARIMG_CODEX_MODEL", "").strip()
           explicit_claude = os.environ.get("STARIMG_CLAUDE_MODEL", "").strip()
+          explicit_planning = os.environ.get("STARIMG_PLANNING_MODEL", "").strip()
           if explicit_codex and explicit_codex not in ids:
               raise SystemExit("STARIMG_CODEX_MODEL is not present in the live Starimg model catalogue.")
           if explicit_claude and explicit_claude not in ids:
               raise SystemExit("STARIMG_CLAUDE_MODEL is not present in the live Starimg model catalogue.")
+          if explicit_planning and explicit_planning not in ids:
+              raise SystemExit("STARIMG_PLANNING_MODEL is not present in the live Starimg model catalogue.")
 
           codex_candidates = [m for m in ids if re.search(r"codex", m, re.I)]
           if not codex_candidates:
               codex_candidates = [m for m in ids if re.match(r"gpt-", m, re.I)]
-          claude_candidates = [m for m in ids if re.search(r"claude.*sonnet|sonnet.*claude", m, re.I)]
+          claude_candidates = [m for m in ids if re.search(r"claude.*opus|opus.*claude", m, re.I)]
           if not claude_candidates:
-              claude_candidates = [m for m in ids if re.search(r"claude.*opus|opus.*claude", m, re.I)]
+              claude_candidates = [m for m in ids if re.search(r"claude.*sonnet|sonnet.*claude", m, re.I)]
           if not claude_candidates:
               claude_candidates = [m for m in ids if "claude" in m.lower()]
 
@@ -153,6 +157,8 @@ jobs:
 
           codex_model = explicit_codex or codex_candidates[0]
           claude_model = explicit_claude or claude_candidates[0]
+          planner_candidates = [m for m in ids if re.search(r"claude.*opus|opus.*claude", m, re.I)]
+          planning_model = explicit_planning or (planner_candidates[0] if planner_candidates else claude_model)
 
           responses_body = {
               "model": codex_model,
@@ -206,12 +212,49 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write("codex_model=" + codex_model + "\n")
               output.write("claude_model=" + claude_model + "\n")
+              output.write("planning_model=" + planning_model + "\n")
               output.write("CODEX_MODEL=" + codex_model + "\n")
               output.write("CLAUDE_MODEL=" + claude_model + "\n")
           print("Starimg verified: Responses API function calling and Anthropic Messages tool use both passed.")
           print("Selected Codex model: " + codex_model)
           print("Selected Claude Code model: " + claude_model)
+          print("Selected planning model: " + planning_model)
           PY
+
+      - name: Deep planning — highest-capability available model
+        timeout-minutes: 45
+        env:
+          PLANNING_MODEL: ${{ steps.starimg.outputs.planning_model }}
+          STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
+          STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
+          TASK_OBJECTIVE: "${{ inputs.objective || 'Complete the first genuinely usable Universal Hub control-center vertical slice.' }}"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$RUNNER_TEMP/universal-hub-planning.md" <<'PROMPT'
+          You are the Principal Architect and Engineering Planner. This is a dedicated, high-compute planning stage. Do not implement product code.
+          Inspect the actual repository state, AGENTS.md, docs/MAP.md, runtime, UI, APIs, migrations, auth, provider registry, tests, CI and operational constraints before proposing work.
+          Produce a precise, evidence-based implementation plan in docs/MAP.md under "Current execution plan". This plan is the execution contract for Codex and the independent reviewer.
+          Required planning work:
+          1. Translate the objective into user-visible outcomes and explicit non-goals.
+          2. Inventory existing components and reuse points; cite exact paths, symbols, migrations and tests. Mark unknowns instead of guessing.
+          3. Define architecture and end-to-end data/control flow, including trust boundaries, tenant scope, persistence, provider routing and failure recovery.
+          4. Build a dependency DAG. Split work into small independently verifiable tasks; identify critical path, parallelizable tasks and integration order.
+          5. For every task specify owner role (not a person), exact files/modules expected, prerequisite task IDs, inputs/outputs, API/data contracts, acceptance criteria, tests, failure modes and evidence required.
+          6. Allocate effort deliberately: spend more reasoning and model budget on discovery, architecture, threat modelling, task decomposition and acceptance design than on code generation. Prefer the strongest available planning model; do not economize on this phase. Reserve sufficient implementation, independent review and repair capacity.
+          7. Specify model/tool routing by task type: strongest reasoning model for architecture, security and ambiguous decisions; coding-specialist model for implementation; independent strong model for review. Never claim a model capability not established by the live catalogue/probe.
+          8. Define stop conditions, unresolved decisions, rollback/safety boundaries and a test matrix. No paid calls, production mutations, secret exposure or deployment.
+          9. Keep the plan proportional to the actual repository and bounded run budget. Avoid speculative layers, duplicate abstractions and giant tasks.
+          Do not invent code state, test results or evidence. Do not mark tasks done. Do not modify implementation files. Update only docs/MAP.md. End with a concise task table and critical-path sequence.
+          PROMPT
+          printf "\\nRequested objective: %s\\n" "$TASK_OBJECTIVE" >> "$RUNNER_TEMP/universal-hub-planning.md"
+          cd "$GITHUB_WORKSPACE/universal-service-hub"
+          ORIGIN="${STARIMG_BASE_URL%/}"
+          ORIGIN="${ORIGIN%/v1}"
+          ANTHROPIC_BASE_URL="$ORIGIN" ANTHROPIC_API_KEY="$STARIMG_API_KEY" claude -p --tools "Read,Write,Edit,Glob,Grep" --permission-mode bypassPermissions --model "$PLANNING_MODEL" --max-turns 45 --output-format text "$(cat "$RUNNER_TEMP/universal-hub-planning.md")"
+          grep -q "Current execution plan" docs/MAP.md || { echo "Planner did not persist the execution plan in docs/MAP.md." >&2; exit 2; }
+          echo "Deep planning stage completed with model: $PLANNING_MODEL"
 
       - name: Run Codex CLI — primary implementation
         timeout-minutes: 65
@@ -244,7 +287,7 @@ jobs:
 
           cat > "$RUNNER_TEMP/codex-task.md" <<'PROMPT'
           You are the primary Staff Software Engineer implementing the Universal Service Hub.
-          Read universal-service-hub/AGENTS.md and docs/MAP.md first. Inspect the actual Rust runtime, Python compatibility layer, migrations, provider adapters, tests, Dockerfile and roadmap documents before choosing scope.
+          Read universal-service-hub/AGENTS.md and docs/MAP.md first. Treat the persisted Current execution plan as the execution contract. Inspect the actual Rust runtime, Python compatibility layer, migrations, provider adapters, tests, Dockerfile and roadmap documents; validate the plan against current code before implementation. If the plan is incomplete or contradicts repository evidence, repair the plan in docs/MAP.md before coding.
 
           Implement the highest-priority coherent production-readiness increment that can be completed and tested in this run. Prefer a real end-to-end capability with persistence, authorization, failure handling, regression tests and operational documentation. Do not create broad scaffolding or mark planned features as implemented.
 
@@ -274,7 +317,7 @@ jobs:
           set -Eeuo pipefail
           cat > "$RUNNER_TEMP/claude-review.md" <<'PROMPT'
           You are the independent Staff Engineer, Security Reviewer and QA Lead for the Universal Service Hub. You have file tools only; no shell or network tools are available in this review pass.
-          Read universal-service-hub/AGENTS.md, docs/MAP.md and the relevant architecture/security/operations documents. Inspect the entire Codex diff and the actual changed implementation; do not trust the previous agent's summary.
+          Read universal-service-hub/AGENTS.md, docs/MAP.md and the relevant architecture/security/operations documents. Audit the persisted plan as well as the entire Codex diff: check task coverage, dependency ordering, acceptance criteria, resource/model allocation and scope drift. Inspect the actual changed implementation; do not trust the previous agent's summary.
 
           Challenge the implementation, find correctness/security/data-integrity problems, and fix blocking defects directly. Do not merely write a review report. Check authorization boundaries, tenant isolation, secret handling, outbound request safety, idempotency, persistence/migrations, concurrency, failure modes and compatibility. Add or improve regression tests for every material defect found.
 
