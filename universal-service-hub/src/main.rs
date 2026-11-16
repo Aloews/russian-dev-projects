@@ -1259,7 +1259,15 @@ struct WorkspaceLeaseBody {
     worker_id: String,
     lease_token: String,
     #[serde(default)]
+    lease_seconds: Option<i64>,
+    #[serde(default)]
     head_sha: Option<String>,
+    #[serde(default)]
+    git_worktree_path: Option<String>,
+    #[serde(default)]
+    git_branch: Option<String>,
+    #[serde(default)]
+    runtime_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1437,13 +1445,19 @@ async fn heartbeat_engineering_workspace(
     let mut tx=begin_principal_transaction(&state,&principal).await?;
     if principal.project_id.as_deref()!=Some(project_id.as_str())
         || principal.worker_id.as_deref()!=Some(body.worker_id.as_str())
-        || body.lease_token.len()<32 {
+        || body.lease_token.len()<32
+        || body.head_sha.as_ref().is_some_and(|sha|sha.len()!=40 || !sha.chars().all(|c|c.is_ascii_hexdigit()))
+        || body.git_worktree_path.as_ref().is_some_and(|path|path.is_empty() || path.len()>1024 || path.contains('\\') || path.contains('\0'))
+        || body.git_branch.as_ref().is_some_and(|branch|branch.is_empty() || branch.len()>200 || branch.starts_with('/') || branch.split('/').any(|part|part.is_empty() || part=="." || part=="..") || !branch.chars().all(|c|c.is_ascii_alphanumeric() || "._/-".contains(c)))
+        || body.runtime_id.as_ref().is_some_and(|id|id.is_empty() || id.len()>128 || id.chars().any(char::is_control)) {
         return Err(ApiError(StatusCode::FORBIDDEN,"workspace_worker_scope_forbidden"));
     }
     let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
     let hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
-    let row=sqlx::query("UPDATE engineering_workspaces SET lease_expires_at=NOW()+INTERVAL '120 seconds',last_heartbeat_at=NOW(),updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() RETURNING lease_expires_at")
+    let lease_seconds=body.lease_seconds.unwrap_or(120).clamp(15,900);
+    let row=sqlx::query("UPDATE engineering_workspaces SET lease_expires_at=NOW()+($6::text||' seconds')::interval,last_heartbeat_at=NOW(),head_sha=COALESCE($7,head_sha),git_worktree_path=COALESCE($8,git_worktree_path),git_branch=COALESCE($9,git_branch),metadata=CASE WHEN $10 IS NULL THEN metadata ELSE metadata||jsonb_build_object('runtime_id',$10) END,updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() RETURNING lease_expires_at")
         .bind(&workspace_id).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(hash)
+        .bind(lease_seconds).bind(&body.head_sha).bind(&body.git_worktree_path).bind(&body.git_branch).bind(&body.runtime_id)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_heartbeat_failed"))?;
     let Some(row)=row else{return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));};
     let workspace_expires:DateTime<Utc>=row.try_get("lease_expires_at")
