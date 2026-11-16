@@ -2206,12 +2206,10 @@ async fn select_provider(State(state): State<AppState>, headers: HeaderMap, Json
     let principal = require_project_access(&state, &headers).await?;
     let mut tx=begin_principal_transaction(&state,&principal).await?;
     let allowed_provider_ids: Option<Vec<String>> = if let Some(project_id) = principal.project_id.as_deref() {
-        let mut tx=begin_principal_transaction(&state,&principal).await?;
         let project = sqlx::query("SELECT allowed_capabilities,allowed_provider_ids FROM projects WHERE id=$1")
             .bind(project_id).fetch_optional(&mut *tx).await
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_failed"))?
             .ok_or(ApiError(StatusCode::FORBIDDEN, "project_not_found"))?;
-        tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
         let caps: Value = project.get("allowed_capabilities");
         if caps.as_array().is_none_or(|a| !a.iter().any(|v| v.as_str()==Some(&body.capability))) {
             return Err(ApiError(StatusCode::FORBIDDEN, "capability_not_allowed"));
