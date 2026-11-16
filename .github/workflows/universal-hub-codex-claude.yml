@@ -455,6 +455,8 @@ jobs:
           ALLOWED_PREFIXES: "universal-service-hub/src;universal-service-hub/app;universal-service-hub/tests;universal-service-hub/docs;universal-service-hub/scripts"
           CONTEXT_FILES: "universal-service-hub/docs/MAP.md;universal-service-hub/AGENTS.md;universal-service-hub/README.md;universal-service-hub/docs/ARCHITECTURE.md;universal-service-hub/docs/SECURITY_FIRST_ROADMAP.md"
           QWEN_REVIEW_PATH: universal-service-hub/docs/LOCAL_QWEN_REVIEW.md
+          PRODUCT_FACTORY_CONTRACT_PATH: ${{ github.workspace }}/.github/product-factory/AGENTS.md
+          TARGET_AGENTS_TEMPLATE_PATH: ${{ github.workspace }}/.github/product-factory/templates/AGENTS.md
           VERIFICATION_FILE: ${{ runner.temp }}/ush-cloud-agent-status.md
         shell: bash
         run: |
