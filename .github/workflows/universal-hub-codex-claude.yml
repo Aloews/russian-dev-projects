@@ -67,6 +67,8 @@ jobs:
           git checkout --detach "origin/$BASE_REF"
           git checkout -b "$BRANCH_NAME"
           git rev-parse HEAD > "$RUNNER_TEMP/universal-hub-base.sha"
+          test -s AGENTS.md
+          test -s .github/AGENTS.md
           test -s universal-service-hub/AGENTS.md
           test -s universal-service-hub/docs/MAP.md
           echo "BASE_SHA=$(cat "$RUNNER_TEMP/universal-hub-base.sha")" >> "$GITHUB_ENV"
@@ -276,7 +278,7 @@ jobs:
           set -Eeuo pipefail
           cat > "$RUNNER_TEMP/universal-hub-planning.md" <<'PROMPT'
           You are the Principal Architect and Engineering Planner. This is a dedicated, high-compute planning stage. Do not implement product code.
-          Inspect the actual repository state, AGENTS.md, docs/MAP.md, runtime, UI, APIs, migrations, auth, provider registry, tests, CI and operational constraints before proposing work.
+          Read repository-root AGENTS.md, .github/AGENTS.md and universal-service-hub/AGENTS.md, then inspect docs/MAP.md, runtime, UI, APIs, migrations, auth, provider registry, tests, CI and operational constraints before proposing work.
           Produce a precise, evidence-based implementation plan in docs/MAP.md under "Current execution plan". This plan is the execution contract for Codex and the independent reviewer.
           Required planning work:
           1. Translate the objective into user-visible outcomes and explicit non-goals.
@@ -329,7 +331,7 @@ jobs:
 
           cat > "$RUNNER_TEMP/codex-task.md" <<'PROMPT'
           You are the primary Staff Software Engineer implementing the Universal Service Hub.
-          Read universal-service-hub/AGENTS.md and docs/MAP.md first. Treat the persisted Current execution plan as the execution contract. Inspect the actual Rust runtime, Python compatibility layer, migrations, provider adapters, tests, Dockerfile and roadmap documents; validate the plan against current code before implementation. If the plan is incomplete or contradicts repository evidence, repair the plan in docs/MAP.md before coding.
+          Read repository-root AGENTS.md, .github/AGENTS.md, universal-service-hub/AGENTS.md and docs/MAP.md first. Treat the persisted Current execution plan as the execution contract. Inspect the actual Rust runtime, Python compatibility layer, migrations, provider adapters, tests, Dockerfile and roadmap documents; validate the plan against current code before implementation. If the plan is incomplete or contradicts repository evidence, repair the plan in docs/MAP.md before coding.
 
           Implement the highest-priority coherent production-readiness increment that can be completed and tested in this run. Prefer a real end-to-end capability with persistence, authorization, failure handling, regression tests and operational documentation. Do not create broad scaffolding or mark planned features as implemented.
 
@@ -359,7 +361,7 @@ jobs:
           set -Eeuo pipefail
           cat > "$RUNNER_TEMP/claude-review.md" <<'PROMPT'
           You are the independent Staff Engineer, Security Reviewer and QA Lead for the Universal Service Hub. You have file tools only; no shell or network tools are available in this review pass.
-          Read universal-service-hub/AGENTS.md, docs/MAP.md and the relevant architecture/security/operations documents. Audit the persisted plan as well as the entire Codex diff: check task coverage, dependency ordering, acceptance criteria, resource/model allocation and scope drift. Inspect the actual changed implementation; do not trust the previous agent's summary.
+          Read repository-root AGENTS.md, .github/AGENTS.md, universal-service-hub/AGENTS.md, docs/MAP.md and the relevant architecture/security/operations documents. Audit the persisted plan as well as the entire Codex diff: check task coverage, dependency ordering, acceptance criteria, resource/model allocation and scope drift. Inspect the actual changed implementation; do not trust the previous agent's summary.
 
           Challenge the implementation, find correctness/security/data-integrity problems, and fix blocking defects directly. Do not merely write a review report. Check authorization boundaries, tenant isolation, secret handling, outbound request safety, idempotency, persistence/migrations, concurrency, failure modes and compatibility. Add or improve regression tests for every material defect found.
 
