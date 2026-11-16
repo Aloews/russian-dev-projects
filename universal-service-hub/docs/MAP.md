@@ -464,8 +464,9 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Multiple workspace records with independent leases, heartbeats, immutable base SHAs, worktree metadata and expired-lease quarantine.
 - Task-to-workspace assignments require both task and workspace leases. Overlapping writer path scopes are protected by transactional PostgreSQL locks; an independent task cannot acquire a conflicting prefix while the first lease is active.
 - Model attempt records retain provider/model, strategy, outcome, error, cost fields and acceptance progress. These are the control-plane records; model selection and retry orchestration remain in the executor adapter.
-- Transaction-local tenant context is applied to task/workspace/attempt APIs. Migration 0006 enables and forces RLS on execution-plane tables; migration 0007 creates a non-login `ush_runtime` role with `SUPERUSER` and `BYPASSRLS` disabled. The Rust API runs its application pool via `SET ROLE ush_runtime` after migrations.
-- Exact-head CI now includes a restricted-role RLS test for tenant A/B visibility, forged cross-tenant writes and transaction-context reset on one reused connection.
+- Transaction-local tenant context is applied to task/workspace/attempt and project/token/provider-selection APIs. Migration 0006 enables and forces RLS on execution-plane tables; migration 0007 provisions the non-login `ush_runtime` role; migration 0008 extends RLS to tenants, workspaces, memberships, provider connections, resource/budget policies, usage events, API rate limits, projects and audit events; migration 0009 enables RLS on tenant and project token tables.
+- The Rust API runs application queries via `SET ROLE ush_runtime` after privileged migrations and verifies that the active role is neither `SUPERUSER` nor `BYPASSRLS`. Authentication uses short-lived platform-scoped transactions to resolve token hashes before establishing a tenant principal; management/read routes then use tenant-scoped transactions.
+- Exact-head CI includes restricted-role RLS tests for tenant A/B visibility, forged cross-tenant writes, core/token/audit/rate-limit isolation and transaction-context reset on one reused connection.
 - Migration version regression test and PostgreSQL tenant schema smoke test remain part of CI.
 
 ### API surface currently implemented
@@ -483,7 +484,7 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 
 ### Explicit gaps — do not call this full multi-tenancy yet
 
-- RLS currently covers the execution-plane tables (tasks, events, checkpoints, dependencies, attempts, workspaces, assignments and path locks), not every tenant-owned table. Project, token, provider, usage, audit and identity surfaces still require a full route-by-route RLS/authorization review.
+- RLS policies now cover execution-plane and core tenant-owned tables, including projects, tenants, token records, usage, audit, memberships, provider connections, quotas/budgets and API rate limits. Token authentication is deliberately platform-scoped only for exact hash lookup; every token-management route must retain tenant/project ownership checks. A final route-by-route authorization review and adversarial API tests remain required.
 - The runtime pool now verifies it is operating as `ush_runtime`, a non-login role with neither `SUPERUSER` nor `BYPASSRLS`. The migration connection remains privileged by design; the application connection is role-switched after migrations.
 - Tenant membership rows are not yet bound to a verified human OIDC identity. Tenant service tokens work, but user session identity, invitation/SCIM lifecycle and support elevation are outstanding.
 - Tenant resource limits, budget policies, usage ledger and provider-connection records are schema only; runtime enforcement and billing attribution remain outstanding.
