@@ -9,15 +9,26 @@ docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required.
 command -v openssl >/dev/null 2>&1 || { echo "OpenSSL is required to generate local credentials." >&2; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required for the startup check." >&2; exit 1; }
 
+if [[ -L .env ]]; then
+  echo "Refusing to read a symlinked .env file." >&2
+  exit 1
+fi
 if [[ ! -f .env ]]; then
+  touch .env
+fi
+USH_API_TOKEN="$(sed -n 's/^USH_API_TOKEN=//p' .env | tail -n 1)"
+USH_DB_PASSWORD="$(sed -n 's/^USH_DB_PASSWORD=//p' .env | tail -n 1)"
+if [[ -z "$USH_API_TOKEN" || -z "$USH_DB_PASSWORD" ]]; then
   umask 077
   api_token="$(openssl rand -hex 32)"
   db_password="$(openssl rand -hex 32)"
+  rate_limit="$(sed -n 's/^USH_RATE_LIMIT_PER_MINUTE=//p' .env | tail -n 1)"
+  port_from_file="$(sed -n 's/^PORT=//p' .env | tail -n 1)"
   cat > .env <<EOF
 USH_API_TOKEN=$api_token
 USH_DB_PASSWORD=$db_password
-USH_RATE_LIMIT_PER_MINUTE=120
-PORT=8000
+USH_RATE_LIMIT_PER_MINUTE=${rate_limit:-120}
+PORT=${port_from_file:-8000}
 EOF
 fi
 chmod 600 .env
