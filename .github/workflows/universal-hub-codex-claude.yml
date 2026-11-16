@@ -51,13 +51,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Validate baseline and Starimg secret
-        env:
-          STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
+      - name: Validate baseline
         shell: bash
         run: |
           set -Eeuo pipefail
-          test -n "$STARIMG_API_KEY" || { echo "Missing repository secret STARIMG_API_KEY." >&2; exit 2; }
           [[ "$STARIMG_BASE_URL" == https://* ]] || { echo "STARIMG_BASE_URL must use HTTPS." >&2; exit 2; }
           [[ "$BASE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "Invalid base_ref." >&2; exit 2; }
           git fetch --no-tags origin "$BASE_REF"
@@ -69,6 +66,8 @@ jobs:
           echo "BASE_SHA=$(cat "$RUNNER_TEMP/universal-hub-base.sha")" >> "$GITHUB_ENV"
 
       - name: Verify fal.ai credential is configured without exposing its value
+        id: fal
+        continue-on-error: true
         env:
           FAL_AI_API: ${{ secrets.FAL_AI_API }}
         shell: bash
@@ -78,6 +77,8 @@ jobs:
           echo "fal.ai credential is configured; its value is not displayed."
 
       - name: Install Codex CLI and Claude Code CLI
+        id: cli
+        continue-on-error: true
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -88,6 +89,7 @@ jobs:
 
       - name: Discover Starimg models and verify both tool-call protocols
         id: starimg
+        continue-on-error: true
         env:
           STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
         shell: bash
@@ -103,7 +105,9 @@ jobs:
           origin = os.environ["STARIMG_BASE_URL"].rstrip("/")
           if origin.endswith("/v1"):
               origin = origin[:-3]
-          key = os.environ["STARIMG_API_KEY"]
+          key = os.environ.get("STARIMG_API_KEY", "")
+          if not key:
+              raise SystemExit("Starimg credential unavailable; local Qwen fallback will be used.")
           headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
 
           def request(url, body=None, extra_headers=None):
@@ -214,6 +218,9 @@ jobs:
           PY
 
       - name: Run Codex CLI — primary implementation
+        id: codex
+        if: steps.starimg.outcome == 'success' && steps.cli.outcome == 'success'
+        continue-on-error: true
         timeout-minutes: 65
         env:
           CODEX_MODEL: ${{ steps.starimg.outputs.codex_model }}
@@ -314,6 +321,9 @@ jobs:
           retention-days: 7
 
       - name: Run Claude Code CLI — independent review and repair
+        id: claude
+        if: steps.codex.outcome == 'success'
+        continue-on-error: true
         timeout-minutes: 65
         env:
           CLAUDE_MODEL: ${{ steps.starimg.outputs.claude_model }}
@@ -345,6 +355,52 @@ jobs:
           ORIGIN="${STARIMG_BASE_URL%/}"
           ORIGIN="${ORIGIN%/v1}"
           ANTHROPIC_BASE_URL="$ORIGIN" ANTHROPIC_API_KEY="$STARIMG_API_KEY" claude -p --tools "Read,Write,Edit,Glob,Grep" --permission-mode bypassPermissions --model "$CLAUDE_MODEL" --max-turns 60 --output-format text "$(cat "$RUNNER_TEMP/claude-review.md")"
+
+      - name: Run local Ollama/Qwen fallback after cloud-agent failure
+        id: local
+        if: ${{ !cancelled() && (steps.starimg.outcome != 'success' || steps.cli.outcome != 'success' || steps.codex.outcome != 'success' || steps.claude.outcome != 'success') }}
+        timeout-minutes: 45
+        env:
+          TARGET_WORKDIR: ${{ github.workspace }}
+          OBJECTIVE: ${{ env.TASK_OBJECTIVE }}
+          OLLAMA_MODEL: qwen2.5-coder:3b
+          ALLOWED_PREFIXES: "universal-service-hub/src;universal-service-hub/app;universal-service-hub/tests;universal-service-hub/docs;universal-service-hub/scripts"
+          CONTEXT_FILES: "universal-service-hub/docs/MAP.md;universal-service-hub/AGENTS.md;universal-service-hub/README.md;universal-service-hub/docs/ARCHITECTURE.md;universal-service-hub/docs/SECURITY_FIRST_ROADMAP.md"
+          QWEN_REVIEW_PATH: universal-service-hub/docs/LOCAL_QWEN_REVIEW.md
+          VERIFICATION_FILE: ${{ runner.temp }}/ush-cloud-agent-status.md
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$RUNNER_TEMP/ush-cloud-agent-status.md" <<EOF
+          Starimg preflight: ${{ steps.starimg.outcome }}
+          CLI installation: ${{ steps.cli.outcome }}
+          Codex execution: ${{ steps.codex.outcome }}
+          Claude review: ${{ steps.claude.outcome }}
+          fal.ai credential preflight: ${{ steps.fal.outcome }}
+          Cloud coding was unavailable or incomplete. Continue from this runner's current checked-out base and any retained candidate changes. Do not claim cloud-provider success.
+          EOF
+          curl --connect-timeout 10 --max-time 120 -fsSL https://ollama.com/install.sh -o "$RUNNER_TEMP/install-ollama.sh"
+          timeout 180s sh "$RUNNER_TEMP/install-ollama.sh"
+          sudo systemctl stop ollama >/dev/null 2>&1 || true
+          pkill -x ollama >/dev/null 2>&1 || true
+          mkdir -p "$HOME/.ollama/models"
+          (OLLAMA_MODELS="$HOME/.ollama/models" nohup ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &)
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null; then ready=1; break; fi
+            sleep 2
+          done
+          if [[ "$ready" != "1" ]]; then
+            tail -n 80 "$RUNNER_TEMP/ollama.log" || true
+            echo "Local Ollama did not become ready." >&2
+            exit 1
+          fi
+          timeout 600s env OLLAMA_MODELS="$HOME/.ollama/models" ollama pull qwen2.5-coder:3b
+          timeout 30s env OLLAMA_MODELS="$HOME/.ollama/models" ollama show qwen2.5-coder:3b >/dev/null
+          python3 -m py_compile .github/scripts/qwen_local_agent.py
+          python3 .github/scripts/qwen_local_agent.py
+          echo "model=qwen2.5-coder:3b" >> "$GITHUB_OUTPUT"
+          echo "Local Qwen produced a bounded candidate; exact-head CI and review gates remain mandatory."
 
       - name: Validate candidate scope and preserve evidence
         id: candidate
