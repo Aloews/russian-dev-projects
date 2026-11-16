@@ -290,7 +290,7 @@ VALUES
 INSERT INTO tenant_usage_events
   (id,tenant_id,project_id,task_id,idempotency_key,usage_type)
 VALUES
-  ('33333333-3333-4333-8333-333333333333','aloews','rls-beta-project',
+  ('33333333-3333-4333-8333-333333333333','tenant-beta','rls-beta-project',
    'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb','rls-beta-usage','model_call');
 INSERT INTO audit_events
   (id,actor,action,resource_type,resource_id,details)
