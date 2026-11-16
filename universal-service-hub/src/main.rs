@@ -411,8 +411,24 @@ struct TaskCreateBody {
     dependencies: Vec<String>,
     #[serde(default = "default_task_priority")]
     priority: i32,
+    #[serde(default = "default_task_metadata")]
+    metadata: Value,
 }
 fn default_task_priority() -> i32 { 100 }
+fn default_task_metadata() -> Value { json!({}) }
+
+fn metadata_contains_sensitive_key(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object.iter().any(|(key,value)| {
+            let key=key.to_ascii_lowercase();
+            ["token","secret","password","api_key","credential","authorization"]
+                .iter().any(|sensitive|key.contains(sensitive))
+                || metadata_contains_sensitive_key(value)
+        }),
+        Value::Array(values) => values.iter().any(metadata_contains_sensitive_key),
+        _ => false,
+    }
+}
 
 async fn task_project_scope(
     state: &AppState, principal: &Principal, project_id: &str, write: bool
@@ -468,6 +484,8 @@ async fn create_engineering_task(
         || !(0..=1000).contains(&body.priority)
         || body.acceptance_criteria.iter().any(|v| v.trim().is_empty() || v.len() > 2000)
         || body.dependencies.iter().any(|v| Uuid::parse_str(v).is_err())
+        || !body.metadata.is_object() || body.metadata.to_string().len()>16_384
+        || metadata_contains_sensitive_key(&body.metadata)
     {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task"));
     }
@@ -486,18 +504,22 @@ async fn create_engineering_task(
     }
     let id = Uuid::new_v4().to_string();
     let inserted = sqlx::query(
-        "INSERT INTO engineering_tasks (id,project_id,idempotency_key,title,objective,acceptance_criteria,dependencies,priority,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (project_id,idempotency_key) DO NOTHING"
+        "INSERT INTO engineering_tasks (id,project_id,idempotency_key,title,objective,acceptance_criteria,dependencies,priority,created_by,metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (project_id,idempotency_key) DO NOTHING"
     ).bind(&id).bind(&project_id).bind(&body.idempotency_key).bind(&body.title)
      .bind(&body.objective).bind(json!(body.acceptance_criteria)).bind(json!(body.dependencies))
-     .bind(body.priority).bind(&principal.actor).execute(&mut *tx).await
+     .bind(body.priority).bind(&principal.actor).bind(&body.metadata).execute(&mut *tx).await
      .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_create_failed"))?;
     let created = inserted.rows_affected() == 1;
-    let row = sqlx::query("SELECT id,title,objective,dependencies,status,queue_name,priority,version,created_at FROM engineering_tasks WHERE project_id=$1 AND idempotency_key=$2")
+    let row = sqlx::query("SELECT id,title,objective,dependencies,metadata,status,queue_name,priority,version,created_at FROM engineering_tasks WHERE project_id=$1 AND idempotency_key=$2")
         .bind(&project_id).bind(&body.idempotency_key).fetch_one(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_after_create_failed"))?;
     let task_id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
     let stored_dependencies: Value = row.try_get("dependencies").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
     if stored_dependencies != json!(body.dependencies) {
+        return Err(ApiError(StatusCode::CONFLICT, "idempotency_key_payload_mismatch"));
+    }
+    let stored_metadata: Value = row.try_get("metadata").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
+    if stored_metadata != body.metadata {
         return Err(ApiError(StatusCode::CONFLICT, "idempotency_key_payload_mismatch"));
     }
     for dependency_id in &body.dependencies {
@@ -522,6 +544,7 @@ async fn create_engineering_task(
     Ok((if inserted.rows_affected() == 1 { StatusCode::CREATED } else { StatusCode::OK }, Json(json!({
         "id":task_id, "title":row.try_get::<String,_>("title").unwrap_or_default(),
         "objective":row.try_get::<String,_>("objective").unwrap_or_default(),
+        "metadata":row.try_get::<Value,_>("metadata").unwrap_or(json!({})),
         "status":row.try_get::<String,_>("status").unwrap_or_default(),
         "queue":row.try_get::<String,_>("queue_name").unwrap_or_default(),
         "priority":row.try_get::<i32,_>("priority").unwrap_or(100),
