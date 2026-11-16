@@ -45,7 +45,7 @@ Planning is a first-class engineering phase, not a short preamble to coding. The
 1. **Discovery and evidence inventory** — inspect the current commit, project map, architecture, runtime, data model, migrations, auth/tenant boundaries, provider registry, UI, tests, CI and deployment constraints. Record exact paths/symbols and distinguish verified facts from assumptions and unknowns.
 2. **Product and system design** — convert the requested outcome into user journeys, functional/non-functional requirements, explicit non-goals, data/control flows, trust boundaries, failure states and operational constraints. Prefer existing abstractions; justify any new abstraction.
 3. **Task decomposition** — create a dependency DAG of small tasks. Every task must have a stable ID, owner role, objective, exact expected modules/files, prerequisites, inputs/outputs, interface/data contracts, acceptance criteria, tests, risks and required evidence. Tasks must be independently reviewable and sized to fit one bounded implementation pass.
-4. **Resource and model allocation** — reserve the strongest available reasoning model for architecture, security, ambiguity resolution and plan critique. Use a coding-specialist model for implementation and a separate strong model for adversarial review. Prefer Astra 6.1 for deep planning when its exact model ID is present in the live Starimg catalogue and it passes the Anthropic Messages tool-call probe; otherwise fall back to the strongest verified Claude model. Prefer Fable 5.2 for Codex implementation when its exact ID is present and it passes the Responses API function-call probe; otherwise use the verified Codex/GPT candidate. `STARIMG_ASTRA_MODEL`, `STARIMG_FABLE_MODEL` and `STARIMG_PLANNING_MODEL` may explicitly select exact catalogue IDs. Never claim either model was used unless the workflow log records its selected ID and successful protocol probe. Allocate more reasoning turns/time to planning than to routine code edits; preserve meaningful budget for implementation, tests, independent review and repair. Never infer capability from a model name alone: protocol probes and actual results are evidence.
+4. **Resource and model allocation** — choose the execution tool, provider, protocol adapter, exact model and reasoning effort as separate decisions. Codex CLI is the OpenAI coding tool and must use an OpenAI Responses-compatible model; Claude Code CLI is the Anthropic coding tool and must use an Anthropic Messages-compatible model. Fable 5.2 belongs to Claude Code/Messages, never Codex/Responses. Astra is eligible for Codex/Responses only after exact live Starimg catalogue discovery and a successful Responses function-call probe. These are optional specialist routes, not mandatory defaults. Use baseline verified models for ordinary work; escalate only for high-risk/ambiguous work, objective quality failure, or an approved budget route. Run Codex CLI planning followed by an independent Claude Code plan challenge before implementation; then Codex implements and Claude Code reviews. Use dedicated model/task profiles for planning, coding, review, research, classification, vision, image/video/audio/music and embeddings. Model and modality availability must be verified per provider account and endpoint. See [MODEL_SELECTION_RESEARCH.md](./MODEL_SELECTION_RESEARCH.md) for provider specialization, collaboration patterns, research and cost strategy.
 5. **Execution and integration** — execute tasks in topological order, parallelizing only tasks without shared-file or data-contract conflicts. Integrate at explicit checkpoints. Re-plan when evidence invalidates an assumption; record the change and impact before continuing.
 6. **Verification and closure** — map every acceptance criterion to a test or observable artifact. Track task state as `planned`, `in_progress`, `blocked` or `verified`; only use `verified` with exact commit/test/run evidence. A green unit suite does not substitute for API, database, authorization or user-journey checks.
 
@@ -65,6 +65,54 @@ Implementation must not begin until the planner has written the plan to this map
 - unknowns, blockers and non-goals are visible.
 
 The planner may not claim implementation or test completion. The implementation agent must follow the plan, and the independent reviewer must challenge both plan quality and implementation coverage. This protocol applies to every future Hub run and to product projects orchestrated by the Hub.
+
+
+## Evidence-driven model collaboration and token economics
+
+The Hub must optimize for **cost per accepted result**, not lowest token price, maximum agent count or brand prestige. The full research snapshot, sources, model capability taxonomy and implementation DAG are recorded in [MODEL_SELECTION_RESEARCH.md](./MODEL_SELECTION_RESEARCH.md).
+
+### Engineering execution policy
+
+- Default topology: one coordinator, a task DAG, one writer per overlapping file set, deterministic tests and bounded independent review.
+- Use parallel agents only for independent bounded work (separate modules, research streams, hypotheses or test suites). Sequential dependencies, shared mutable files and single slow external operations stay with one agent.
+- Before coding, Codex CLI writes an evidence-based plan; Claude Code CLI independently challenges the plan. After implementation, Claude Code reviews the actual diff; Codex performs shell-based verification and targeted repair where needed.
+- Use model diversity when it provides an independent perspective or a capability unavailable to the primary model. Different vendor names do not guarantee statistically independent errors.
+- Do not run open-ended debate or duplicate full-repository reviews. Every agent receives a bounded task and compact context; every handoff includes evidence and unresolved risks.
+
+### Token and cost controls
+
+Initial configurable budget envelope per engineering increment:
+- Planning/discovery 20–25%.
+- Implementation 40–45%.
+- Verification/review 15–20%.
+- Repair/model-switch reserve 15–20%.
+
+These are initial policy bands, not observed costs. Provider and user balances remain separate. The system must reserve spend before billable calls and reconcile actual usage afterward. If no authoritative balance API exists, use only an explicit approved spend ceiling; do not infer available funds from model coefficients or token credits displayed elsewhere.
+
+Track input, output, cached input, reasoning, tool and retry tokens separately where provider telemetry supports them. Persist exact provider/model/version, adapter, pricing snapshot, task profile, effort, token usage, estimated/actual cost, elapsed time, attempts, tests and acceptance outcome. Never persist credentials or private prompt contents in audit logs.
+
+Optimize in this order: trim irrelevant context; cache stable prefixes; reuse commit-pinned repository evidence; use structured outputs; filter tool logs; batch non-interactive work; tune reasoning effort; escalate only failed criteria; use modality-specific models; bound retries and agent rounds.
+
+### Progress/stagnation controller
+
+Every bounded attempt must state the acceptance criteria it is expected to close and the evidence it will produce. At each checkpoint compare:
+- verified acceptance criteria before/after;
+- previously failing checks now passing;
+- newly found and resolved defects;
+- diff scope and integration state;
+- token/cost burn and remaining verification reserve.
+
+Stop and re-plan after two consecutive attempts with no objective progress, repeated identical failure, malformed outputs/tool failures, or budget burn that threatens verification/repair. Preserve current branch, diff, logs and failing evidence. Change strategy (task split, prompt/contract, context, model family, effort, protocol, tools, tests or topology); do not simply repeat the same call with a larger token allowance. A model switch alone is not progress.
+
+### Current implementation status
+
+- Model family/task taxonomy and research policy: documented.
+- Workflow-level pre-code planner and independent Claude plan challenge: present; exact-run model use still requires logs/probes.
+- Deterministic task-aware model router in the production Rust runtime: not implemented.
+- Token usage/price snapshots and cost-per-accepted-task telemetry: not implemented end-to-end.
+- Separate provider/user balance ledger and reservation: not implemented.
+- Automatic two-no-progress strategy controller: not implemented in runtime.
+- Multimodal routing: provider model discovery exists, but modality-specific generation APIs and capability proofs are not implemented.
 
 ## Current verified state
 
@@ -405,3 +453,73 @@ The objective is delivery of the intended, usable product. An agent, model, prov
 - Do not mark a task complete because an agent timed out, changed models, opened a PR or reported success. Completion requires the product-level definition of done above and direct evidence from the running candidate.
 - If no compatible executor can make measurable progress within the authorized budget, record the concrete technical or authorization blocker and the evidence needed to resume. Do not loop indefinitely or manufacture progress.
 
+
+
+## Modular model and agent routing — architecture decision (2026-11-16)
+
+**Status: DESIGN RECORDED; runtime router and live balance integration are not yet verified.**
+
+### Separate execution tools from model identities
+
+- **Codex CLI** is the OpenAI coding-agent tool. It must only receive a model that passed the OpenAI Responses/function-calling compatibility probe. OpenAI-family models such as Astra may be selected for it when available and authorized.
+- **Claude Code CLI** is the Anthropic coding-agent tool. It must only receive a model that passed the Anthropic Messages/tool-use compatibility probe. Claude-family models such as Fable 5.2 belong here, never in Codex CLI's Responses model slot.
+- CLI tools and model IDs are independent registry dimensions. A model is not an agent/CLI, and a CLI is not a model.
+- Both CLIs participate before implementation: Codex CLI drafts the high-compute plan; Claude Code CLI independently challenges and corrects the plan before any source edits. Codex then implements; Claude Code independently reviews/repairs the candidate.
+- Do not force Astra or Fable on every task. Use baseline verified models for ordinary work. Escalate to premium models only when a quality gate shows the current result is below the product's acceptance bar, the task is high-risk/ambiguous, or an authorized and verified budget/balance policy permits the higher-cost route.
+
+### Modular registry boundaries
+
+1. **Provider registry:** provider identity, endpoint, credential reference, account/region, policy and availability. Secrets remain in the secret manager and are never part of model metadata.
+2. **Model catalogue:** exact live model ID, provider/family, modality, context limits, supported protocols, tool calling, structured output, reasoning controls, pricing/coefficient, deprecation state and last-seen timestamp.
+3. **Protocol adapters:** OpenAI Responses, OpenAI Chat Completions, Anthropic Messages, Gemini generateContent, and separately validated media/embedding protocols. Adapters expose a common internal request/result contract but retain protocol-specific semantics.
+4. **Execution tools:** Codex CLI, Claude Code CLI, direct API workers, and local inference runners. Each declares which adapter protocols and capabilities it can actually use.
+5. **Routing policy:** task requirements, quality floor, risk, context size, latency objective, verified price, user/provider budget reservations, privacy/data-residency constraints and project allowlists.
+6. **Quality evaluator:** objective acceptance checks, task-specific evaluations, independent review findings and user/product quality feedback. Model self-reported confidence is not a quality signal.
+7. **Decision/audit record:** immutable per-attempt snapshot of provider/model exact IDs, adapter, CLI/tool, catalogue revision, capability probes, routing reason, price/budget snapshot, reservation, quality gate and fallback lineage. Never store secrets or full private prompts in this record.
+
+### Routing policy
+
+- First filter by project/provider allowlist, task capability, modality, protocol compatibility, verified health, data policy, context capacity and budget ceiling.
+- Select the least expensive verified candidate that meets the task's quality floor for ordinary work; do not select by model name or coefficient alone.
+- Give planning/discovery/architecture/threat modelling a larger reasoning and time budget than routine code generation. Planning is a dedicated stage and must finish with a reviewed dependency DAG, task contracts, acceptance criteria and test/evidence matrix.
+- Escalate when an objective quality gate fails, independent review finds a material unresolved defect, the same targeted check fails twice, or the task is classified high-risk/ambiguous. Re-plan and preserve the failing evidence before switching.
+- Premium routing is allowed only when the task's spend ceiling is positive and an authoritative provider balance and/or user balance snapshot confirms sufficient unreserved funds. If no documented balance API is available, do not guess from a token coefficient or assume funds exist; require an explicit budget reservation/approval.
+- Provider balance and user balance are separate ledgers. Never spend the user's funds merely because the provider account has credits, or vice versa. Reserve the estimated cost before dispatch; reconcile actual usage afterward; stop at the ceiling.
+- If a provider/model is unavailable, switch only to a previously probed candidate with equivalent required capabilities and authorized data handling. Never silently change vendor for paid generation or external actions.
+- New catalogue entries are untrusted until metadata is classified and the required protocol/tool-call, structured-output, context, pricing and safety probes pass. Unknown/third-party models are quarantined from private project source, secrets and production data.
+- Model catalogue refresh must detect additions, changed coefficients/pricing, context changes and deprecations. Re-probe changed entries and preserve the previous known-good route for rollback. Do not hardcode a permanent short list of model IDs.
+- Image, video, audio, music, embeddings and text/code are separate capabilities. A model name or UI listing does not prove an API endpoint exists; require documented request/response contracts and account-accessible endpoint probes for each modality.
+
+### Current CLI workflow correction
+
+- The previous workflow incorrectly assigned Fable to the Codex/Responses slot and attempted to probe Astra through Anthropic Messages. That mapping is invalid.
+- The corrected workflow keeps the Codex implementation model in the Responses slot, uses Astra for planning only when the premium escalation variable is explicitly approved and the Responses function-call probe passes, and uses Fable through Claude Code only when premium escalation is approved and the Anthropic Messages tool-use probe passes.
+- The pre-code sequence is Codex planning → Claude Code independent plan challenge → Codex implementation → Claude Code independent implementation review.
+- The workflow retry helper also had an undefined retry counter; it now uses the actual loop index. This correction still requires exact-head CI and a real Starimg run before it is considered operational.
+- `STARIMG_PREMIUM_ESCALATION_APPROVED=true` is an explicit administrative gate, not proof of a live balance. Automatic provider/user balance integration remains NOT IMPLEMENTED until a documented account-balance API or trusted ledger is integrated and tested.
+- Exact Astra/Fable IDs and their actual compatibility are not asserted here. Only the live authenticated Starimg catalogue and successful probes from a real workflow run can establish them.
+
+### Implementation DAG
+
+| ID | Work package | Dependencies | Acceptance evidence |
+|---|---|---|---|
+| MR-01 | Provider/model/tool registry schemas and protocol capability metadata | Existing provider registry audit | Schema validation and migration tests; unknown capabilities rejected |
+| MR-02 | Live catalogue sync, diff, deprecation and quarantine | MR-01 | Mocked catalogue tests; safe handling of additions/removals/price changes |
+| MR-03 | Protocol adapters and compatibility probes | MR-01 | Contract tests for Responses, Messages, Chat Completions, Gemini; tool calls verified |
+| MR-04 | Policy engine for task quality, modality, privacy, context and budgets | MR-01–03 | Deterministic routing matrix and negative tests for incompatible/unauthorized candidates |
+| MR-05 | Provider/user balance snapshots, reservations and reconciliation | MR-01, existing budget ledger | No dispatch when stale/insufficient; concurrent reservation and ceiling tests |
+| MR-06 | Quality-triggered escalation and safe fallback lineage | MR-04–05 | Failed-quality and repeated-check scenarios route to stronger eligible candidate; no spend overrun |
+| MR-07 | Admin/user controls and per-attempt route transparency | MR-01–06 | Project-scoped authorization, audit evidence, no secret exposure |
+| MR-08 | Modality-specific image/video/audio/music/embedding routing | MR-01–07 | Official endpoint contract tests and separate modality capability proofs |
+
+**Critical path:** MR-01 → MR-02/MR-03 → MR-04 → MR-05 → MR-06 → MR-07. MR-08 remains independent until the text/code router and budget controls are verified. Parallelize only MR-02 and MR-03 after MR-01 contracts are stable.
+
+### Release gates
+
+- [ ] Correct CLI/model protocol pairing is proven on an exact workflow run.
+- [ ] Both CLIs challenge the plan before implementation.
+- [ ] Model catalogue changes cannot silently introduce an untrusted model.
+- [ ] Premium routing requires explicit budget authorization and sufficient verified unreserved balance.
+- [ ] Quality escalation is driven by objective evaluation/review evidence, not model branding or token balance alone.
+- [ ] Routing decisions and fallback attempts are auditable without retaining secrets or sensitive prompt content.
+- [ ] Tests cover wrong protocol, missing model, model deprecation, insufficient balance, concurrent budget reservation, provider outage, quality failure, fallback and modality mismatch.
