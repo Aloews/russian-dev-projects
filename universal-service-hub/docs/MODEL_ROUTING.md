@@ -48,3 +48,35 @@ Multimodal capabilities are separate: a model shown in a provider UI does not pr
 - Automatic provider/user balance integration: not implemented.
 - Persistent model capability registry and admin switching UI: not implemented.
 - Objective quality-triggered escalation: policy specified; runtime integration not implemented.
+
+
+## Task-specialized routing and adaptive collaboration
+
+Read [MODEL_SELECTION_RESEARCH.md](./MODEL_SELECTION_RESEARCH.md) for the provider-by-provider task specialization review, multi-agent collaboration evidence, token economics, stop/re-plan triggers and AR-01—AR-11 implementation DAG.
+
+The router must treat these as independent dimensions:
+- execution tool: Codex CLI, Claude Code CLI, direct API worker or local runner;
+- provider/account and protocol adapter;
+- exact model ID/version and verified capabilities;
+- task profile, reasoning effort and collaboration topology;
+- spend ceiling, token budget, latency and stop policy.
+
+### Collaboration default
+
+Use one coordinator with a durable DAG, one writer per overlapping file set, bounded specialist tasks and deterministic verification. Parallelize only independent work. Use a separate model/provider for critical review when it adds meaningful independence. Avoid unbounded debate and duplicate full-repository reviews.
+
+### Quality and progress control
+
+Optimize cost per accepted task, not token price alone. Use a low-cost verified attempt where checks are deterministic; run tests/validators; escalate only failed criteria with a stronger model, higher effort or a changed strategy. A model change is not progress unless objective evidence improves.
+
+Stop and re-plan after two bounded attempts with no acceptance-criterion progress, repeated identical failure, malformed/tool-incompatible outputs or spend that threatens verification/repair. Preserve the diff and failing evidence; change decomposition, context, prompt, model/effort, tool, tests or collaboration topology. Never just increase tokens and repeat.
+
+### Usage accounting
+
+Record input, output, cached-input, reasoning, tool and retry usage where provider telemetry exposes it. Store price snapshots, estimated/actual cost, elapsed time, attempts, task profile, model/provider/protocol, test results and acceptance outcome. Do not infer exact cost from token count when price or cache metadata is unknown. Keep provider and user balances separate and reserve spend before dispatch.
+
+Initial engineering allocation bands are configurable: planning 20–25%, implementation 40–45%, verification/review 15–20%, repair/model-switch reserve 15–20%. They are policy defaults, not measured costs. The runtime must enforce a hard total ceiling and preserve repair reserve.
+
+### Current evidence boundary
+
+The research and architecture are documented. The workflow now includes explicit no-progress/token discipline and a Codex verification/recovery pass after Claude's independent review. The runtime still does not enforce persistent per-model token accounting, dynamic cost-per-accepted-task routing, balance reservations or automatic strategy switching. Those remain implementation work under AR-01—AR-11.
