@@ -30,6 +30,8 @@ A catalogue listing, configured key, HTTP 200 or successful CLI process exit is 
 
 The workflow's `max_budget_usd` is a Claude Code invocation ceiling. It is not proof of actual OpenRouter invoice cost, remaining provider balance or account-level spend. Reconcile provider billing separately. GitHub runner compute is also a separate cost bucket.
 
+**Routing limitation:** this is not yet a general task-aware adaptive model router. The checked-in factory workflow has a fixed OpenRouter Claude Sonnet 4.5 primary route and a local Qwen fallback. Per-task capability routing, provider-balance-aware selection and a durable cross-provider token/cost ledger are not yet implemented. The shared policy defines how those capabilities must be added; it is not evidence that they already exist.
+
 ## Agent roles and coordination
 
 - **Coordinator:** owns task state, acceptance criteria, budget, dependencies and evidence reconciliation.
