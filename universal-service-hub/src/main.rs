@@ -1248,22 +1248,10 @@ async fn assign_engineering_task_workspace(
         })?;
     let task_expires:DateTime<Utc>=task.try_get("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_task_check_failed"))?;
     let workspace_expires:DateTime<Utc>=workspace.try_get("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_workspace_check_failed"))?;
-    let lock_expires=std::cmp::min(task_expires,workspace_expires);
-    for path_prefix in &body.writer_scope {
-        let conflict=sqlx::query("SELECT id FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND lease_expires_at>NOW() AND (path_prefix=$3 OR left(path_prefix,length($3)+1)=$3||'/' OR left($3,length(path_prefix)+1)=path_prefix||'/') LIMIT 1")
-            .bind(tenant_id).bind(project_id).bind(path_prefix).fetch_optional(&mut *tx).await
-            .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_check_failed"))?;
-        if conflict.is_some() {
-            return Err(ApiError(StatusCode::CONFLICT,"workspace_writer_scope_conflict"));
-        }
-        sqlx::query("INSERT INTO engineering_task_path_locks (id,project_id,task_id,workspace_id,path_prefix,lock_owner,lease_expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
-            .bind(Uuid::new_v4().to_string()).bind(project_id).bind(&task_id).bind(&body.workspace_id)
-            .bind(path_prefix).bind(worker_id).bind(lock_expires)
-            .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_create_failed"))?;
-    }
+    let assignment_expires=std::cmp::min(task_expires,workspace_expires);
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_commit_failed"))?;
     audit(&state,&principal.actor,"engineering_task.workspace_assigned","engineering_task",&task_id,json!({"workspace_id":body.workspace_id,"assignment_id":assignment_id,"writer_scope":body.writer_scope})).await;
-    Ok(Json(json!({"assignment_id":assignment_id,"task_id":task_id,"workspace_id":body.workspace_id,"worker_role":body.worker_role,"writer_scope":body.writer_scope,"candidate_sha":body.candidate_sha,"lease_expires_at":lock_expires})))
+    Ok(Json(json!({"assignment_id":assignment_id,"task_id":task_id,"workspace_id":body.workspace_id,"worker_role":body.worker_role,"writer_scope":body.writer_scope,"candidate_sha":body.candidate_sha,"lease_expires_at":assignment_expires})))
 }
 
 #[derive(Deserialize)]
@@ -1427,16 +1415,12 @@ fn workspace_paths_overlap(left: &str, right: &str) -> bool {
 }
 
 #[derive(Deserialize)]
-struct TaskWorkspaceAssignBody {
+struct TaskPathLocksBody {
     worker_id: String,
     task_lease_token: String,
     workspace_id: String,
     workspace_lease_token: String,
-    base_sha: String,
-    #[serde(default)]
-    candidate_sha: Option<String>,
-    #[serde(default)]
-    writer_scope: Vec<String>,
+    path_prefixes: Vec<String>,
 }
 
 async fn acquire_engineering_task_path_locks(
