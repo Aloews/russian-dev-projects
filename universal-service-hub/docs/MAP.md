@@ -480,6 +480,7 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - POST /v1/tasks/{task_id}/attempts and GET /v1/projects/{project_id}/tasks/{task_id}/attempts
 - POST/GET /v1/projects/{project_id}/workspaces; POST lease-next, heartbeat and release
 - POST/DELETE /v1/tasks/{task_id}/workspace-assignment (requires valid task and workspace leases; automatically acquires/releases path locks)
+- POST/DELETE /v1/projects/{project_id}/tasks/{task_id}/path-locks (requires an active task/workspace assignment and a path inside the assigned writer scope)
 - Tenant service-token authentication and token lifecycle endpoints are present; human OIDC membership authentication is not.
 
 ### Explicit gaps — do not call this full multi-tenancy yet
