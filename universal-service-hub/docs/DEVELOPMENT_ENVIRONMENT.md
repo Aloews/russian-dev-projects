@@ -78,4 +78,4 @@ git worktree remove ../ush-task-123
 
 ## Verification
 
-The dedicated GitHub Actions workflow validates the devcontainer JSON, shell syntax and Rust formatting/metadata. A successful CI run proves repository configuration validity only. A live Codespace launch must still be checked in GitHub by opening the created environment and running the local startup smoke test.
+The dedicated GitHub Actions workflow validates the devcontainer JSON, bootstrap shell syntax and Cargo manifest metadata. A successful CI run proves repository configuration validity only. A live Codespace launch must still be checked in GitHub by opening the created environment and running the local startup smoke test.
