@@ -201,7 +201,7 @@ jobs:
           echo "::add-mask::$tenant_alpha_token"
 
           app_visible_tenant=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
-            psql -h 127.0.0.1 -U ush_app -d ush_test -Atc "SELECT status FROM tenants WHERE id='tenant-beta'") 
+            psql -h 127.0.0.1 -U ush_app -d ush_test -Atc "SET app.is_admin='true'; SELECT status FROM tenants WHERE id='tenant-beta'") 
           echo "Runtime DB role visibility for tenant-beta: ${app_visible_tenant:-<not-visible>}"
           test "$app_visible_tenant" = "active"
 
