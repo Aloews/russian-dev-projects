@@ -449,3 +449,14 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - The workflow supports an optional self-hosted runner label array through repository variable `USH_DEV_RUNNER_LABELS`; without it, it uses `ubuntu-latest`. No self-hosted runner/GPU connection is currently verified.
 - **Not implemented by this increment:** cross-runner durable resume, automatic model selection by GPU/resource availability, separate independent local-model reviewer, production deployment, paid inference or customer-facing task orchestration.
 - Acceptance: exact-head CI; Rust tests for private endpoint allowlisting and existing project/provider authorization; Qwen path/symlink/secret-safety tests; controlled fallback workflow run; candidate PR exact-SHA CI; explicit review of the full diff. No auto-merge.
+
+
+## Runtime bootstrap — local launch path
+
+- **Status:** IN PROGRESS; included in PR #58. Exact-head CI must validate the Compose startup path; a persistent service is not claimed until a real local deployment is checked.
+- Production binary: Rust Axum/SQLx in `universal-service-hub/Dockerfile`; PostgreSQL 17 is mandatory; SQLx migrations run at process startup. Python/FastAPI is reference/compatibility only.
+- Added a Docker Compose stack, a one-command local startup script that creates strong local-only credentials, waits for database readiness and tests authenticated API access, and a safe stop script that retains the local database volume.
+- Added an exact-CI-head Compose startup smoke test in addition to the existing extensive Docker RBAC/rate-limit smoke test.
+- **API-only:** the current product has no browser management UI; only health/readiness endpoints are directly viewable in a browser, and administrative workflows use the authenticated HTTP API.
+- **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
+- Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.

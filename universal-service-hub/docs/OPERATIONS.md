@@ -1,40 +1,74 @@
 # Operations and release gates
 
-## Local development
+## Local development — Rust production runtime
 
-```bash
-pip install -e ".[dev]"
-pytest -q
-ruff check app tests
-```
+The production container is the Rust Axum/SQLx service. The Python/FastAPI tree is a compatibility/reference implementation and is not the container entrypoint.
 
-The local default is SQLite. The application creates the SQLite schema during startup for development and tests.
+Requirements: Docker Engine with Compose v2, curl, and OpenSSL.
 
-## PostgreSQL deployment
+From the repository root:
 
-Set these environment variables in the deployment platform's secret/configuration manager:
+~~~bash
+cd universal-service-hub
+bash scripts/dev-up.sh
+~~~
 
-- `USH_ENVIRONMENT=production`
-- `USH_DATABASE_URL=postgresql+asyncpg://...`
-- `USH_API_TOKEN` — at least 32 random characters
-- Optional `USH_PROVIDERS_JSON` — seeds provider records that do not already exist
+The script generates a 256-bit root API token and PostgreSQL password in a local .env.local file with mode 0600, builds the Rust image, starts PostgreSQL 17 and the Hub, waits for the database-backed /readyz endpoint, verifies /healthz, confirms unauthenticated API requests receive 401, and confirms authenticated provider-list access. It never prints the root token.
 
-The container entrypoint runs `alembic upgrade head` before starting Uvicorn. Do not use SQLite in production. The database must be provisioned separately; the Hub does not create paid cloud resources.
+Local endpoints:
 
-## Container
+- http://localhost:8000/healthz
+- http://localhost:8000/readyz
+- http://localhost:8000/v1/providers (Bearer token required)
 
-```bash
-docker build -t universal-service-hub:local .
-```
+The root API token is stored in universal-service-hub/.env.local; do not commit or share it. The local compose profile explicitly uses development mode and environment-backed secrets. It is not a production deployment configuration.
 
-The container runs as a non-root user. The health check uses `/healthz`. PostgreSQL migrations run at container startup.
+Stop the service without deleting local database data:
+
+~~~bash
+bash scripts/dev-down.sh
+~~~
+
+To intentionally remove the local database volume, run docker compose --env-file .env.local -f compose.yml down -v from this directory. This is destructive and cannot be undone.
+
+## Direct Rust development
+
+For developers who already have a PostgreSQL instance:
+
+~~~bash
+export USH_DATABASE_URL="postgres://ush:password@localhost:5432/ush"
+export USH_API_TOKEN="$(openssl rand -hex 32)"
+cargo run --release
+~~~
+
+The Rust binary applies the SQLx migrations on startup. PostgreSQL is mandatory for this runtime.
+
+## Isolated PostgreSQL deployment
+
+Set these variables in the deployment platform's secret/configuration manager:
+
+- USH_ENVIRONMENT=production
+- USH_SECRET_BACKEND=infisical
+- USH_DATABASE_URL=postgres://... (PostgreSQL connection string; use TLS)
+- USH_API_TOKEN — at least 32 random characters
+- INFISICAL_CLIENT_ID
+- INFISICAL_CLIENT_SECRET
+- INFISICAL_PROJECT_ID
+- INFISICAL_ENVIRONMENT
+- Optional INFISICAL_URL and USH_INFISICAL_SECRET_PATH_PREFIX
+
+Production startup fails closed if Infisical machine identity is incomplete. Never use the local development compose profile as a public production deployment.
+
+## CI runtime proof
+
+The CI pipeline builds the Rust image, starts it against PostgreSQL, waits for database readiness, and verifies health, authentication rejection and authenticated API access. It also runs the full container smoke scenario for project/token RBAC, provider selection, rate limiting, token revocation and the production secret-manager guard. A CI smoke test proves the image can start in an ephemeral runner; it does not establish a persistent public deployment.
 
 ## Production readiness gates
 
 A deployment is blocked until all are true:
 
-1. User identity, project tenancy and RBAC are implemented and tested; the current single-token auth is only an operator boundary.
-2. Audit events are durable and include actor, project, provider, action and correlation ID.
+1. Customer identity, MFA/passkeys and complete tenant isolation are implemented and independently tested.
+2. Durable audit events include actor, project, provider, action and correlation ID.
 3. Secret references resolve through the target secret manager; no secret values are stored in the database or repository.
 4. Each enabled adapter has contract tests and a sandbox integration test.
 5. Fallback behavior is tested against timeouts, 4xx/5xx responses, rate limits and duplicate requests.
@@ -46,4 +80,4 @@ A deployment is blocked until all are true:
 
 ## Deployment policy
 
-No production deployment is enabled by this increment. First deploy to an isolated development environment. Promote only after an independent review and verified staging checks. Do not modify existing project deployments or production databases as part of Hub bootstrap.
+No persistent public deployment is currently active. First deploy to an isolated development environment. Promote only after independent review and verified staging checks. Do not modify existing product deployments or production databases as part of Hub bootstrap. Do not provision paid resources without explicit approval.
