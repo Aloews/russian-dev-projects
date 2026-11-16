@@ -3,6 +3,8 @@ name: universal-service-hub-ci
 
 "on":
   push:
+    branches:
+      - main
     paths:
       - "universal-service-hub/**"
       - "AGENTS.md"
