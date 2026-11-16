@@ -178,8 +178,8 @@ jobs:
             psql -h 127.0.0.1 -U ush -d ush_test -v ON_ERROR_STOP=1 <<'SQL'
           INSERT INTO tenants (id,slug,name) VALUES ('tenant-beta','tenant-beta','Tenant Beta');
           INSERT INTO workspaces (tenant_id,id,slug,name) VALUES ('tenant-beta','default','default','Default workspace');
-          INSERT INTO projects (id,tenant_id,workspace_id,name,allowed_capabilities,allowed_provider_ids)
-            VALUES ('beta-project','tenant-beta','default','Beta project','["ai.chat"]'::jsonb,'[]'::jsonb);
+          INSERT INTO projects (id,tenant_id,workspace_id,name,allowed_capabilities,allowed_provider_ids,created_at)
+            VALUES ('beta-project','tenant-beta','default','Beta project','["ai.chat"]'::jsonb,'[]'::jsonb,NOW());
           SELECT 'tenant_beta_seeded=' || count(*) FROM tenants WHERE id='tenant-beta';
           SQL
           tenant_beta_after_seed=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
