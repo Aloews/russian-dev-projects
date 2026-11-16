@@ -961,6 +961,165 @@ async fn revoke_tenant_token(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize)]
+struct WorkspaceCreateBody {
+    workspace_key: String,
+    runtime_provider: String,
+    repository: String,
+    base_branch: String,
+    base_sha: String,
+    #[serde(default)]
+    git_worktree_path: Option<String>,
+    #[serde(default)]
+    git_branch: Option<String>,
+    #[serde(default)]
+    metadata: Value,
+}
+
+async fn create_engineering_workspace(
+    State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>,
+    Json(body): Json<WorkspaceCreateBody>
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let principal = require_project_owner_or_admin(&state, &headers, &project_id).await?;
+    let valid_sha = body.base_sha.len()==40 && body.base_sha.chars().all(|c| c.is_ascii_hexdigit());
+    let valid_branch = |v: &str| !v.is_empty() && v.len()<=200 && !v.starts_with('/')
+        && !v.split('/').any(|part| part==".." || part.is_empty())
+        && v.chars().all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c));
+    if body.workspace_key.trim().is_empty() || body.workspace_key.len()>160
+        || !["railway","github_actions","local","other"].contains(&body.runtime_provider.as_str())
+        || !re.full_match(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", &body.repository)
+        || !valid_branch(&body.base_branch) || !valid_sha
+        || body.git_branch.as_ref().is_some_and(|v| !valid_branch(v))
+        || body.git_worktree_path.as_ref().is_some_and(|v| v.is_empty() || v.len()>1000 || v.contains('\0'))
+        || body.metadata.to_string().len()>8192 {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_engineering_workspace"));
+    }
+    let id=Uuid::new_v4().to_string();
+    let result=sqlx::query("INSERT INTO engineering_workspaces (id,project_id,workspace_key,runtime_provider,repository,base_branch,base_sha,git_worktree_path,git_branch,metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+        .bind(&id).bind(&project_id).bind(&body.workspace_key).bind(&body.runtime_provider)
+        .bind(&body.repository).bind(&body.base_branch).bind(&body.base_sha)
+        .bind(&body.git_worktree_path).bind(&body.git_branch).bind(&body.metadata)
+        .execute(&state.db).await;
+    if let Err(error)=result {
+        if error.as_database_error().is_some_and(|db_error| db_error.code().as_deref()==Some("23505")) {
+            return Err(ApiError(StatusCode::CONFLICT, "workspace_key_already_exists"));
+        }
+        return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "engineering_workspace_create_failed"));
+    }
+    audit(&state,&principal.actor,"engineering_workspace.create","project",&project_id,json!({"workspace_id":id,"workspace_key":body.workspace_key})).await;
+    Ok((StatusCode::CREATED,Json(json!({"id":id,"project_id":project_id,"workspace_key":body.workspace_key,"state":"idle","runtime_provider":body.runtime_provider,"repository":body.repository,"base_branch":body.base_branch,"base_sha":body.base_sha,"git_branch":body.git_branch}))))
+}
+
+async fn list_engineering_workspaces(
+    State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>
+) -> ApiResult<Json<Value>> {
+    let principal=require_project_access(&state,&headers).await?;
+    task_project_scope(&state,&principal,&project_id,false).await?;
+    let rows=sqlx::query("SELECT id,workspace_key,runtime_provider,repository,base_branch,base_sha,git_worktree_path,git_branch,head_sha,state,lease_owner,lease_expires_at,last_heartbeat_at,created_at,updated_at FROM engineering_workspaces WHERE project_id=$1 ORDER BY created_at DESC LIMIT 200")
+        .bind(&project_id).fetch_all(&state.db).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"engineering_workspace_list_failed"))?;
+    let values:Vec<Value>=rows.into_iter().map(|row|json!({
+        "id":row.get::<String,_>("id"),"workspace_key":row.get::<String,_>("workspace_key"),
+        "runtime_provider":row.get::<String,_>("runtime_provider"),"repository":row.get::<String,_>("repository"),
+        "base_branch":row.get::<String,_>("base_branch"),"base_sha":row.get::<String,_>("base_sha"),
+        "git_worktree_path":row.get::<Option<String>,_>("git_worktree_path"),
+        "git_branch":row.get::<Option<String>,_>("git_branch"),"head_sha":row.get::<Option<String>,_>("head_sha"),
+        "state":row.get::<String,_>("state"),"lease_owner":row.get::<Option<String>,_>("lease_owner"),
+        "lease_expires_at":row.get::<Option<DateTime<Utc>>,_>("lease_expires_at"),
+        "last_heartbeat_at":row.get::<Option<DateTime<Utc>>,_>("last_heartbeat_at"),
+        "created_at":row.get::<DateTime<Utc>,_>("created_at"),"updated_at":row.get::<DateTime<Utc>,_>("updated_at")
+    })).collect();
+    Ok(Json(json!(values)))
+}
+
+#[derive(Deserialize)]
+struct WorkspaceLeaseBody {
+    worker_id: String,
+    lease_token: String,
+    #[serde(default)]
+    lease_seconds: Option<i64>,
+    #[serde(default)]
+    head_sha: Option<String>,
+}
+
+async fn lease_next_engineering_workspace(
+    State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>,
+    Json(body): Json<WorkspaceLeaseBody>
+) -> ApiResult<Json<Value>> {
+    let principal=require_worker_identity(&state,&headers).await?;
+    if principal.project_id.as_deref()!=Some(project_id.as_str())
+        || principal.worker_id.as_deref()!=Some(body.worker_id.as_str())
+        || body.worker_id.trim().is_empty() {
+        return Err(ApiError(StatusCode::FORBIDDEN,"workspace_worker_scope_forbidden"));
+    }
+    if !["implementer","builder","tester","reviewer","recovery"].contains(&principal.worker_role.as_deref().unwrap_or("")) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"worker_role_cannot_lease_workspace"));
+    }
+    let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
+    let lease_seconds=body.lease_seconds.unwrap_or(300).clamp(30,1800);
+    let raw:String=rand::rng().sample_iter(&Alphanumeric).take(48).map(char::from).collect();
+    let hash=hex::encode(Sha256::digest(raw.as_bytes()));
+    let row=sqlx::query(
+        "WITH candidate AS (SELECT id FROM engineering_workspaces WHERE tenant_id=$1 AND project_id=$2 AND state='idle' ORDER BY updated_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE engineering_workspaces w SET state='leased',lease_owner=$3,lease_token_hash=$4,lease_expires_at=NOW()+($5::text||' seconds')::interval,last_heartbeat_at=NOW(),updated_at=NOW() FROM candidate WHERE w.id=candidate.id RETURNING w.id,w.workspace_key,w.repository,w.base_branch,w.base_sha,w.git_worktree_path,w.git_branch,w.state,w.lease_expires_at"
+    ).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(&hash).bind(lease_seconds)
+     .fetch_optional(&state.db).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_lease_failed"))?;
+    let Some(row)=row else{return Ok(Json(json!({"workspace":null})));};
+    let workspace_id:String=row.try_get("id").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_lease_failed"))?;
+    audit(&state,&principal.actor,"engineering_workspace.lease","engineering_workspace",&workspace_id,json!({"worker_id":body.worker_id})).await;
+    Ok(Json(json!({"workspace":{
+        "id":workspace_id,"workspace_key":row.try_get::<String,_>("workspace_key").unwrap_or_default(),
+        "repository":row.try_get::<String,_>("repository").unwrap_or_default(),
+        "base_branch":row.try_get::<String,_>("base_branch").unwrap_or_default(),
+        "base_sha":row.try_get::<String,_>("base_sha").unwrap_or_default(),
+        "git_worktree_path":row.try_get::<Option<String>,_>("git_worktree_path").unwrap_or(None),
+        "git_branch":row.try_get::<Option<String>,_>("git_branch").unwrap_or(None),
+        "state":row.try_get::<String,_>("state").unwrap_or_default(),
+        "lease_expires_at":row.try_get::<DateTime<Utc>,_>("lease_expires_at").ok()
+    },"lease_token":raw})))
+}
+
+async fn heartbeat_engineering_workspace(
+    State(state): State<AppState>, headers: HeaderMap, Path((project_id,workspace_id)): Path<(String,String)>,
+    Json(body): Json<WorkspaceLeaseBody>
+) -> ApiResult<Json<Value>> {
+    let principal=require_worker_identity(&state,&headers).await?;
+    if principal.project_id.as_deref()!=Some(project_id.as_str())
+        || principal.worker_id.as_deref()!=Some(body.worker_id.as_str())
+        || body.lease_token.len()<32 {
+        return Err(ApiError(StatusCode::FORBIDDEN,"workspace_worker_scope_forbidden"));
+    }
+    let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
+    let hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
+    let row=sqlx::query("UPDATE engineering_workspaces SET lease_expires_at=NOW()+INTERVAL '120 seconds',last_heartbeat_at=NOW(),updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() RETURNING lease_expires_at")
+        .bind(&workspace_id).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(hash)
+        .fetch_optional(&state.db).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_heartbeat_failed"))?;
+    let Some(row)=row else{return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));};
+    Ok(Json(json!({"workspace_id":workspace_id,"lease_expires_at":row.try_get::<DateTime<Utc>,_>("lease_expires_at").ok()})))
+}
+
+async fn release_engineering_workspace(
+    State(state): State<AppState>, headers: HeaderMap, Path((project_id,workspace_id)): Path<(String,String)>,
+    Json(body): Json<WorkspaceLeaseBody>
+) -> ApiResult<StatusCode> {
+    let principal=require_worker_identity(&state,&headers).await?;
+    if principal.project_id.as_deref()!=Some(project_id.as_str())
+        || principal.worker_id.as_deref()!=Some(body.worker_id.as_str())
+        || body.lease_token.len()<32 {
+        return Err(ApiError(StatusCode::FORBIDDEN,"workspace_worker_scope_forbidden"));
+    }
+    if body.head_sha.as_ref().is_some_and(|v|v.len()!=40 || !v.chars().all(|c|c.is_ascii_hexdigit())) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_workspace_head_sha"));
+    }
+    let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
+    let hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
+    let result=sqlx::query("UPDATE engineering_workspaces SET state='idle',lease_owner=NULL,lease_token_hash=NULL,lease_expires_at=NULL,last_heartbeat_at=NOW(),head_sha=COALESCE($6,head_sha),updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW()")
+        .bind(&workspace_id).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(hash).bind(&body.head_sha)
+        .execute(&state.db).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_release_failed"))?;
+    if result.rows_affected()==0{return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));}
+    audit(&state,&principal.actor,"engineering_workspace.release","engineering_workspace",&workspace_id,json!({"worker_id":body.worker_id})).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn list_providers(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
     require_admin(&state, &headers).await?;
     let rows = sqlx::query("SELECT id,name,capabilities,priority,enabled,adapter_type,model,base_url,health_status,checked_at,latency_ms FROM providers ORDER BY priority DESC,id")
@@ -1867,6 +2026,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/projects/{project_id}/tokens/{token_id}", delete(revoke_project_token))
         .route("/v1/projects/{project_id}/workers", get(list_engineering_workers).post(create_engineering_worker))
         .route("/v1/projects/{project_id}/workers/{worker_id}", delete(revoke_engineering_worker))
+        .route("/v1/projects/{project_id}/workspaces", get(list_engineering_workspaces).post(create_engineering_workspace))
+        .route("/v1/projects/{project_id}/workspaces/lease-next", post(lease_next_engineering_workspace))
+        .route("/v1/projects/{project_id}/workspaces/{workspace_id}/heartbeat", post(heartbeat_engineering_workspace))
+        .route("/v1/projects/{project_id}/workspaces/{workspace_id}/release", post(release_engineering_workspace))
         .route("/v1/tenants/{tenant_id}/tokens", post(create_tenant_token))
         .route("/v1/tenants/{tenant_id}/tokens/{token_id}", delete(revoke_tenant_token))
         .route("/v1/providers", get(list_providers))
