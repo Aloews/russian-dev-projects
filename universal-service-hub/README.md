@@ -25,7 +25,7 @@ cd universal-service-hub
 bash scripts/dev-up.sh
 ~~~
 
-This creates local-only credentials in .env, starts PostgreSQL 17 and the Hub, applies SQLx migrations, and checks database readiness plus authenticated API access. The API is available at http://localhost:8000. See docs/OPERATIONS.md for shutdown, direct Rust development and deployment configuration.
+This creates local-only credentials in .env.local, starts PostgreSQL 17 and the Hub, applies SQLx migrations, and checks database readiness plus authenticated API access. The API is available at http://localhost:8000. See docs/OPERATIONS.md for shutdown, direct Rust development and deployment configuration.
 
 The Python/FastAPI files remain a compatibility/reference implementation; they are not the production container entrypoint. The current Hub is an authenticated HTTP API, not a browser-based management UI; the health/readiness URLs are directly viewable in a browser, while administrative operations use the API token.
 
