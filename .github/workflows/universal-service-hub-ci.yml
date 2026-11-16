@@ -122,6 +122,8 @@ jobs:
           bash -n scripts/dev-up.sh scripts/dev-down.sh
           docker compose --env-file .env.example -f compose.yml config -q
       - name: Local Compose runtime startup smoke
+        env:
+          USH_IMAGE: universal-service-hub:test
         run: |
           set -eu
           trap 'docker compose --env-file .env.local -f compose.yml down -v >/dev/null 2>&1 || true' EXIT

@@ -15,7 +15,7 @@ services:
     restart: unless-stopped
 
   hub:
-    image: universal-service-hub:test
+    image: ${USH_IMAGE:-universal-service-hub:local}
     build:
       context: .
       dockerfile: Dockerfile
