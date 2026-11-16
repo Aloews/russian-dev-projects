@@ -31,4 +31,4 @@ fi
 psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c \
   "GRANT ush_runtime TO ush_app; GRANT CONNECT ON DATABASE $PGDATABASE TO ush_app; GRANT USAGE, CREATE ON SCHEMA public TO ush_app; REASSIGN OWNED BY $PGUSER TO ush_app; GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ush_app; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ush_app; ALTER DEFAULT PRIVILEGES FOR ROLE $PGUSER IN SCHEMA public GRANT ALL ON TABLES TO ush_app; ALTER DEFAULT PRIVILEGES FOR ROLE $PGUSER IN SCHEMA public GRANT ALL ON SEQUENCES TO ush_app"
 
-echo "Created/verified non-superuser ush_app role with NOBYPASSRLS."
+echo "Created/verified restricted ush_app migration login and non-login ush_runtime role with NOBYPASSRLS."
