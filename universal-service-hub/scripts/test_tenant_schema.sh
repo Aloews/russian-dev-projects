@@ -283,12 +283,13 @@ VALUES
 COMMIT;
 
 SET ROLE ush_app;
+SET ROLE ush_runtime;
 DO $role_test$
 DECLARE is_superuser BOOLEAN; bypasses_rls BOOLEAN;
 BEGIN
  SELECT rolsuper,rolbypassrls INTO is_superuser,bypasses_rls
  FROM pg_roles WHERE rolname=current_user;
- IF current_user <> 'ush_app' OR is_superuser OR bypasses_rls THEN
+ IF current_user <> 'ush_runtime' OR is_superuser OR bypasses_rls THEN
    RAISE EXCEPTION 'runtime role must be non-superuser and must not bypass RLS';
  END IF;
 END;
