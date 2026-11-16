@@ -29,7 +29,7 @@ Stop the service without deleting local database data:
 bash scripts/dev-down.sh
 ~~~
 
-To intentionally remove the local database volume, run docker compose -f compose.yml down -v from this directory. This is destructive and cannot be undone.
+To intentionally remove the local database volume, run docker compose --env-file .env.local -f compose.yml down -v from this directory. This is destructive and cannot be undone.
 
 ## Direct Rust development
 
