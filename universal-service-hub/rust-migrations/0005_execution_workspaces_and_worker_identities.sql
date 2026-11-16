@@ -187,6 +187,24 @@ ALTER TABLE engineering_task_checkpoints
     ADD CONSTRAINT fk_engineering_task_checkpoints_workspace
         FOREIGN KEY (tenant_id, workspace_id) REFERENCES engineering_workspaces(tenant_id, id) ON DELETE RESTRICT;
 
+CREATE FUNCTION ush_check_checkpoint_workspace_project() RETURNS trigger LANGUAGE plpgsql AS $function$
+DECLARE task_project VARCHAR(80); workspace_project VARCHAR(80);
+BEGIN
+    IF NEW.workspace_id IS NULL THEN RETURN NEW; END IF;
+    SELECT project_id INTO task_project
+      FROM engineering_tasks WHERE id=NEW.task_id AND tenant_id=NEW.tenant_id;
+    SELECT project_id INTO workspace_project
+      FROM engineering_workspaces WHERE id=NEW.workspace_id AND tenant_id=NEW.tenant_id;
+    IF task_project IS NULL OR workspace_project IS NULL OR task_project <> workspace_project THEN
+        RAISE EXCEPTION 'checkpoint workspace must belong to the task project and tenant';
+    END IF;
+    RETURN NEW;
+END;
+$function$;
+CREATE TRIGGER trg_engineering_task_checkpoints_workspace_project
+    BEFORE INSERT OR UPDATE OF workspace_id ON engineering_task_checkpoints
+    FOR EACH ROW EXECUTE FUNCTION ush_check_checkpoint_workspace_project();
+
 -- Every child row derives tenant/project ownership from its canonical parent.
 CREATE FUNCTION ush_assign_worker_token_tenant() RETURNS trigger LANGUAGE plpgsql AS $function$
 BEGIN
