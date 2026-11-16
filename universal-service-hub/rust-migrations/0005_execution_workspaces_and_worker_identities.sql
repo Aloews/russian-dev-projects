@@ -183,7 +183,7 @@ ALTER TABLE engineering_task_checkpoints
     ADD COLUMN git_ref VARCHAR(240),
     ADD COLUMN worktree_path TEXT,
     ADD CONSTRAINT fk_engineering_task_checkpoints_workspace
-        FOREIGN KEY (tenant_id, workspace_id) REFERENCES engineering_workspaces(tenant_id, id) ON DELETE SET NULL;
+        FOREIGN KEY (tenant_id, workspace_id) REFERENCES engineering_workspaces(tenant_id, id) ON DELETE RESTRICT;
 
 -- Every child row derives tenant/project ownership from its canonical parent.
 CREATE FUNCTION ush_assign_worker_token_tenant() RETURNS trigger LANGUAGE plpgsql AS $function$
