@@ -87,7 +87,14 @@ jobs:
         working-directory: universal-service-hub
         run: |
           set -eu
-          invalid=$(find rust-migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\\n' | grep -Ev '^[0-9]+_[A-Za-z0-9_-]+\\.sql      - name: Rust lint
+          versions="$(for file in rust-migrations/*.sql; do basename "$file" | cut -d_ -f1; done | sort)"
+          duplicates="$(printf '%s\n' "$versions" | uniq -d)"
+          if [ -n "$duplicates" ]; then
+            echo "Duplicate SQLx migration versions:"
+            echo "$duplicates"
+            exit 1
+          fi
+      - name: Rust lint
         run: cargo clippy --all-targets -- -D warnings
       - name: Rust tests
         run: cargo test
