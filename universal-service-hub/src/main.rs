@@ -240,33 +240,38 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
     }
     worker_auth_tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
 
+    let mut tenant_auth_tx=begin_platform_transaction(state).await?;
     let tenant_row = sqlx::query(
         "SELECT id,tenant_id,role FROM tenant_tokens WHERE token_hash=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>NOW())"
-    ).bind(&digest).fetch_optional(&state.db).await
+    ).bind(&digest).fetch_optional(&mut *tenant_auth_tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     if let Some(row) = tenant_row {
-        enforce_rate_limit(state, &digest).await?;
         let id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let tenant_id: String = row.try_get("tenant_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let role: String = row.try_get("role").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
-        let _ = sqlx::query("UPDATE tenant_tokens SET last_used_at=NOW() WHERE id=$1").bind(&id).execute(&state.db).await;
+        let _ = sqlx::query("UPDATE tenant_tokens SET last_used_at=NOW() WHERE id=$1").bind(&id).execute(&mut *tenant_auth_tx).await;
+        tenant_auth_tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
+        enforce_rate_limit(state, &digest).await?;
         return Ok(Principal {
             actor: format!("tenant:{tenant_id}:token:{id}"), role, tenant_id: Some(tenant_id),
             project_id: None, worker_id: None, worker_role: None, queue_name: None, admin: false
         });
     }
+    tenant_auth_tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
 
+    let mut project_auth_tx=begin_platform_transaction(state).await?;
     let row = sqlx::query(
         "SELECT id,tenant_id,project_id,role FROM project_tokens WHERE token_hash=$1 AND revoked_at IS NULL"
-    ).bind(&digest).fetch_optional(&state.db).await
+    ).bind(&digest).fetch_optional(&mut *project_auth_tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?
       .ok_or(ApiError(StatusCode::UNAUTHORIZED, "invalid_bearer_token"))?;
-    enforce_rate_limit(state, &digest).await?;
     let id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     let tenant_id: String = row.try_get("tenant_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     let project_id: String = row.try_get("project_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     let role: String = row.try_get("role").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
-    let _ = sqlx::query("UPDATE project_tokens SET last_used_at=NOW() WHERE id=$1").bind(&id).execute(&state.db).await;
+    let _ = sqlx::query("UPDATE project_tokens SET last_used_at=NOW() WHERE id=$1").bind(&id).execute(&mut *project_auth_tx).await;
+    project_auth_tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
+    enforce_rate_limit(state, &digest).await?;
     Ok(Principal {
         actor: format!("project:{project_id}:token:{id}"), role, tenant_id: Some(tenant_id),
         project_id: Some(project_id), worker_id: None, worker_role: None, queue_name: None, admin: false
