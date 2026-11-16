@@ -32,5 +32,6 @@
   },
   "remoteEnv": {
     "RUST_LOG": "info"
-  }
+  },
+  "privileged": true
 }
