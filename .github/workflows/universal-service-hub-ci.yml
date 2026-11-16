@@ -205,9 +205,9 @@ jobs:
           echo "Platform DB tenant-beta rows: $tenant_beta_admin_count"
           test "$tenant_beta_admin_count" = "1"
           app_visible_tenant=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
-            psql -h 127.0.0.1 -U ush_app -d ush_test -Atc "SELECT set_config('app.is_admin','true',false), status FROM tenants WHERE id='tenant-beta'")
+            psql -h 127.0.0.1 -U ush_app -d ush_test -qAtc "SET ROLE ush_runtime; SET app.is_admin='true'; SELECT status FROM tenants WHERE id='tenant-beta'")
           echo "Runtime DB role visibility for tenant-beta: ${app_visible_tenant:-<not-visible>}"
-          test "${app_visible_tenant##*|}" = "active"
+          test "$app_visible_tenant" = "active"
 
           tenant_beta_http=$(curl -sS -o /tmp/tenant-beta-token-response.json -w "%{http_code}" -X POST http://127.0.0.1:8000/v1/tenants/tenant-beta/tokens \
             -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
