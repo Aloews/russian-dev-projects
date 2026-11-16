@@ -351,8 +351,9 @@ def main():
     changed = set(git("diff", "--name-only").stdout.splitlines())
     changed.update(git("ls-files", "--others", "--exclude-standard").stdout.splitlines())
     changed.discard("PRODUCT_FACTORY_VERIFICATION.md")
-    if not changed or any(not allowed(path, tracked_set) for path in changed):
-        print("::error::Final patch failed the path allowlist.")
+    qwen_touched = set(changed_paths) | {review_relative}
+    if not changed or not qwen_touched or any(not allowed(path, tracked_set) for path in qwen_touched):
+        print("::error::Qwen edits or review artifact failed the configured path allowlist.")
         return 5
     check = git("diff", "--check", check=False)
     if check.returncode:
