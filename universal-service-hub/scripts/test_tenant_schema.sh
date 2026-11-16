@@ -378,6 +378,8 @@ RESET ROLE;
 DELETE FROM engineering_tasks WHERE id IN (
  'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa','bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb'
 );
+DELETE FROM tenant_usage_events WHERE id='33333333-3333-4333-8333-333333333333';
+DELETE FROM audit_events WHERE id='44444444-4444-4444-8444-444444444444';
 DELETE FROM projects WHERE id IN ('rls-alpha-project','rls-beta-project');
 DELETE FROM workspaces WHERE tenant_id='tenant-beta' AND id='default';
 DELETE FROM tenants WHERE id='tenant-beta';
