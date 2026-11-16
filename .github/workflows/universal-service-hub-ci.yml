@@ -6,7 +6,11 @@ name: universal-service-hub-ci
     paths:
       - "universal-service-hub/**"
       - "AGENTS.md"
+      - "CLAUDE.md"
       - ".github/AGENTS.md"
+      - ".github/CLAUDE.md"
+      - ".github/product-factory/CLAUDE.md"
+      - "universal-service-hub/CLAUDE.md"
       - ".github/product-factory/**"
       - ".github/workflows/universal-service-hub-ci.yml"
       - ".github/workflows/product-factory.yml"
@@ -20,7 +24,11 @@ name: universal-service-hub-ci
     paths:
       - "universal-service-hub/**"
       - "AGENTS.md"
+      - "CLAUDE.md"
       - ".github/AGENTS.md"
+      - ".github/CLAUDE.md"
+      - ".github/product-factory/CLAUDE.md"
+      - "universal-service-hub/CLAUDE.md"
       - ".github/product-factory/**"
       - ".github/workflows/universal-service-hub-ci.yml"
       - ".github/workflows/product-factory.yml"
