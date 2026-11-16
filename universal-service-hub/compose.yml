@@ -15,7 +15,6 @@ services:
     restart: unless-stopped
 
   hub:
-    image: universal-service-hub:test
     image: universal-service-hub:local
     build:
       context: .
