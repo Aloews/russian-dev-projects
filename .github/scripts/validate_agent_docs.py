@@ -41,6 +41,7 @@ REQUIRED = {
         "## API documentation",
         "## Quality and release evidence",
     ),
+    "universal-service-hub/docs/CODING_AGENTS.md": ("## Instruction loading and precedence", "## Provider routing status"),
     "universal-service-hub/AGENTS.md": (
         "## Required workflow",
         "## Provider integration rules",
