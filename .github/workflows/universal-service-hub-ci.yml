@@ -144,6 +144,7 @@ jobs:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
         run: |
           set -eu
+          trap 'status=$?; echo "Container smoke failed at: $BASH_COMMAND (exit $status)"; docker logs ush-smoke 2>&1 || true; exit "$status"' ERR
           docker run -d --rm --name ush-smoke --network host \
             -e USH_API_TOKEN="$USH_API_TOKEN" \
             -e USH_DATABASE_URL="postgres://ush_app:ush-test-password@127.0.0.1:5432/ush_test" \
