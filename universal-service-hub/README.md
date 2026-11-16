@@ -4,7 +4,22 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Current status
 
-**Rust control plane implemented; production activation remains incomplete.** The production container uses an Axum/Tokio/SQLx Rust binary. It includes PostgreSQL-backed project/token management, provider registry/selection, health probes, audit, AI chat routing and read-only verification adapters for hosting, database, storage, PostgreSQL and Redis services. Provider credentials resolve through Infisical references. Private database/Redis hosts are rejected unless exact DNS names are explicitly allowlisted with `USH_ALLOWED_PRIVATE_HOSTS`. The legacy FastAPI implementation remains a compatibility/reference target. The provider checks are not live connections until credentials are added and verified. Deployment/resource mutation, object upload/download, queue orchestration, budgets/quotas, production rollout and live Infisical/provider smoke tests remain outstanding.
+USH has a working Rust API foundation, PostgreSQL migrations, tenant-scoped service tokens, project-scoped credentials, provider registry, AI request adapters, durable engineering task records, worker identities, workspace leases, checkpoints, task attempts and recovery primitives.
+
+The execution-plane API now includes:
+
+- PostgreSQL-backed task queue with legal state transitions, dependency checks, idempotency keys and immutable event history.
+- Role-specific worker identities and queues for architecture, implementation, build, test, review and recovery.
+- Atomic task claims, expiring leases, heartbeats and recovery of expired task leases.
+- Workspace leases, task-to-workspace assignments, base/candidate SHA pinning and exclusive path-prefix locks.
+- Read-only reviewer assignments: candidate SHA required, writer scope empty, and path-lock acquisition denied.
+- Checkpoint and model-attempt history, including strategy/model changes.
+- Transaction-local tenant context and fail-closed PostgreSQL RLS across tenant-owned core data, tokens, rate limits and engineering execution tables.
+- Runtime startup rejects database roles with superuser or BYPASSRLS privileges. Local Compose and CI use a dedicated non-superuser `ush_app` role.
+
+**Not yet production-ready:** the Railway worker is not yet consuming the USH task queue. The API primitives and database controls do not by themselves create a working autonomous runtime. The remaining work is to connect the Railway project adapter, create real Git worktrees in leased workspaces, separate the role-specific executors, and prove the complete task-to-PR-to-independent-review-and-recovery flow in a sandbox.
+
+No production execution has been enabled and no broad repository permissions have been granted. Railway's existing `distinguished-transformation` project remains the intended execution plane; its current workers are disabled and their live cron configuration still needs reconciliation with the documented role cadence.
 
 ## Security-first product roadmap
 
