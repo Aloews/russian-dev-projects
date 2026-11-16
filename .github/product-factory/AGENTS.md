@@ -89,3 +89,11 @@ Use only these states: `planned`, `in_progress`, `blocked`, `verified`, `not_ver
 ## Completion contract
 
 A candidate is publishable only if acceptance criteria are mapped to evidence, required checks pass on the exact candidate SHA, independent review has no unresolved blocker, secret scanning and path restrictions pass, and project documentation is updated. A PR is a verified candidate, not proof of production readiness.
+
+
+## Use of the Universal Service Hub
+
+- The Universal Service Hub is the intended control plane for product development, but a target task may be submitted through it only after the Hub's task API, durable worker, sandbox, evidence gate and publication boundary have passed their live acceptance tests.
+- Before that gate, the existing Product Factory workflow remains a separate, explicitly labelled transitional runner. Do not claim its OpenRouter or Qwen work was orchestrated by the Hub.
+- After the gate, Product Factory submits an authenticated, project-scoped task to the Hub API and consumes the persisted task/evidence state. It must not independently start a second agent orchestrator or bypass Hub budgets, provider allowlists, approval and audit policy.
+- Keep product source work inside the target repository/workspace. The Hub owns orchestration and policy; target repositories own product-specific architecture, data and release constraints.

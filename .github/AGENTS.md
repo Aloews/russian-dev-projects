@@ -35,3 +35,12 @@ Only the isolated publication job may receive the scoped GitHub write token. Mod
 ## Evidence
 
 For each workflow change, preserve exact commit/run IDs, completed job conclusions, relevant step results and redacted diagnostics. A skipped or `continue-on-error` step is not a successful capability. Explicitly distinguish provider probe success, candidate creation, verification, PR publication and product release.
+
+
+## Hub self-hosting and bootstrap boundary
+
+- The dedicated `universal-hub-codex-claude.yml` workflow is an **external bootstrap runner**, not the Hub's self-hosting execution path. It may be used only to implement missing bootstrap capabilities until the Hub API passes its dogfooding acceptance gate.
+- Do not describe a direct Codex/Claude CLI run, GitHub API file edit, or successful PR as a task executed by the Hub.
+- Once the Hub engineering-task API and sandboxed worker are verified, route Hub implementation requests through that API. The external workflow may then only perform source checkout, invoke the Hub API, collect redacted evidence, run independent GitHub CI and publish the already-verified patch.
+- Keep provider probes separate: direct Starimg CLI compatibility, Hub provider-adapter compatibility, and full task execution are three different tests. A pass in one does not prove the others.
+- Never make the Starimg coding workflow depend on unrelated fal.ai/video credentials. Each provider secret must be required only by a task that actually calls that provider.
