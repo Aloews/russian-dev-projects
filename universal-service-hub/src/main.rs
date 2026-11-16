@@ -1134,7 +1134,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
                 }
             }
         };
-        let base = if adapter == "ollama" {
+        let _base = if adapter == "ollama" {
             match validate_ollama_url(&base_url) {
                 Ok(url) if ensure_private_destination(&url).await.is_ok() => url,
                 _ => {
