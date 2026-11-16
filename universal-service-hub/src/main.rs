@@ -570,18 +570,53 @@ fn is_public_ip(ip: IpAddr) -> bool {
     }
 }
 
-async fn ensure_private_destination(url: &url::Url) -> ApiResult<()> {
+fn is_allowed_ollama_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => ipv4.is_loopback() || is_private_network_ip(IpAddr::V4(ipv4)),
+        IpAddr::V6(ipv6) => {
+            if let Some(mapped) = ipv6.to_ipv4_mapped() {
+                mapped.is_loopback() || is_private_network_ip(IpAddr::V4(mapped))
+            } else {
+                ipv6.is_loopback() || is_private_network_ip(IpAddr::V6(ipv6))
+            }
+        }
+    }
+}
+
+fn build_pinned_ollama_client(url: &url::Url, resolved: &[SocketAddr]) -> ApiResult<reqwest::Client> {
     let host = url.host_str().ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_ollama_host"))?;
     let port = url.port_or_known_default().unwrap_or(11434);
-    let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host, port)).await
-        .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_dns_failed"))?.collect();
-    if resolved.is_empty() || resolved.iter().any(|addr| {
-        let ip = addr.ip();
-        !(ip.is_loopback() || is_private_network_ip(ip))
-    }) {
+    if resolved.is_empty() || resolved.iter().any(|address| address.port() != port || !is_allowed_ollama_ip(address.ip())) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_destination_not_private"));
     }
-    Ok(())
+    let pinned = resolved[0];
+    if let Ok(literal_ip) = host.parse::<IpAddr>() {
+        if resolved.iter().any(|address| address.ip() != literal_ip) {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_ip_literal_mismatch"));
+        }
+    }
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none());
+    // Keep the URL hostname for HTTP Host and TLS SNI, but bypass all later DNS lookups.
+    if host.parse::<IpAddr>().is_err() {
+        builder = builder.resolve(host, pinned);
+    }
+    builder.build().map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "ollama_http_client_build_failed"))
+}
+
+async fn ollama_http_client(url: &url::Url) -> ApiResult<reqwest::Client> {
+    let host = url.host_str().ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_ollama_host"))?;
+    let port = url.port_or_known_default().unwrap_or(11434);
+    let resolved: Vec<SocketAddr> = if let Ok(ip) = host.parse::<IpAddr>() {
+        vec![SocketAddr::new(ip, port)]
+    } else {
+        tokio::net::lookup_host((host, port)).await
+            .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_dns_failed"))?
+            .collect()
+    };
+    build_pinned_ollama_client(url, &resolved)
 }
 
 async fn ensure_public_destination(url: &url::Url) -> ApiResult<()> {
@@ -933,8 +968,8 @@ async fn health_check(State(state): State<AppState>, headers: HeaderMap, Json(bo
         let (status, detail) = if adapter == "ollama" {
             if let Some(raw_url) = base_url {
                 match validate_ollama_url(&raw_url) {
-                    Ok(url) => match ensure_private_destination(&url).await {
-                        Ok(()) => match state.http.get(format!("{}/api/tags", raw_url.trim_end_matches('/')))
+                    Ok(url) => match ollama_http_client(&url).await {
+                        Ok(client) => match client.get(format!("{}/api/tags", raw_url.trim_end_matches('/')))
                             .timeout(Duration::from_secs_f64(timeout.clamp(0.1, 5.0))).send().await {
                                 Ok(response) if response.status().is_success() => ("healthy","ollama_tags_ok"),
                                 Ok(_) => ("unhealthy","ollama_http_non_success"),
@@ -1021,8 +1056,8 @@ async fn provider_models(State(state): State<AppState>, headers: HeaderMap, Path
     };
     let request = if adapter == "ollama" {
         let base = validate_ollama_url(&base_url)?;
-        ensure_private_destination(&base).await?;
-        state.http.get(format!("{}/api/tags", base_url.trim_end_matches('/')))
+        let client = ollama_http_client(&base).await?;
+        client.get(format!("{}/api/tags", base_url.trim_end_matches('/')))
     } else {
         let key_name = key_name.ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "provider_credential_reference_required"))?;
         let api_key = resolve_provider_secret(&state,&key_name,None).await?
@@ -1134,22 +1169,30 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
                 }
             }
         };
-        let _base = if adapter == "ollama" {
+        let ollama_client = if adapter == "ollama" {
             match validate_ollama_url(&base_url) {
-                Ok(url) if ensure_private_destination(&url).await.is_ok() => url,
-                _ => {
+                Ok(url) => match ollama_http_client(&url).await {
+                    Ok(client) => Some(client),
+                    Err(_) => {
+                        audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":"local_endpoint_not_allowed"})).await;
+                        continue;
+                    }
+                },
+                Err(_) => {
                     audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":"local_endpoint_not_allowed"})).await;
                     continue;
                 }
             }
         } else {
             match validate_https_url(&base_url) {
-                Ok(url) if ensure_public_destination(&url).await.is_ok() => url,
+                Ok(url) if ensure_public_destination(&url).await.is_ok() => {},
                 _ => continue,
             }
+            None
         };
         let request = match adapter.as_str() {
-            "ollama" => state.http.post(format!("{}/api/chat", base_url.trim_end_matches('/')))
+            "ollama" => ollama_client.as_ref().ok_or(ApiError(StatusCode::BAD_GATEWAY, "ollama_client_unavailable"))?
+                .post(format!("{}/api/chat", base_url.trim_end_matches('/')))
                 .json(&json!({
                     "model":model,
                     "messages":body.messages.iter().map(|m| json!({"role":m.role,"content":m.content})).collect::<Vec<_>>(),
@@ -1480,6 +1523,53 @@ mod outbound_tests {
         assert!(is_private_network_ip("fd00::1".parse().unwrap()));
         assert!(!is_private_network_ip("169.254.169.254".parse().unwrap()));
         assert!(!is_private_network_ip("127.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn ollama_pinning_rejects_mixed_public_private_and_metadata_answers() {
+        let url = url::Url::parse("http://ollama.internal:11434").unwrap();
+        let private = "10.2.3.4:11434".parse::<SocketAddr>().unwrap();
+        let public = "8.8.8.8:11434".parse::<SocketAddr>().unwrap();
+        let metadata = "169.254.169.254:11434".parse::<SocketAddr>().unwrap();
+        assert!(build_pinned_ollama_client(&url, &[private]).is_ok());
+        assert!(build_pinned_ollama_client(&url, &[private, public]).is_err());
+        assert!(build_pinned_ollama_client(&url, &[metadata]).is_err());
+        assert!(build_pinned_ollama_client(&url, &[]).is_err());
+    }
+
+    #[test]
+    fn ollama_pinning_accepts_only_loopback_rfc1918_and_ula() {
+        for raw in ["127.0.0.1:11434", "10.0.0.2:11434", "172.16.0.2:11434", "192.168.1.2:11434", "[fd00::1]:11434", "[::1]:11434"] {
+            let address = raw.parse::<SocketAddr>().unwrap();
+            assert!(is_allowed_ollama_ip(address.ip()), "{raw}");
+        }
+        for raw in ["169.254.169.254:11434", "100.64.0.1:11434", "8.8.8.8:11434", "[fe80::1]:11434", "[2001:4860:4860::8888]:11434", "[::ffff:169.254.169.254]:11434"] {
+            let address = raw.parse::<SocketAddr>().unwrap();
+            assert!(!is_allowed_ollama_ip(address.ip()), "{raw}");
+        }
+    }
+
+    #[tokio::test]
+    async fn ollama_client_pins_dns_result_preserves_host_and_disables_redirects() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..count]).to_ascii_lowercase();
+            assert!(request.contains(&format!("host: ollama.test:{}", address.port())));
+            assert!(request.starts_with("get /api/tags "));
+            stream.write_all(b"HTTP/1.1 302 Found\\r\\nLocation: http://169.254.169.254/latest/meta-data/\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n").unwrap();
+        });
+        let url = url::Url::parse(&format!("http://ollama.test:{}/api/tags", address.port())).unwrap();
+        let pinned = SocketAddr::new("127.0.0.1".parse().unwrap(), address.port());
+        let client = build_pinned_ollama_client(&url, &[pinned]).unwrap();
+        let response = client.get(url).send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        server.join().unwrap();
     }
 
     #[test]
