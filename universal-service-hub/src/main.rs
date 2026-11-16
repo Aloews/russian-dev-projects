@@ -760,7 +760,7 @@ async fn heartbeat_engineering_task(
     let task_expires:DateTime<Utc>=row.try_get("lease_expires_at")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_heartbeat_failed"))?;
     sqlx::query("UPDATE engineering_task_path_locks l SET lease_expires_at=LEAST($1,w.lease_expires_at) FROM engineering_workspaces w WHERE l.tenant_id=$2 AND l.project_id=$3 AND l.task_id=$4 AND l.workspace_id=w.id AND w.state='leased' AND w.lease_expires_at>NOW()")
-        .bind(task_expires.clone()).bind(tenant_id).bind(project_id).bind(&task_id)
+        .bind(task_expires).bind(tenant_id).bind(project_id).bind(&task_id)
         .execute(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_path_lock_heartbeat_failed"))?;
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
@@ -1444,7 +1444,7 @@ async fn heartbeat_engineering_workspace(
     let workspace_expires:DateTime<Utc>=row.try_get("lease_expires_at")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_heartbeat_failed"))?;
     sqlx::query("UPDATE engineering_task_path_locks l SET lease_expires_at=LEAST($1,t.lease_expires_at) FROM engineering_tasks t WHERE l.tenant_id=$2 AND l.project_id=$3 AND l.workspace_id=$4 AND l.task_id=t.id AND t.lease_expires_at>NOW()")
-        .bind(workspace_expires.clone()).bind(tenant_id).bind(&project_id).bind(&workspace_id)
+        .bind(workspace_expires).bind(tenant_id).bind(&project_id).bind(&workspace_id)
         .execute(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_heartbeat_failed"))?;
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
