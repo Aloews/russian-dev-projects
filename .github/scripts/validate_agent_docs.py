@@ -136,3 +136,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+## Validator addition: required self-hosting rules
