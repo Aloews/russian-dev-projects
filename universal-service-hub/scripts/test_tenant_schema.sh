@@ -261,6 +261,13 @@ INSERT INTO projects (id,tenant_id,workspace_id,name,allowed_capabilities,allowe
 VALUES
  ('rls-alpha-project','aloews','default','RLS Alpha','["ai.chat"]'::jsonb,'[]'::jsonb),
  ('rls-beta-project','tenant-beta','default','RLS Beta','["ai.chat"]'::jsonb,'[]'::jsonb);
+INSERT INTO tenant_memberships (id,tenant_id,identity_issuer,identity_subject,role)
+VALUES
+ ('aaaa0000-1111-4111-8111-aaaaaaaaaaaa','aloews','https://issuer.example','alpha-user','tenant_admin'),
+ ('bbbb0000-1111-4111-8111-bbbbbbbbbbbb','tenant-beta','https://issuer.example','beta-user','developer');
+INSERT INTO tenant_resource_limits (tenant_id,max_active_tasks) VALUES ('tenant-beta',7);
+INSERT INTO tenant_budget_policies (tenant_id,currency,soft_limit_minor,hard_limit_minor)
+VALUES ('tenant-beta','USD',10000,20000);
 INSERT INTO engineering_worker_tokens
  (id,tenant_id,project_id,name,worker_id,worker_role,queue_name,token_hash)
 VALUES
@@ -321,6 +328,18 @@ BEGIN
  IF EXISTS (SELECT 1 FROM tenants WHERE id='tenant-beta') THEN
    RAISE EXCEPTION 'tenant alpha can read another tenant record';
  END IF;
+ IF (SELECT COUNT(*) FROM tenant_memberships) <> 1
+    OR EXISTS (SELECT 1 FROM tenant_memberships WHERE identity_subject='beta-user') THEN
+   RAISE EXCEPTION 'tenant alpha membership RLS failed';
+ END IF;
+ IF (SELECT COUNT(*) FROM tenant_resource_limits) <> 1
+    OR EXISTS (SELECT 1 FROM tenant_resource_limits WHERE tenant_id='tenant-beta') THEN
+   RAISE EXCEPTION 'tenant alpha resource limit RLS failed';
+ END IF;
+ IF (SELECT COUNT(*) FROM tenant_budget_policies) <> 1
+    OR EXISTS (SELECT 1 FROM tenant_budget_policies WHERE tenant_id='tenant-beta') THEN
+   RAISE EXCEPTION 'tenant alpha budget policy RLS failed';
+ END IF;
  IF EXISTS (SELECT 1 FROM workspaces WHERE tenant_id='tenant-beta' AND id='default') THEN
    RAISE EXCEPTION 'tenant alpha can read tenant beta workspace';
  END IF;
@@ -358,6 +377,18 @@ BEGIN
  END IF;
  IF EXISTS (SELECT 1 FROM tenants WHERE id='aloews') THEN
    RAISE EXCEPTION 'tenant beta can read tenant alpha record';
+ END IF;
+ IF (SELECT COUNT(*) FROM tenant_memberships) <> 1
+    OR EXISTS (SELECT 1 FROM tenant_memberships WHERE identity_subject='alpha-user') THEN
+   RAISE EXCEPTION 'tenant beta membership RLS failed';
+ END IF;
+ IF (SELECT COUNT(*) FROM tenant_resource_limits) <> 1
+    OR NOT EXISTS (SELECT 1 FROM tenant_resource_limits WHERE tenant_id='tenant-beta') THEN
+   RAISE EXCEPTION 'tenant beta resource limit RLS failed';
+ END IF;
+ IF (SELECT COUNT(*) FROM tenant_budget_policies) <> 1
+    OR NOT EXISTS (SELECT 1 FROM tenant_budget_policies WHERE tenant_id='tenant-beta') THEN
+   RAISE EXCEPTION 'tenant beta budget policy RLS failed';
  END IF;
  IF NOT EXISTS (SELECT 1 FROM workspaces WHERE tenant_id='tenant-beta' AND id='default') THEN
    RAISE EXCEPTION 'tenant beta cannot read its own workspace';
@@ -408,6 +439,12 @@ BEGIN
  IF EXISTS (SELECT 1 FROM workspaces) THEN
    RAISE EXCEPTION 'missing tenant context exposed workspace rows';
  END IF;
+ IF EXISTS (SELECT 1 FROM tenant_memberships)
+    OR EXISTS (SELECT 1 FROM tenant_resource_limits)
+    OR EXISTS (SELECT 1 FROM tenant_budget_policies)
+    OR EXISTS (SELECT 1 FROM tenant_provider_connections) THEN
+   RAISE EXCEPTION 'missing tenant context exposed tenant configuration';
+ END IF;
 END;
 $no_context_test$;
 COMMIT;
@@ -416,6 +453,9 @@ RESET ROLE;
 DELETE FROM tenant_tokens WHERE id='77777777-7777-4777-8777-777777777777';
 DELETE FROM project_tokens WHERE id='88888888-8888-4888-8888-888888888888';
 DELETE FROM api_rate_limits WHERE token_hash IN (repeat('a',64),repeat('b',64));
+DELETE FROM tenant_memberships WHERE id IN ('aaaa0000-1111-4111-8111-aaaaaaaaaaaa','bbbb0000-1111-4111-8111-bbbbbbbbbbbb');
+DELETE FROM tenant_resource_limits WHERE tenant_id='tenant-beta';
+DELETE FROM tenant_budget_policies WHERE tenant_id='tenant-beta';
 DELETE FROM audit_events WHERE id='44444444-4444-4444-8444-444444444444';
 DELETE FROM tenant_usage_events WHERE id='33333333-3333-4333-8333-333333333333';
 DELETE FROM engineering_worker_tokens WHERE id IN (
