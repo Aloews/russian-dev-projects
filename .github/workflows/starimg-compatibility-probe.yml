@@ -1,0 +1,160 @@
+name: Starimg live protocol compatibility probe
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/starimg-compatibility-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      STARIMG_BASE_URL: \${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
+      STARIMG_API_KEY: \${{ secrets.STARIMG_API_KEY }}
+      STARIMG_CODEX_MODEL: \${{ vars.STARIMG_CODEX_MODEL }}
+      STARIMG_CLAUDE_MODEL: \${{ vars.STARIMG_CLAUDE_MODEL }}
+      STARIMG_FABLE_MODEL: \${{ vars.STARIMG_FABLE_MODEL }}
+    steps:
+      - name: Probe direct Starimg endpoints without exposing credentials
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$STARIMG_API_KEY" || { echo "STARIMG_API_KEY is not configured." >&2; exit 2; }
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.error
+          import urllib.request
+
+          base = os.environ["STARIMG_BASE_URL"].rstrip("/")
+          if base.endswith("/v1"):
+              base = base[:-3]
+          key = os.environ["STARIMG_API_KEY"]
+          headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
+
+          def request(url, body=None, anthropic=False):
+              h = dict(headers)
+              if anthropic:
+                  h = {
+                      "x-api-key": key,
+                      "anthropic-version": "2023-06-01",
+                      "content-type": "application/json",
+                  }
+              data = None if body is None else json.dumps(body).encode()
+              req = urllib.request.Request(url, data=data, headers=h, method="GET" if body is None else "POST")
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as response:
+                      raw = response.read(1024 * 1024)
+                      return response.status, json.loads(raw.decode())
+              except urllib.error.HTTPError as exc:
+                  detail = ""
+                  try:
+                      payload = json.loads(exc.read(4096).decode(errors="replace"))
+                      error = payload.get("error", payload) if isinstance(payload, dict) else {}
+                      if isinstance(error, dict):
+                          detail = str(error.get("message") or error.get("type") or error.get("code") or "")
+                  except Exception:
+                      pass
+                  detail = detail.replace(key, "[REDACTED]")[:500]
+                  return exc.code, {"safe_error": detail or "provider_rejected_request"}
+
+          status, catalogue = request(base + "/v1/models")
+          if status != 200:
+              raise SystemExit(f"catalogue: HTTP {status}; cannot discover exact model IDs")
+          raw = catalogue.get("data") or catalogue.get("models") or []
+          ids = sorted({str(x.get("id")) for x in raw if isinstance(x, dict) and x.get("id")})
+          if not ids:
+              raise SystemExit("catalogue: no model IDs returned")
+          print("Catalogue: OK")
+          print("Listed model IDs: " + ", ".join(ids))
+
+          explicit_codex = os.environ.get("STARIMG_CODEX_MODEL", "").strip()
+          explicit_claude = os.environ.get("STARIMG_CLAUDE_MODEL", "").strip()
+          explicit_fable = os.environ.get("STARIMG_FABLE_MODEL", "").strip()
+          codex_candidates = [m for m in ids if re.search(r"codex", m, re.I)]
+          if not codex_candidates:
+              codex_candidates = [m for m in ids if re.match(r"gpt-", m, re.I)]
+          claude_candidates = [m for m in ids if re.search(r"claude.*opus|opus.*claude", m, re.I)]
+          if not claude_candidates:
+              claude_candidates = [m for m in ids if re.search(r"claude.*sonnet|sonnet.*claude", m, re.I)]
+          if not claude_candidates:
+              claude_candidates = [m for m in ids if "claude" in m.lower()]
+          fable_candidates = [m for m in ids if re.search(r"fable.*5[._-]?2|5[._-]?2.*fable", m, re.I)]
+
+          results = []
+          codex = explicit_codex or (codex_candidates[0] if codex_candidates else "")
+          if codex and codex in ids:
+              body = {
+                  "model": codex,
+                  "input": "Call ping with value CODEX_TOOL_OK.",
+                  "max_output_tokens": 64,
+                  "tools": [{
+                      "type": "function", "name": "ping", "description": "Compatibility probe.",
+                      "parameters": {
+                          "type": "object",
+                          "properties": {"value": {"type": "string"}},
+                          "required": ["value"],
+                          "additionalProperties": False
+                      },
+                      "strict": False
+                  }],
+                  "tool_choice": {"type": "function", "name": "ping"}
+              }
+              status, data = request(base + "/v1/responses", body)
+              ok = status == 200 and any(
+                  isinstance(x, dict) and x.get("type") == "function_call" and x.get("name") == "ping"
+                  for x in data.get("output", [])
+              )
+              results.append(("OpenAI Responses", codex, ok, status, data))
+          else:
+              results.append(("OpenAI Responses", "no exact Codex/GPT model listed", False, 0, {}))
+
+          claude = explicit_claude or explicit_fable or (fable_candidates[0] if fable_candidates else (claude_candidates[0] if claude_candidates else ""))
+          if claude and claude in ids:
+              body = {
+                  "model": claude, "max_tokens": 64,
+                  "messages": [{"role": "user", "content": "Call ping with value CLAUDE_TOOL_OK."}],
+                  "tools": [{
+                      "name": "ping", "description": "Compatibility probe.",
+                      "input_schema": {
+                          "type": "object",
+                          "properties": {"value": {"type": "string"}},
+                          "required": ["value"],
+                          "additionalProperties": False
+                      }
+                  }],
+                  "tool_choice": {"type": "tool", "name": "ping"}
+              }
+              status, data = request(base + "/v1/messages", body, anthropic=True)
+              ok = status == 200 and any(
+                  isinstance(x, dict) and x.get("type") == "tool_use" and x.get("name") == "ping"
+                  for x in data.get("content", [])
+              )
+              results.append(("Anthropic Messages", claude, ok, status, data))
+          else:
+              results.append(("Anthropic Messages", "no exact Claude/Fable model listed", False, 0, {}))
+
+          summary = []
+          for protocol, model, ok, status, data in results:
+              state = "PASS" if ok else "FAIL"
+              error = data.get("safe_error", "")
+              line = f"{protocol}: {state}; model={model}; HTTP={status or 'not attempted'}"
+              if error:
+                  line += f"; error={error}"
+              print(line)
+              summary.append(line)
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("## Direct Starimg protocol probe\n\n")
+              f.write("\n".join(f"- {x}" for x in summary))
+              f.write("\n\nThis tests Starimg directly, not the Universal Hub Rust provider adapter or its engineering-task API.\n")
+
+          if not any(item[2] for item in results):
+              raise SystemExit("No Starimg coding protocol passed its forced tool-call probe.")
+          PY
