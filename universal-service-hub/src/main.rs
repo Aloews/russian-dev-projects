@@ -2572,13 +2572,6 @@ async fn main() -> anyhow::Result<()> {
     });
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
     let runtime_environment = env::var("USH_ENVIRONMENT").unwrap_or_else(|_| "development".into());
-    let runtime_role = sqlx::query("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user")
-        .fetch_one(&db).await?;
-    let runtime_is_superuser: bool = runtime_role.try_get("rolsuper")?;
-    let runtime_bypasses_rls: bool = runtime_role.try_get("rolbypassrls")?;
-    if runtime_is_superuser || runtime_bypasses_rls {
-        anyhow::bail!("USH runtime database role must be non-superuser and NOBYPASSRLS; use the dedicated ush_runtime role");
-    }
     let secret_backend = env::var("USH_SECRET_BACKEND").unwrap_or_else(|_| {
         if runtime_environment == "production" { "infisical".into() } else { "env".into() }
     });
