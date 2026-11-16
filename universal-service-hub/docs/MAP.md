@@ -439,13 +439,13 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 
 ## Runtime bootstrap — local launch path
 
-- **Status:** implementation candidate on `feat/ush-local-runtime-bootstrap`; not yet merged or claimed operational.
+- **Status:** VERIFIED IN MAIN at merge commit `50169f3b003ec6420fb25dd2474f7023fea4c52e`; exact-PR CI run #43852744350 and post-merge main CI run #43854038768 both passed.
 - Production binary: Rust Axum/SQLx in `universal-service-hub/Dockerfile`; PostgreSQL 17 is mandatory; SQLx migrations run at process startup. Python/FastAPI is reference/compatibility only.
 - Added a Docker Compose stack, a one-command local startup script that creates strong local-only credentials, waits for database readiness and tests authenticated API access, and a safe stop script that retains the local database volume.
 - Added an exact-CI-head Compose startup smoke test in addition to the existing extensive Docker RBAC/rate-limit smoke test.
 - **API-only:** the current product has no browser management UI; only health/readiness endpoints are directly viewable in a browser, and administrative workflows use the authenticated HTTP API.
 - **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
-- Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
+- Acceptance: exact-head GitHub CI run #43852744350 and post-merge main CI run #43854038768 passed; Compose started Rust against PostgreSQL 17; migrations completed; /healthz and /readyz returned success; unauthenticated API returned 401; authenticated provider-list endpoint returned success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
 
 
 ## Self-hosting and provider diagnosis — current source-backed state
@@ -472,7 +472,7 @@ The Rust Axum API in `src/main.rs` exposes these route families: `/healthz`, `/r
 
 | ID | Increment | Acceptance evidence | State |
 |---|---|---|---|
-| SELF-0 | Minimal runtime bootstrap: Rust service + PostgreSQL + authenticated health/readiness | clean Compose startup, SQLx migrations, 401 unauthenticated, authenticated route, exact-head CI | VERIFIED IN MAIN at `50169f3b003ec6420fb25dd2474f7023fea4c52e`; PR #59 exact-head run #43852744350 passed; post-merge main CI run #43854038768 was still in progress at map update |
+| SELF-0 | Minimal runtime bootstrap: Rust service + PostgreSQL + authenticated health/readiness | clean Compose startup, SQLx migrations, 401 unauthenticated, authenticated route, exact-head CI | VERIFIED IN MAIN at `50169f3b003ec6420fb25dd2474f7023fea4c52e`; PR #59 exact-head run #43852744350 and post-merge main CI run #43854038768 both passed |
 | SELF-1 | Provider protocols: OpenAI Responses and Anthropic Messages tool-use round-trips, exact model/provider IDs, normalized tool-call envelope | live protocol tool-use probes through the running Hub API, mocked contract/error/retry tests | NOT STARTED |
 | SELF-2 | Durable engineering task API, project isolation, approval/budget/idempotency and state machine | PostgreSQL integration tests for create/approve/claim/complete/cancel/retry, duplicate and cross-project denial | NOT STARTED |
 | SELF-3 | Isolated workspace worker and typed tools | path/symlink/command/network/secret/CPU/memory/time/output/cancellation tests; no API-process shell | NOT STARTED |
