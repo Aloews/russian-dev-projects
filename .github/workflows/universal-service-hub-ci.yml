@@ -356,9 +356,16 @@ jobs:
           curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/heartbeat" \
             -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
             -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$task_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" | jq -e '.lease_expires_at != null' >/dev/null
+          assigned_worktree_path="tenants/aloews/projects/smoke-project/workspaces/$assigned_workspace_id"
+          assigned_git_branch="ush/smoke/$task_id"
           curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$assigned_workspace_id/heartbeat" \
             -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
-            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$assigned_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" | jq -e '.lease_expires_at != null' >/dev/null
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$assigned_workspace_lease" \
+              --arg head_sha "$assigned_workspace_base_sha" --arg worktree_path "$assigned_worktree_path" \
+              --arg git_branch "$assigned_git_branch" \
+              '{worker_id:$worker_id,lease_token:$lease_token,lease_seconds:180,head_sha:$head_sha,git_worktree_path:$worktree_path,git_branch:$git_branch,runtime_id:"ci-smoke"}')" | jq -e '.lease_expires_at != null' >/dev/null
+          workspace_inventory=$(curl -fsS -H "Authorization: Bearer $owner_token" http://127.0.0.1:8000/v1/projects/smoke-project/workspaces)
+          printf '%s' "$workspace_inventory" | jq -e --arg id "$assigned_workspace_id" --arg path "$assigned_worktree_path" --arg branch "$assigned_git_branch" 'any(.[]; .id == $id and .git_worktree_path == $path and .git_branch == $branch)' >/dev/null
           second_task=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tasks \
             -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
             -d '{"idempotency_key":"smoke-task-2","title":"Concurrent writer task","objective":"Prove overlapping writer scopes are exclusive","acceptance_criteria":["Reject overlapping writer scope"],"dependencies":[]}')
