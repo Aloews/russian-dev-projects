@@ -286,23 +286,23 @@ jobs:
           workspace_heartbeat=$(curl -fsS -X POST \
             "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/heartbeat" \
             -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
-            -d "{\\"worker_id\\":\\"implementer-smoke\\",\\"lease_token\\":\\"$implementer_workspace_lease\\"}")
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$implementer_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')")
           printf '%s' "$workspace_heartbeat" | jq -e '.workspace_id != null' >/dev/null
 
           wrong_workspace_owner=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
             "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/heartbeat" \
             -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
-            -d "{\\"worker_id\\":\\"tester-smoke\\",\\"lease_token\\":\\"$implementer_workspace_lease\\"}")
+            -d "$(jq -nc --arg worker_id "tester-smoke" --arg lease_token "$implementer_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')")
           test "$wrong_workspace_owner" = "403"
 
           curl -fsS -X POST \
             "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/release" \
             -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
-            -d "{\\"worker_id\\":\\"implementer-smoke\\",\\"lease_token\\":\\"$implementer_workspace_lease\\"}" >/dev/null
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$implementer_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
           curl -fsS -X POST \
             "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$tester_workspace_id/release" \
             -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
-            -d "{\\"worker_id\\":\\"tester-smoke\\",\\"lease_token\\":\\"$tester_workspace_lease\\"}" >/dev/null
+            -d "$(jq -nc --arg worker_id "tester-smoke" --arg lease_token "$tester_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
 
           curl -fsS -H "Authorization: Bearer $owner_token" \
             http://127.0.0.1:8000/v1/projects/smoke-project/tokens | jq -e 'length == 3' >/dev/null
