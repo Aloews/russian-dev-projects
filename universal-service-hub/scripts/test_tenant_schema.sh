@@ -284,6 +284,10 @@ INSERT INTO audit_events
 VALUES
   ('44444444-4444-4444-8444-444444444444','rls-test','task.test','engineering_task',
    'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb','{}'::jsonb);
+INSERT INTO api_rate_limits (token_hash,tenant_id,window_started_at,request_count)
+VALUES
+ ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aloews',NOW(),1),
+ ('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','tenant-beta',NOW(),1);
 COMMIT;
 
 SET ROLE ush_runtime;
@@ -328,6 +332,10 @@ BEGIN
     OR EXISTS (SELECT 1 FROM project_tokens WHERE id='88888888-8888-4888-8888-888888888888') THEN
    RAISE EXCEPTION 'tenant alpha can read tenant beta tokens';
  END IF;
+ IF EXISTS (SELECT 1 FROM api_rate_limits WHERE token_hash=repeat('b',64))
+    OR NOT EXISTS (SELECT 1 FROM api_rate_limits WHERE token_hash=repeat('a',64)) THEN
+   RAISE EXCEPTION 'tenant alpha API rate-limit RLS failed';
+ END IF;
 END;
 $alpha_test$;
 COMMIT;
@@ -362,6 +370,10 @@ BEGIN
     OR NOT EXISTS (SELECT 1 FROM project_tokens WHERE id='88888888-8888-4888-8888-888888888888') THEN
    RAISE EXCEPTION 'tenant beta cannot read its own tokens';
  END IF;
+ IF EXISTS (SELECT 1 FROM api_rate_limits WHERE token_hash=repeat('a',64))
+    OR NOT EXISTS (SELECT 1 FROM api_rate_limits WHERE token_hash=repeat('b',64)) THEN
+   RAISE EXCEPTION 'tenant beta API rate-limit RLS failed';
+ END IF;
  BEGIN
    INSERT INTO engineering_tasks (id,tenant_id,project_id,idempotency_key,title,objective,created_by)
    VALUES ('cccccccc-1111-4111-8111-cccccccccccc','tenant-beta','rls-alpha-project','forged','Forged','Cross tenant','test');
@@ -390,6 +402,9 @@ BEGIN
  IF EXISTS (SELECT 1 FROM tenant_tokens) OR EXISTS (SELECT 1 FROM project_tokens) THEN
    RAISE EXCEPTION 'missing tenant context exposed token records';
  END IF;
+ IF EXISTS (SELECT 1 FROM api_rate_limits) THEN
+   RAISE EXCEPTION 'missing tenant context exposed API rate-limit records';
+ END IF;
  IF EXISTS (SELECT 1 FROM workspaces) THEN
    RAISE EXCEPTION 'missing tenant context exposed workspace rows';
  END IF;
@@ -400,6 +415,7 @@ COMMIT;
 RESET ROLE;
 DELETE FROM tenant_tokens WHERE id='77777777-7777-4777-8777-777777777777';
 DELETE FROM project_tokens WHERE id='88888888-8888-4888-8888-888888888888';
+DELETE FROM api_rate_limits WHERE token_hash IN (repeat('a',64),repeat('b',64));
 DELETE FROM audit_events WHERE id='44444444-4444-4444-8444-444444444444';
 DELETE FROM tenant_usage_events WHERE id='33333333-3333-4333-8333-333333333333';
 DELETE FROM engineering_worker_tokens WHERE id IN (
