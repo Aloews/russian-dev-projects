@@ -174,7 +174,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"id":"smoke-project","name":"Smoke project","allowed_capabilities":["ai.chat"],"allowed_provider_ids":[]}' >/dev/null
 
-          docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+          docker run --rm -i --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
             psql -h 127.0.0.1 -U ush -d ush_test -v ON_ERROR_STOP=1 <<'SQL'
           INSERT INTO tenants (id,slug,name) VALUES ('tenant-beta','tenant-beta','Tenant Beta');
           INSERT INTO workspaces (tenant_id,id,slug,name) VALUES ('tenant-beta','default','default','Default workspace');
