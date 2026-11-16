@@ -168,6 +168,6 @@ jobs:
               f.write("\n".join(f"- {x}" for x in summary))
               f.write("\n\nThis tests Starimg directly, not the Universal Hub Rust provider adapter or its engineering-task API.\n")
 
-          if not any(item[2] for item in results):
-              raise SystemExit("No Starimg coding protocol passed its forced tool-call probe.")
+          if not all(item[2] for item in results):
+              raise SystemExit("At least one Starimg coding protocol failed its exact tool-call probe.")
           PY
