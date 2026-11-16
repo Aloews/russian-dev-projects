@@ -32,7 +32,7 @@ The same Starimg key is used with two different API protocols:
 | Codex CLI | OpenAI Responses | https://ai.starimg.ru/v1 | POST /v1/responses |
 | Claude Code CLI | Anthropic Messages | https://ai.starimg.ru | POST /v1/messages |
 
-Before either CLI is started, the workflow sends a minimal forced tool-call request through each protocol. A models-list response alone is not considered proof of coding-agent compatibility. If either tool-call probe fails, the run stops before editing code and retains the provider error category without exposing the key.
+Before either CLI is started, the workflow sends a minimal tool-call request using Anthropic `tool_choice: auto` through each protocol. A models-list response alone is not considered proof of coding-agent compatibility. If either tool-call probe fails, the run stops before editing code and retains the provider error category without exposing the key.
 
 Codex uses a named Starimg provider, wire_api = responses, and the STARIMG_API_KEY environment key. Claude Code receives ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY and the discovered model ID. The base URLs deliberately differ: Claude Code appends its Messages path; Codex uses the OpenAI Responses path.
 
