@@ -336,12 +336,14 @@ jobs:
             -d '{"worker_id":"implementer-smoke","lease_seconds":120}')
           assigned_workspace_id=$(printf '%s' "$assigned_workspace" | jq -r '.workspace.id')
           assigned_workspace_lease=$(printf '%s' "$assigned_workspace" | jq -r '.lease_token')
+          assigned_workspace_base_sha=$(printf '%s' "$assigned_workspace" | jq -r '.workspace.base_sha')
           echo "::add-mask::$assigned_workspace_lease"
           assignment_response=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/workspace-assignment" \
             -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
             -d "$(jq -nc --arg worker_id "implementer-smoke" --arg task_lease_token "$task_lease" \
               --arg workspace_id "$assigned_workspace_id" --arg workspace_lease_token "$assigned_workspace_lease" \
-              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"implementer",writer_scope:["universal-service-hub/src/","universal-service-hub/rust-migrations/"],base_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}')")
+              --arg base_sha "$assigned_workspace_base_sha" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"implementer",writer_scope:["universal-service-hub/src/","universal-service-hub/rust-migrations/"],base_sha:$base_sha}')")
           printf '%s' "$assignment_response" | jq -e '.assignment_id != null and (.writer_scope | length == 2)' >/dev/null
           curl -fsS -X DELETE "http://127.0.0.1:8000/v1/tasks/$task_id/workspace-assignment" \
             -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
