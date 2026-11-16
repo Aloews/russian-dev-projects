@@ -918,9 +918,11 @@ async fn delete_project(State(state): State<AppState>, headers: HeaderMap, Path(
 }
 
 async fn list_project_tokens(State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>) -> ApiResult<Json<Value>> {
-    require_project_owner_or_admin(&state, &headers, &project_id).await?;
+    let principal=require_project_owner_or_admin(&state, &headers, &project_id).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let rows = sqlx::query("SELECT id,project_id,name,role,created_at,last_used_at,revoked_at FROM project_tokens WHERE project_id=$1 ORDER BY created_at DESC")
-        .bind(&project_id).fetch_all(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_list_failed"))?;
+        .bind(&project_id).fetch_all(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_list_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let values: Vec<Value> = rows.into_iter().map(|r| json!({
         "id":r.get::<String,_>("id"),"project_id":r.get::<String,_>("project_id"),
         "name":r.get::<String,_>("name"),"role":r.get::<String,_>("role"),
@@ -961,9 +963,11 @@ async fn create_project_token(State(state): State<AppState>, headers: HeaderMap,
 
 async fn revoke_project_token(State(state): State<AppState>, headers: HeaderMap, Path((project_id, token_id)): Path<(String,String)>) -> ApiResult<StatusCode> {
     let principal = require_project_owner_or_admin(&state, &headers, &project_id).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let result = sqlx::query("UPDATE project_tokens SET revoked_at=NOW() WHERE id=$1 AND project_id=$2 AND revoked_at IS NULL")
-        .bind(&token_id).bind(&project_id).execute(&state.db).await
+        .bind(&token_id).bind(&project_id).execute(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_revoke_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     if result.rows_affected() == 0 { return Err(ApiError(StatusCode::NOT_FOUND, "project_token_not_found")); }
     audit(&state, &principal.actor, "project.token.revoke", "project", &project_id, json!({"token_id":token_id})).await;
     Ok(StatusCode::NO_CONTENT)
@@ -1102,9 +1106,11 @@ async fn revoke_tenant_token(
     State(state): State<AppState>, headers: HeaderMap, Path((tenant_id,token_id)): Path<(String,String)>
 ) -> ApiResult<StatusCode> {
     let principal = require_tenant_admin(&state, &headers, &tenant_id).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let result = sqlx::query("UPDATE tenant_tokens SET revoked_at=NOW() WHERE id=$1 AND tenant_id=$2 AND revoked_at IS NULL")
-        .bind(&token_id).bind(&tenant_id).execute(&state.db).await
+        .bind(&token_id).bind(&tenant_id).execute(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "tenant_token_revoke_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     if result.rows_affected()==0 { return Err(ApiError(StatusCode::NOT_FOUND, "tenant_token_not_found")); }
     audit(&state, &principal.actor, "tenant.token.revoke", "tenant", &tenant_id, json!({"token_id":token_id})).await;
     Ok(StatusCode::NO_CONTENT)
