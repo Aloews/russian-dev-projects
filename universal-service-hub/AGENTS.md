@@ -85,7 +85,7 @@ Until the self-hosting acceptance gate is met, a bounded external bootstrap runn
 ### Provider diagnosis rules
 
 - The failure before PR #56 was a Hub workflow routing defect: a Fable/Claude model was selected for the OpenAI Responses endpoint, causing HTTP 400. PR #56 corrected model-family selection in the external CLI workflow; that change does not add Responses support to the Rust Hub API.
-- A direct Starimg `/v1/responses` or `/v1/messages` probe is not proof that the Rust Hub adapter works. Verify each adapter through the running Hub API with a forced tool-call request and inspect the normalized result.
+- A direct Starimg `/v1/responses` or `/v1/messages` probe is not proof that the Rust Hub adapter works. The Starimg Fable Messages route rejects forced `tool_choice: {type: tool, name: ...}` with HTTP 400; test Claude/Fable using `tool_choice: auto` and a prompt that explicitly requests the tool. Verify each adapter through the running Hub API with a forced tool-call request and inspect the normalized result.
 - Never label Starimg unavailable solely because the Hub's current `/chat/completions` adapter cannot use a Responses-only model. Diagnose endpoint/protocol/model/credential/quota independently.
 - Keep Starimg as the preferred cloud route when the exact model ID and protocol pass live probes. Use the local Qwen runner only as a separately identified, bounded fallback after its sandbox and quality gates pass. No silent provider switching.
 
