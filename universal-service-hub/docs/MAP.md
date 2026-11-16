@@ -447,20 +447,23 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
 - Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
 
-## Durable engineering task dispatcher — bootstrap increment
+## Durable engineering task dispatcher and multi-tenant foundation
 
-Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63). This branch introduces the first persisted task-control slice; it is not yet a complete autonomous executor or self-hosting system.
+Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63). PR #64 contains the first durable task-control slice and the first tenant-owned schema foundation. This is not yet a complete autonomous executor, full tenant authorization layer or self-hosting system.
 
-### Implemented in this increment
-- PostgreSQL schema for project-scoped engineering tasks, idempotency keys, task events and checkpoint metadata.
-- Explicit task lifecycle enum and transition policy with tests for the happy path, illegal shortcuts, terminal states and recovery.
-- Authenticated project-scoped task intake and listing endpoints.
-- Append-only comment/clarification/requirement events; incoming user context is stored as a task event and does not mutate unrelated task state.
-- Version-checked task transitions with explicit queue assignment.
-- PostgreSQL worker claims using FOR UPDATE SKIP LOCKED, bounded lease duration, random lease tokens stored only as SHA-256 hashes, heartbeat and checkpoint metadata endpoints.
-- Project-scoped operator checks and audit events for task creation, transition, claim and checkpoint.
+### Implemented in the candidate branch
 
-### API surface added
+- Tenant and workspace tables, tenant membership identities and revocable tenant service-token records.
+- Existing projects are backfilled into tenant `aloews` and workspace `default`.
+- Projects and project tokens carry tenant ownership; project creation compatibility trigger assigns the initial Aloews tenant when the bootstrap API omits explicit ownership.
+- Tenant-scoped provider connection references, resource-limit policies, budget policies and idempotent usage ledger schema. Credential values are not stored in these tables.
+- Task, event and checkpoint records carry tenant ownership. Database triggers derive ownership from the owning project/task rather than trusting request payloads.
+- Composite foreign keys prevent a task, event or checkpoint from pairing a tenant with another tenant's project/task.
+- Project-scoped PostgreSQL task intake/listing, append-only user context events, version-checked state transitions, worker claims, hashed leases, heartbeat, checkpoint metadata and lease-expiry recovery.
+- Migration version regression test and PostgreSQL tenant schema smoke test added to exact-head CI.
+
+### API surface currently implemented
+
 - POST/GET /v1/projects/{project_id}/tasks
 - POST /v1/projects/{project_id}/tasks/{task_id}/events
 - POST /v1/projects/{project_id}/tasks/{task_id}/transition
@@ -468,13 +471,27 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - POST /v1/tasks/{task_id}/heartbeat
 - POST /v1/tasks/{task_id}/checkpoints
 
-### Not implemented or not yet proven
-- Automatic lease expiry detection and bounded recovery/requeue are implemented; recovery worker execution still requires an external worker.
-- Isolated Git worktrees, path-scoped writer locks and candidate patch packaging.
-- Independent build/test/review workers and trusted evidence ingestion.
-- Budget reservations/enforcement, full DAG scheduling and cycle detection.
-- Full OpenAPI generation and project adapter conformance.
-- Hub API self-hosting acceptance and production deployment.
+### Explicit gaps — do not call this full multi-tenancy yet
 
-### Verification gate
-The branch must pass exact-head CI, Rust formatting/tests, migration smoke and container API integration tests before merge. A successful CI run alone does not establish external worker connectivity or self-hosting. Update this section only with exact commit SHA and run evidence after those checks execute.
+- Tenant membership and tenant service-token authentication/management endpoints are not wired into the Rust principal/authentication layer.
+- Existing project tokens remain project-scoped; platform admin remains global. Tenant-level user access and scoped support elevation are outstanding.
+- PostgreSQL RLS is not enabled. It must be introduced only with transaction-scoped context, pool-reuse tests and a non-bypass application DB role.
+- Tenant resource limits, budget policies, usage ledger and provider-connection records are schema only; runtime enforcement and billing attribution remain outstanding.
+- Worktree/shell/network isolation, per-tenant caches/artifacts/logs/storage, fair tenant scheduling, tenant export/deletion and penetration tests remain outstanding.
+- No public signup/onboarding, production deployment or self-hosting acceptance is enabled.
+
+### Next implementation order
+
+1. Wire tenant identity into `Principal`, token authentication and every project/task route; tenant context must come from verified stored credentials.
+2. Add tenant/workspace/project administration and membership/token lifecycle APIs with least-privilege RBAC.
+3. Add transaction-scoped tenant context and PostgreSQL RLS using a non-owner runtime database role; prove connection-pool isolation.
+4. Add tenant-scoped worker claims, quotas, budget reservations, usage metering and fair scheduling.
+5. Add isolated workspaces, artifact storage and provider-secret references with tenant boundaries.
+6. Add cross-tenant API/database/queue/cache/security tests, tenant export/deletion and support-access audit.
+7. Continue TASK-4–TASK-9 only on the tenant-aware control plane; no Hub self-hosting claim before the API-based recovery and publication acceptance passes.
+
+### Verification evidence
+
+- Previous migration-collision fix passed exact-head CI run [#43867509016](https://github.com/Aloews/russian-dev-projects/actions/runs/43867509016) on `39503e3f798c32d2dfb682cd151eb39522dca766`, including Rust format/lint/tests, Alembic/Python tests, Docker build, local Compose startup and container smoke.
+- The tenant schema, ownership triggers and new PostgreSQL isolation smoke are later changes and require a new exact-head CI run. The previous green run does not verify these changes.
+- PR #64 remains open and unmerged. Production deployment and external tenant onboarding remain disabled.
