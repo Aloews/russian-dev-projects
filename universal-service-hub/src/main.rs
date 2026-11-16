@@ -419,10 +419,10 @@ async fn task_project_scope(
     let Some(tenant_id) = principal.tenant_id.as_deref() else {
         return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_forbidden"));
     };
-    if !tenant_role_allowed {    let mut tx=begin_principal_transaction(state,principal).await?;
-
+    if !tenant_role_allowed {
         return Err(ApiError(StatusCode::FORBIDDEN, "tenant_role_forbidden"));
     }
+    let mut tx=begin_principal_transaction(state,principal).await?;
     let belongs_to_tenant = sqlx::query("SELECT id FROM projects WHERE id=$1 AND tenant_id=$2")
         .bind(project_id).bind(tenant_id).fetch_optional(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_check_failed"))?
