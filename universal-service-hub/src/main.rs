@@ -510,7 +510,7 @@ async fn create_engineering_task(
      .bind(body.priority).bind(&principal.actor).bind(&body.metadata).execute(&mut *tx).await
      .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_create_failed"))?;
     let created = inserted.rows_affected() == 1;
-    let row = sqlx::query("SELECT id,title,objective,dependencies,metadata,status,queue_name,priority,version,created_at FROM engineering_tasks WHERE project_id=$1 AND idempotency_key=$2")
+    let row = sqlx::query("SELECT id,title,objective,dependencies,metadata,candidate_sha,status,queue_name,priority,version,created_at FROM engineering_tasks WHERE project_id=$1 AND idempotency_key=$2")
         .bind(&project_id).bind(&body.idempotency_key).fetch_one(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_after_create_failed"))?;
     let task_id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
