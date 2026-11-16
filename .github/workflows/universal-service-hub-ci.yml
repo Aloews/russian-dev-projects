@@ -115,7 +115,8 @@ jobs:
         run: |
           set -eu
           trap 'docker compose --env-file .env.local -f compose.yml down -v >/dev/null 2>&1 || true' EXIT
-          PORT=18000 bash scripts/dev-up.sh
+          docker tag universal-service-hub:test universal-service-hub:local
+          USH_SKIP_BUILD=1 PORT=18000 bash scripts/dev-up.sh
           curl -fsS http://127.0.0.1:18000/healthz >/dev/null
           docker compose --env-file .env.local -f compose.yml ps
           docker compose --env-file .env.local -f compose.yml logs --no-color hub
