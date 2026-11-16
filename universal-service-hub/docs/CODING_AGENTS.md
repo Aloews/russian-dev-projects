@@ -51,7 +51,7 @@ The Starimg key is scoped to the model-probe and CLI steps. Codex is configured 
 
 ## Current limitations
 
-- The historical live run #43838020363 failed before PR #56 on the old cross-protocol model-selection bug. PR #56 corrected the external workflow. A fresh post-fix live Starimg probe has not yet been verified.
+- The historical live run #43838020363 failed before PR #56 on the old cross-protocol model-selection bug. PR #56 corrected the external workflow. Direct Starimg probes now pass on run [#43855223866](https://github.com/Aloews/russian-dev-projects/actions/runs/43855223866): Responses `gpt-5.6-luna` HTTP 200 with `function_call`, and Messages `claude-fable-5-2` HTTP 200 with `tool_use` using `tool_choice: auto`. Full CLI coding execution and quality are still not verified.
 - Codex and Claude Code model IDs, quotas and billing multipliers are account-dependent. The workflow discovers IDs but does not assume the account's remaining balance or spending limit.
 - A green provider probe proves only the minimal protocol/tool-call contract. It does not prove long-context reliability, full coding quality, provider uptime or successful completion of a product task.
 - GitHub Actions CI and independent review remain mandatory. No workflow run or generated patch is considered a finished Hub release by itself.
@@ -69,7 +69,7 @@ Codex CLI also discovers applicable AGENTS.md files by directory. Claude Code su
 
 ## Provider routing status
 
-PR #56 corrected the workflow's model-family selection so Codex/OpenAI models use Responses and Claude Code/Anthropic models use Messages. Exact-head CI passed on the PR commit before merge. The merge is recorded in the project map. A fresh live Starimg tool-call probe after that correction is still required before claiming provider compatibility is restored.
+PR #56 corrected the workflow's model-family selection so Codex/OpenAI models use Responses and Claude Code/Anthropic models use Messages. Exact-head CI passed on the PR commit before merge. The merge is recorded in the project map. Direct Starimg tool-call probes now pass on run #43855223866; full Codex/Claude CLI execution and the Rust Hub adapter remain separate, unverified gates.
 
 
 ## Self-hosting status and transition
