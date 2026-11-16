@@ -733,14 +733,14 @@ async fn heartbeat_engineering_task(
     let row = sqlx::query("UPDATE engineering_tasks SET lease_expires_at=NOW()+INTERVAL '120 seconds',updated_at=NOW(),version=version+1 WHERE id=$1 AND lease_token_hash=$2 AND worker_id=$3 AND lease_expires_at>NOW() AND project_id=$4 AND tenant_id=$5 RETURNING project_id,lease_expires_at,lease_generation")
         .bind(&task_id).bind(hash).bind(&body.worker_id).bind(project_id).bind(tenant_id)
         .fetch_optional(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_heartbeat_failed"))?;
-    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let Some(row) = row else { return Err(ApiError(StatusCode::CONFLICT, "task_lease_expired_or_invalid")); };
     let task_expires:DateTime<Utc>=row.try_get("lease_expires_at")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_heartbeat_failed"))?;
     sqlx::query("UPDATE engineering_task_path_locks l SET lease_expires_at=LEAST($1,w.lease_expires_at) FROM engineering_workspaces w WHERE l.tenant_id=$2 AND l.project_id=$3 AND l.task_id=$4 AND l.workspace_id=w.id AND w.state='leased' AND w.lease_expires_at>NOW()")
         .bind(task_expires).bind(tenant_id).bind(project_id).bind(&task_id)
-        .execute(&state.db).await
+        .execute(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_path_lock_heartbeat_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     Ok(Json(json!({"task_id":task_id,"lease_generation":row.try_get::<i64,_>("lease_generation").unwrap_or(0),"lease_expires_at":Some(task_expires)})))
 }
 
@@ -1417,7 +1417,6 @@ async fn heartbeat_engineering_workspace(
     let row=sqlx::query("UPDATE engineering_workspaces SET lease_expires_at=NOW()+INTERVAL '120 seconds',last_heartbeat_at=NOW(),updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() RETURNING lease_expires_at")
         .bind(&workspace_id).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(hash)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_heartbeat_failed"))?;
-    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let Some(row)=row else{return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));};
     let workspace_expires:DateTime<Utc>=row.try_get("lease_expires_at")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_heartbeat_failed"))?;
