@@ -18,6 +18,7 @@ The Hub is a separate project adapter inside this monorepo, not permission to op
   - `universal-service-hub/rust-migrations/`
   - `universal-service-hub/tests/`
   - `universal-service-hub/docs/`
+  - `universal-service-hub/scripts/test_tenant_schema.sh` (the only writable script; do not broaden to other scripts)
   - `universal-service-hub/Cargo.toml`
   - `universal-service-hub/Dockerfile`
   - `universal-service-hub/README.md`
