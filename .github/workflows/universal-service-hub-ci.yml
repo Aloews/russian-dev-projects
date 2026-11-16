@@ -200,9 +200,18 @@ jobs:
           tenant_alpha_token=$(printf '%s' "$tenant_alpha_response" | jq -r '.token')
           echo "::add-mask::$tenant_alpha_token"
 
-          tenant_beta_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tenants/tenant-beta/tokens \
+          app_visible_tenant=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush_app -d ush_test -Atc "SELECT status FROM tenants WHERE id='tenant-beta'") 
+          echo "Runtime DB role visibility for tenant-beta: ${app_visible_tenant:-<not-visible>}"
+          test "$app_visible_tenant" = "active"
+
+          tenant_beta_http=$(curl -sS -o /tmp/tenant-beta-token-response.json -w "%{http_code}" -X POST http://127.0.0.1:8000/v1/tenants/tenant-beta/tokens \
             -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
             -d '{"name":"beta-owner","role":"tenant_owner"}')
+          echo "Tenant token endpoint HTTP status: $tenant_beta_http"
+          cat /tmp/tenant-beta-token-response.json
+          test "$tenant_beta_http" = "200"
+          tenant_beta_response=$(cat /tmp/tenant-beta-token-response.json)
           tenant_beta_token=$(printf '%s' "$tenant_beta_response" | jq -r '.token')
           echo "::add-mask::$tenant_beta_token"
 
