@@ -219,7 +219,7 @@ jobs:
           messages_body = {
               "model": claude_model,
               "max_tokens": 64,
-              "messages": [{"role": "user", "content": "Call ping with value CLAUDE_TOOL_OK."}],
+              "messages": [{"role": "user", "content": "You must call the ping tool exactly once with value CLAUDE_TOOL_OK. Do not answer in text."}],
               "tools": [{
                   "name": "ping",
                   "description": "Compatibility probe.",
@@ -230,7 +230,7 @@ jobs:
                       "additionalProperties": False
                   }
               }],
-              "tool_choice": {"type": "tool", "name": "ping"}
+              "tool_choice": {"type": "auto"}
           }
           _, message_result = request(origin + "/v1/messages", messages_body, claude_headers)
           blocks = message_result.get("content") or []
