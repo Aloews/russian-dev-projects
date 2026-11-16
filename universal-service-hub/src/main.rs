@@ -1438,6 +1438,130 @@ fn workspace_paths_overlap(left: &str, right: &str) -> bool {
 }
 
 
+#[derive(Deserialize)]
+struct TaskPathLocksBody {
+    worker_id: String,
+    task_lease_token: String,
+    workspace_id: String,
+    workspace_lease_token: String,
+    path_prefixes: Vec<String>,
+}
+
+async fn acquire_engineering_task_path_locks(
+    State(state): State<AppState>, headers: HeaderMap, Path((project_id,task_id)): Path<(String,String)>,
+    Json(body): Json<TaskPathLocksBody>
+) -> ApiResult<Json<Value>> {
+    let principal=require_worker_identity(&state,&headers).await?;
+    let worker_id=principal.worker_id.as_deref().unwrap_or("");
+    if principal.project_id.as_deref()!=Some(project_id.as_str()) || worker_id!=body.worker_id
+        || body.task_lease_token.len()<32 || body.workspace_lease_token.len()<32
+        || Uuid::parse_str(&body.workspace_id).is_err()
+        || body.path_prefixes.is_empty() || body.path_prefixes.len()>50
+        || body.path_prefixes.iter().any(|path|!safe_workspace_path_prefix(path)) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_task_path_locks"));
+    }
+    if principal.worker_role.as_deref()==Some("reviewer") {
+        return Err(ApiError(StatusCode::FORBIDDEN,"reviewer_workspace_is_read_only"));
+    }
+    for i in 0..body.path_prefixes.len() {
+        for j in (i+1)..body.path_prefixes.len() {
+            if workspace_paths_overlap(&body.path_prefixes[i],&body.path_prefixes[j]) {
+                return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"requested_path_locks_overlap"));
+            }
+        }
+    }
+    let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))")
+        .bind(tenant_id).bind(&project_id).execute(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_serialization_failed"))?;
+    let task_hash=hex::encode(Sha256::digest(body.task_lease_token.as_bytes()));
+    let workspace_hash=hex::encode(Sha256::digest(body.workspace_lease_token.as_bytes()));
+    let task=sqlx::query("SELECT queue_name,lease_expires_at FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+        .bind(&task_id).bind(tenant_id).bind(&project_id).bind(worker_id).bind(task_hash)
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_task_lease_check_failed"))?;
+    let Some(task)=task else{return Err(ApiError(StatusCode::CONFLICT,"task_lease_expired_or_invalid"));};
+    let task_queue:String=task.try_get("queue_name").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_task_lease_check_failed"))?;
+    if principal.queue_name.as_deref()!=Some(task_queue.as_str()) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"worker_queue_scope_forbidden"));
+    }
+    let task_expiry:DateTime<Utc>=task.try_get("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_task_lease_check_failed"))?;
+    let workspace=sqlx::query("SELECT lease_expires_at FROM engineering_workspaces WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+        .bind(&body.workspace_id).bind(tenant_id).bind(&project_id).bind(worker_id).bind(workspace_hash)
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_workspace_lease_check_failed"))?;
+    let Some(workspace)=workspace else{return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));};
+    let workspace_expiry:DateTime<Utc>=workspace.try_get("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_workspace_lease_check_failed"))?;
+    let assignment=sqlx::query("SELECT writer_scope FROM engineering_task_workspace_assignments WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND workspace_id=$4 AND released_at IS NULL FOR UPDATE")
+        .bind(tenant_id).bind(&project_id).bind(&task_id).bind(&body.workspace_id)
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_assignment_check_failed"))?;
+    let Some(assignment)=assignment else{return Err(ApiError(StatusCode::CONFLICT,"active_task_workspace_assignment_required"));};
+    let writer_scope:Value=assignment.try_get("writer_scope").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_assignment_check_failed"))?;
+    let allowed_scopes:Vec<String>=serde_json::from_value(writer_scope).unwrap_or_default();
+    if body.path_prefixes.iter().any(|path|!allowed_scopes.iter().any(|scope|{
+        let scope=scope.trim_end_matches('/');
+        path==scope || path.starts_with(&format!("{scope}/"))
+    })) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"path_lock_outside_assigned_writer_scope"));
+    }
+    let rows=sqlx::query("SELECT id,task_id,workspace_id,path_prefix,lock_owner FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND lease_expires_at>NOW()")
+        .bind(tenant_id).bind(&project_id).fetch_all(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_conflict_check_failed"))?;
+    let existing:Vec<(String,String,String,String,String)>=rows.into_iter().map(|row|{
+        Ok((row.try_get("id")?,row.try_get("task_id")?,row.try_get("workspace_id")?,row.try_get("path_prefix")?,row.try_get("lock_owner")?))
+    }).collect::<Result<_,sqlx::Error>>().map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_conflict_check_failed"))?;
+    let expires_at=std::cmp::min(task_expiry,workspace_expiry);
+    let mut ids=Vec::new();
+    for path in &body.path_prefixes {
+        let mut covered_lock:Option<String>=None;
+        for (id,existing_task,existing_workspace,existing_path,existing_owner) in &existing {
+            if !workspace_paths_overlap(path,existing_path) { continue; }
+            let own_lock=existing_task==&task_id && existing_workspace==&body.workspace_id && existing_owner==worker_id;
+            let covered_by_existing=path==existing_path || path.strip_prefix(existing_path).is_some_and(|suffix|suffix.starts_with('/'));
+            if own_lock && covered_by_existing {
+                covered_lock=Some(id.clone());
+            } else {
+                return Err(ApiError(StatusCode::CONFLICT,"path_scope_already_leased"));
+            }
+        }
+        if let Some(id)=covered_lock {
+            ids.push(id);
+        } else {
+            let id=Uuid::new_v4().to_string();
+            sqlx::query("INSERT INTO engineering_task_path_locks (id,project_id,task_id,workspace_id,path_prefix,lock_owner,lease_expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+                .bind(&id).bind(&project_id).bind(&task_id).bind(&body.workspace_id).bind(path).bind(worker_id).bind(expires_at)
+                .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_write_failed"))?;
+            ids.push(id);
+        }
+    }
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
+    audit(&state,&principal.actor,"engineering_task.path_lock","engineering_task",&task_id,json!({"workspace_id":body.workspace_id,"paths":body.path_prefixes})).await;
+    Ok(Json(json!({"task_id":task_id,"workspace_id":body.workspace_id,"lock_ids":ids,"lease_expires_at":expires_at})))
+}
+
+async fn release_engineering_task_path_locks(
+    State(state): State<AppState>, headers: HeaderMap, Path((project_id,task_id)): Path<(String,String)>,
+    Json(body): Json<TaskLeaseBody>
+) -> ApiResult<Json<Value>> {
+    let principal=require_worker_identity(&state,&headers).await?;
+    if principal.project_id.as_deref()!=Some(project_id.as_str())
+        || principal.worker_id.as_deref()!=Some(body.worker_id.as_str())
+        || body.lease_token.len()<32 {
+        return Err(ApiError(StatusCode::FORBIDDEN,"path_lock_worker_scope_forbidden"));
+    }
+    let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
+    let hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
+    let task=sqlx::query("SELECT id FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW()")
+        .bind(&task_id).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(hash)
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_task_lease_check_failed"))?;
+    if task.is_none(){return Err(ApiError(StatusCode::CONFLICT,"task_lease_expired_or_invalid"));}
+    let result=sqlx::query("DELETE FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND lock_owner=$4")
+        .bind(tenant_id).bind(&project_id).bind(&task_id).bind(&body.worker_id).execute(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_release_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
+    Ok(Json(json!({"task_id":task_id,"released":result.rows_affected()})))
+}
+
 async fn record_engineering_task_attempt(
     State(state): State<AppState>, headers: HeaderMap, Path(task_id): Path<String>,
     Json(body): Json<TaskAttemptBody>
@@ -2455,6 +2579,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/tasks/{task_id}/heartbeat", post(heartbeat_engineering_task))
         .route("/v1/tasks/{task_id}/checkpoints", post(create_engineering_checkpoint))
         .route("/v1/tasks/{task_id}/workspace-assignment", post(assign_engineering_task_workspace).delete(release_engineering_task_workspace))
+        .route("/v1/projects/{project_id}/tasks/{task_id}/path-locks", post(acquire_engineering_task_path_locks).delete(release_engineering_task_path_locks))
         .route("/v1/tasks/{task_id}/attempts", post(record_engineering_task_attempt))
         .route("/v1/projects/{project_id}/tasks/{task_id}/attempts", get(list_engineering_task_attempts))
         .route("/v1/projects/{project_id}", put(update_project).delete(delete_project))
