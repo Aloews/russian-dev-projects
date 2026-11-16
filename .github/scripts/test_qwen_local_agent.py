@@ -20,6 +20,14 @@ class QwenEditSafetyTests(unittest.TestCase):
     def test_path_traversal_is_rejected(self):
         self.assertFalse(agent.allowed("src/../.env", set()))
 
+    def test_configured_prefix_limits_local_agent_to_one_project(self):
+        from unittest.mock import patch
+        with patch.dict("os.environ", {"ALLOWED_PREFIXES": "universal-service-hub/src;universal-service-hub/tests"}):
+            self.assertTrue(agent.allowed("universal-service-hub/src/main.rs", set()))
+            self.assertTrue(agent.allowed("universal-service-hub/tests/agent.rs", set()))
+            self.assertFalse(agent.allowed("sherlock-scholes/src/main.ts", set()))
+            self.assertFalse(agent.allowed(".github/workflows/release.yml", set()))
+
     def test_credentials_and_workflows_are_rejected(self):
         self.assertFalse(agent.allowed(".github/workflows/release.yml", set()))
         self.assertFalse(agent.allowed("src/credentials.py", set()))
