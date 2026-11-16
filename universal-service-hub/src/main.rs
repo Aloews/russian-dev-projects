@@ -187,19 +187,32 @@ fn bearer(headers: &HeaderMap) -> ApiResult<&str> {
 }
 
 async fn prune_rate_limit_rows(db: &PgPool) -> Result<u64, sqlx::Error> {
+    let mut tx=db.begin().await?;
+    sqlx::query("SELECT set_config('app.is_admin','true',true),set_config('app.tenant_id','',true)")
+        .execute(&mut *tx).await?;
     let result = sqlx::query(
         "DELETE FROM api_rate_limits WHERE updated_at < NOW() - INTERVAL '24 hours'"
-    ).execute(db).await?;
+    ).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(result.rows_affected())
 }
 
-async fn enforce_rate_limit(state: &AppState, token_hash: &str) -> ApiResult<()> {
+async fn enforce_rate_limit(
+    state: &AppState, token_hash: &str, tenant_id: Option<&str>, admin: bool
+) -> ApiResult<()> {
+    let principal=Principal {
+        actor:"rate-limit".into(),role:if admin {"admin"} else {"tenant_service"}.into(),
+        tenant_id:tenant_id.map(str::to_owned),project_id:None,worker_id:None,
+        worker_role:None,queue_name:None,admin
+    };
+    let mut tx=begin_principal_transaction(state,&principal).await?;
     let row = sqlx::query(
-        "INSERT INTO api_rate_limits (token_hash, window_started_at, request_count, updated_at) VALUES ($1, date_trunc('minute', NOW()), 1, NOW()) ON CONFLICT (token_hash) DO UPDATE SET request_count = CASE WHEN api_rate_limits.window_started_at < date_trunc('minute', NOW()) THEN 1 ELSE api_rate_limits.request_count + 1 END, window_started_at = CASE WHEN api_rate_limits.window_started_at < date_trunc('minute', NOW()) THEN date_trunc('minute', NOW()) ELSE api_rate_limits.window_started_at END, updated_at = NOW() RETURNING request_count"
-    ).bind(token_hash).fetch_one(&state.db).await
+        "INSERT INTO api_rate_limits (token_hash,tenant_id,window_started_at,request_count,updated_at) VALUES ($1,$2,date_trunc('minute',NOW()),1,NOW()) ON CONFLICT (token_hash) DO UPDATE SET tenant_id=EXCLUDED.tenant_id,request_count=CASE WHEN api_rate_limits.window_started_at<date_trunc('minute',NOW()) THEN 1 ELSE api_rate_limits.request_count+1 END,window_started_at=CASE WHEN api_rate_limits.window_started_at<date_trunc('minute',NOW()) THEN date_trunc('minute',NOW()) ELSE api_rate_limits.window_started_at END,updated_at=NOW() RETURNING request_count"
+    ).bind(token_hash).bind(tenant_id).fetch_one(&mut *tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "rate_limit_store_error"))?;
     let count: i32 = row.try_get("request_count")
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "rate_limit_store_error"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     if i64::from(count) > state.rate_limit_per_minute {
         return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "rate_limit_exceeded"));
     }
@@ -210,7 +223,7 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
     let token = bearer(headers)?;
     let digest = hex::encode(Sha256::digest(token.as_bytes()));
     if token.as_bytes().ct_eq(state.admin_token.as_bytes()).into() {
-        enforce_rate_limit(state, &digest).await?;
+        enforce_rate_limit(state, &digest, None, true).await?;
         return Ok(Principal {
             actor: "service-token".into(), role: "admin".into(), tenant_id: None,
             project_id: None, worker_id: None, worker_role: None, queue_name: None, admin: true
@@ -223,7 +236,7 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
     ).bind(&digest).fetch_optional(&mut *worker_auth_tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     if let Some(row) = worker_row {
-        enforce_rate_limit(state, &digest).await?;
+        enforce_rate_limit(state, &digest, Some(&tenant_id), false).await?;
         let id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let tenant_id: String = row.try_get("tenant_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let project_id: String = row.try_get("project_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
