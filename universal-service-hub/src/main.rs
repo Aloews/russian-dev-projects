@@ -760,9 +760,12 @@ async fn create_engineering_checkpoint(
 
 
 async fn recover_expired_task_leases(db: &PgPool) -> Result<u64, sqlx::Error> {
+    let mut tx=db.begin().await?;
+    sqlx::query("SELECT set_config('app.is_admin','true',true),set_config('app.tenant_id','',true)")
+        .execute(&mut *tx).await?;
     let rows = sqlx::query(
-        "UPDATE engineering_tasks SET status=CASE WHEN attempt_count>=max_attempts THEN 'failed' ELSE 'recovery' END, queue_name='recovery', worker_id=NULL, lease_token_hash=NULL, lease_expires_at=NULL, last_error_code='worker_lease_expired', version=version+1, updated_at=NOW() WHERE lease_expires_at IS NOT NULL AND lease_expires_at<NOW() AND status IN ('in_progress','building','testing','review') RETURNING id,project_id,status,attempt_count"
-    ).fetch_all(db).await?;
+        "UPDATE engineering_tasks SET status=CASE WHEN attempt_count>=max_attempts THEN 'failed' ELSE 'recovery' END, queue_name='recovery', worker_id=NULL, lease_token_hash=NULL, lease_expires_at=NULL, last_error_code='worker_lease_expired', claimed_at=NULL, available_at=NOW(), version=version+1, updated_at=NOW() WHERE lease_expires_at IS NOT NULL AND lease_expires_at<NOW() AND status IN ('in_progress','building','testing','review') RETURNING id,project_id,status,attempt_count"
+    ).fetch_all(&mut *tx).await?;
     for row in &rows {
         let id: String = row.try_get("id")?;
         let project_id: String = row.try_get("project_id")?;
@@ -771,8 +774,36 @@ async fn recover_expired_task_leases(db: &PgPool) -> Result<u64, sqlx::Error> {
         sqlx::query("INSERT INTO engineering_task_events (id,task_id,project_id,actor,event_type,payload) VALUES ($1,$2,$3,'system:lease-reaper','task.lease_expired',$4)")
             .bind(Uuid::new_v4().to_string()).bind(&id).bind(&project_id)
             .bind(json!({"status":status,"attempt_count":attempts}))
-            .execute(db).await?;
+            .execute(&mut *tx).await?;
     }
+    tx.commit().await?;
+    Ok(rows.len() as u64)
+}
+
+async fn recover_expired_workspace_leases(db: &PgPool) -> Result<u64, sqlx::Error> {
+    let mut tx=db.begin().await?;
+    sqlx::query("SELECT set_config('app.is_admin','true',true),set_config('app.tenant_id','',true)")
+        .execute(&mut *tx).await?;
+    let rows=sqlx::query(
+        "UPDATE engineering_workspaces SET state='failed',lease_owner=NULL,lease_token_hash=NULL,lease_expires_at=NULL,last_heartbeat_at=NOW(),metadata=metadata||jsonb_build_object('lease_expired_at',NOW()),updated_at=NOW() WHERE state='leased' AND lease_expires_at<NOW() RETURNING id,tenant_id,project_id"
+    ).fetch_all(&mut *tx).await?;
+    for row in &rows {
+        let workspace_id:String=row.try_get("id")?;
+        let tenant_id:String=row.try_get("tenant_id")?;
+        let project_id:String=row.try_get("project_id")?;
+        let task_rows=sqlx::query("UPDATE engineering_task_workspace_assignments SET released_at=NOW() WHERE tenant_id=$1 AND project_id=$2 AND workspace_id=$3 AND released_at IS NULL RETURNING task_id")
+            .bind(&tenant_id).bind(&project_id).bind(&workspace_id).fetch_all(&mut *tx).await?;
+        sqlx::query("DELETE FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND workspace_id=$3")
+            .bind(&tenant_id).bind(&project_id).bind(&workspace_id).execute(&mut *tx).await?;
+        for task_row in task_rows {
+            let task_id:String=task_row.try_get("task_id")?;
+            sqlx::query("INSERT INTO engineering_task_events (id,task_id,project_id,actor,event_type,payload) VALUES ($1,$2,$3,'system:workspace-reaper','workspace.lease_expired',$4)")
+                .bind(Uuid::new_v4().to_string()).bind(&task_id).bind(&project_id)
+                .bind(json!({"workspace_id":workspace_id}))
+                .execute(&mut *tx).await?;
+        }
+    }
+    tx.commit().await?;
     Ok(rows.len() as u64)
 }
 
