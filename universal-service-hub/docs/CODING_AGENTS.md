@@ -55,3 +55,18 @@ The Starimg key is scoped to the model-probe and CLI steps. Codex is configured 
 - Codex and Claude Code model IDs, quotas and billing multipliers are account-dependent. The workflow discovers IDs but does not assume the account's remaining balance or spending limit.
 - A green provider probe proves only the minimal protocol/tool-call contract. It does not prove long-context reliability, full coding quality, provider uptime or successful completion of a product task.
 - GitHub Actions CI and independent review remain mandatory. No workflow run or generated patch is considered a finished Hub release by itself.
+
+
+## Instruction loading and precedence
+
+The Hub workflow explicitly loads these instructions in planning, implementation and independent review:
+1. Repository-root `AGENTS.md`.
+2. `.github/AGENTS.md` for automation and credential boundaries.
+3. `universal-service-hub/AGENTS.md` for Hub-specific engineering rules.
+4. `universal-service-hub/docs/MAP.md` and task-relevant architecture/security/operations docs.
+
+Codex CLI also discovers applicable AGENTS.md files by directory. Claude Code supports AGENTS.md in supported versions/configurations, but the workflow reads the files explicitly so behavior does not depend on implicit loading. More-specific instructions may add constraints but cannot weaken parent security or evidence rules.
+
+## Provider routing status
+
+PR #56 corrected the workflow's model-family selection so Codex/OpenAI models use Responses and Claude Code/Anthropic models use Messages. Exact-head CI passed on the PR commit before merge. The merge is recorded in the project map. A fresh live Starimg tool-call probe after that correction is still required before claiming provider compatibility is restored.

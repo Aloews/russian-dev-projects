@@ -405,3 +405,33 @@ The objective is delivery of the intended, usable product. An agent, model, prov
 - Do not mark a task complete because an agent timed out, changed models, opened a PR or reported success. Completion requires the product-level definition of done above and direct evidence from the running candidate.
 - If no compatible executor can make measurable progress within the authorized budget, record the concrete technical or authorization blocker and the evidence needed to resume. Do not loop indefinitely or manufacture progress.
 
+
+
+## Cross-project agent governance and product lifecycle — 2026-11-16
+
+**Status: IN PROGRESS.** The shared standards are being added in a dedicated documentation PR; they are not active repository policy until that PR is merged and its checks pass.
+
+- Repository-wide agent contract: `/AGENTS.md`.
+- GitHub automation and credential boundaries: `.github/AGENTS.md`.
+- Product Factory orchestration contract: `.github/product-factory/AGENTS.md`.
+- Reusable target-product instruction template: `.github/product-factory/templates/AGENTS.md`.
+- Product development lifecycle and stage gates: `.github/product-factory/PRODUCT_DEVELOPMENT_LIFECYCLE.md`.
+- CI structural validation: `.github/scripts/validate_agent_docs.py`; the CI workflow checks required sections and verifies that the shared contract/template are injected into hosted and local agent runtimes.
+- Universal Service Hub local agent contract: `universal-service-hub/AGENTS.md`.
+- Product Factory runtime description: this map's [Product Factory architecture](./PRODUCT_FACTORY.md).
+
+The intended hierarchy is repository-wide policy → automation-specific policy → Product Factory policy → target product's generated local `AGENTS.md` → more specific nested instructions. Local instructions may add constraints but may not weaken parent security, privacy, evidence or release rules.
+
+### API and knowledge management
+
+- OpenAPI is the machine-readable source contract for implemented HTTP APIs; Swagger UI and generated clients must derive from the same specification.
+- Do not publish specifications for routes or behavior that do not exist.
+- GitHub project documentation remains canonical for this repository. Confluence is not currently configured as a synchronized source of truth.
+- Product repositories should keep project maps, ADRs, API specifications, runbooks and local agent instructions version-controlled and linked from their map.
+
+### Provider routing correction
+
+- PR #56 was merged as `b0157e6bbdec6f64a2c2c24e11e70969e1aeb1aa`.
+- CI runs `43838620761` and `43838636167` both passed on exact PR head `25255dc3cc8ff875eebbc14efa89501852bac2d4`.
+- The change separates Codex/OpenAI Responses from Claude Code/Anthropic Messages, fixes bounded retry handling and retains bounded, redacted upstream error diagnostics.
+- **Live Starimg compatibility has not yet been re-proven after the fix.** The successful CI runs are not evidence that both live provider tool-call probes now pass.
