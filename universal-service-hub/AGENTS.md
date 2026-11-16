@@ -41,7 +41,11 @@ This directory contains the Universal Service Hub. Work autonomously within the 
 - Keep the two coding agents sequential; never let them write overlapping files concurrently.
 - Both agents may change only universal-service-hub/. They must not read or expose secrets, commit, push, create PRs, merge, deploy or mutate production data.
 - GitHub CI validates the exact PR head. A passing model probe is not proof that code is correct; a passing build is not proof of production readiness.
-- Do not use OpenRouter or local Qwen as the default writer for Hub development. They remain separate fallback/legacy routes until a deliberate, tested migration changes that policy.
+- Cloud Codex through Starimg remains the preferred writer/reviewer path when available. If Starimg preflight, CLI installation, Codex or Claude fails, the workflow may invoke the bounded local Ollama/Qwen fallback in the same runner workspace.
+- Local Qwen is a single local inference session with role-separated instructions, not four independent agents. It may edit only the explicitly allowlisted Hub source/test/docs paths; it cannot edit workflows, dependency manifests, credentials, deployment files or database migrations.
+- The local model receives no cloud-provider secrets. It must preserve the existing candidate diff, produce a review artifact, pass path/secret/diff checks, and then pass the exact-head repository CI. A Qwen self-review is not independent QA; deterministic tests and the CI gate remain mandatory.
+- The workflow can target a self-hosted runner through the repository variable `USH_DEV_RUNNER_LABELS` (JSON array of runner labels). Without that variable it uses `ubuntu-latest`; this default is local inference on an ephemeral GitHub runner, not proof that a dedicated owner-operated GPU host is connected.
+- Never silently bypass a failed quality gate or automatically merge/deploy a local-model candidate.
 
 
 ## Adaptive multi-agent execution
