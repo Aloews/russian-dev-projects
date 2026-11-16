@@ -157,6 +157,10 @@ jobs:
             -H "Authorization: Bearer $USH_API_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{"id":"smoke-project","name":"Smoke project","allowed_capabilities":["ai.chat"],"allowed_provider_ids":[]}' >/dev/null
+
+          docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -v ON_ERROR_STOP=1 -c \
+            "INSERT INTO tenants (id,slug,name) VALUES ('tenant-beta','tenant-beta','Tenant Beta'); INSERT INTO workspaces (tenant_id,id,slug,name) VALUES ('tenant-beta','default','default','Default workspace'); INSERT INTO projects (id,tenant_id,workspace_id,name,allowed_capabilities,allowed_provider_ids) VALUES ('beta-project','tenant-beta','default','Beta project','[\\"ai.chat\\"]'::jsonb,'[]'::jsonb);"
           curl -fsS -X PUT http://127.0.0.1:8000/v1/providers/smoke-provider \
             -H "Authorization: Bearer $USH_API_TOKEN" \
             -H "Content-Type: application/json" \
@@ -169,6 +173,40 @@ jobs:
           owner_token=$(printf '%s' "$owner_response" | jq -r '.token')
           owner_id=$(printf '%s' "$owner_response" | jq -r '.id')
           echo "::add-mask::$owner_token"
+
+          tenant_alpha_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tenants/aloews/tokens \
+            -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"alpha-owner","role":"tenant_owner"}')
+          tenant_alpha_token=$(printf '%s' "$tenant_alpha_response" | jq -r '.token')
+          echo "::add-mask::$tenant_alpha_token"
+
+          tenant_beta_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tenants/tenant-beta/tokens \
+            -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"beta-owner","role":"tenant_owner"}')
+          tenant_beta_token=$(printf '%s' "$tenant_beta_response" | jq -r '.token')
+          echo "::add-mask::$tenant_beta_token"
+
+          curl -fsS -H "Authorization: Bearer $tenant_alpha_token" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tasks | jq -e 'type == "array"' >/dev/null
+          curl -fsS -H "Authorization: Bearer $tenant_beta_token" \
+            http://127.0.0.1:8000/v1/projects/beta-project/tasks | jq -e 'type == "array"' >/dev/null
+
+          cross_tenant_read=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $tenant_alpha_token" \
+            http://127.0.0.1:8000/v1/projects/beta-project/tasks)
+          test "$cross_tenant_read" = "403"
+
+          cross_tenant_worker=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/projects/smoke-project/workers \
+            -H "Authorization: Bearer $tenant_beta_token" -H "Content-Type: application/json" \
+            -d '{"name":"wrong-tenant","worker_id":"wrong-tenant","worker_role":"tester"}')
+          test "$cross_tenant_worker" = "403"
+
+          beta_worker_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/beta-project/workers \
+            -H "Authorization: Bearer $tenant_beta_token" -H "Content-Type: application/json" \
+            -d '{"name":"beta reviewer","worker_id":"beta-reviewer","worker_role":"reviewer"}')
+          beta_worker_token=$(printf '%s' "$beta_worker_response" | jq -r '.token')
+          echo "::add-mask::$beta_worker_token"
 
           operator_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
             -H "Authorization: Bearer $owner_token" \
