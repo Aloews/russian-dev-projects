@@ -2193,6 +2193,11 @@ async fn main() -> anyhow::Result<()> {
                 Ok(_) => {}
                 Err(err) => error!(error = %err, "Engineering task lease recovery failed"),
             }
+            match recover_expired_workspace_leases(&recovery_db).await {
+                Ok(recovered) if recovered > 0 => info!(recovered, "Expired engineering workspace leases quarantined"),
+                Ok(_) => {}
+                Err(err) => error!(error = %err, "Engineering workspace lease recovery failed"),
+            }
         }
     });
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
