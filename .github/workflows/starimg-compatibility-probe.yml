@@ -109,10 +109,20 @@ jobs:
                   "tool_choice": {"type": "function", "name": "ping"}
               }
               status, data = request(base + "/v1/responses", body)
-              ok = status == 200 and any(
-                  isinstance(x, dict) and x.get("type") == "function_call" and x.get("name") == "ping"
-                  for x in data.get("output", [])
-              )
+              ok = False
+              if status == 200:
+                  for item in data.get("output", []):
+                      if not isinstance(item, dict) or item.get("type") != "function_call" or item.get("name") != "ping":
+                          continue
+                      arguments = item.get("arguments", {})
+                      if isinstance(arguments, str):
+                          try:
+                              arguments = json.loads(arguments)
+                          except json.JSONDecodeError:
+                              continue
+                      if isinstance(arguments, dict) and arguments.get("value") == "CODEX_TOOL_OK":
+                          ok = True
+                          break
               results.append(("OpenAI Responses", codex, ok, status, data))
           else:
               results.append(("OpenAI Responses", "no exact Codex/GPT model listed", False, 0, {}))
@@ -136,6 +146,7 @@ jobs:
               status, data = request(base + "/v1/messages", body, anthropic=True)
               ok = status == 200 and any(
                   isinstance(x, dict) and x.get("type") == "tool_use" and x.get("name") == "ping"
+                  and isinstance(x.get("input"), dict) and x["input"].get("value") == "CLAUDE_TOOL_OK"
                   for x in data.get("content", [])
               )
               results.append(("Anthropic Messages", claude, ok, status, data))
