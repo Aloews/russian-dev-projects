@@ -268,6 +268,12 @@ VALUES
 INSERT INTO tenant_resource_limits (tenant_id,max_active_tasks) VALUES ('tenant-beta',7);
 INSERT INTO tenant_budget_policies (tenant_id,currency,soft_limit_minor,hard_limit_minor)
 VALUES ('tenant-beta','USD',10000,20000);
+INSERT INTO tenant_provider_connections (id,tenant_id,provider_id,credential_reference,configuration)
+SELECT 'aaaa0000-2222-4222-8222-aaaaaaaaaaaa','aloews',id,'test://alpha-provider','{}'::jsonb
+FROM providers ORDER BY id LIMIT 1;
+INSERT INTO tenant_provider_connections (id,tenant_id,provider_id,credential_reference,configuration)
+SELECT 'bbbb0000-2222-4222-8222-bbbbbbbbbbbb','tenant-beta',id,'test://beta-provider','{}'::jsonb
+FROM providers ORDER BY id LIMIT 1;
 INSERT INTO engineering_worker_tokens
  (id,tenant_id,project_id,name,worker_id,worker_role,queue_name,token_hash)
 VALUES
@@ -340,6 +346,11 @@ BEGIN
     OR EXISTS (SELECT 1 FROM tenant_budget_policies WHERE tenant_id='tenant-beta') THEN
    RAISE EXCEPTION 'tenant alpha budget policy RLS failed';
  END IF;
+ IF EXISTS (SELECT 1 FROM providers)
+    AND ((SELECT COUNT(*) FROM tenant_provider_connections) <> 1
+      OR EXISTS (SELECT 1 FROM tenant_provider_connections WHERE tenant_id='tenant-beta')) THEN
+   RAISE EXCEPTION 'tenant alpha provider connection RLS failed';
+ END IF;
  IF EXISTS (SELECT 1 FROM workspaces WHERE tenant_id='tenant-beta' AND id='default') THEN
    RAISE EXCEPTION 'tenant alpha can read tenant beta workspace';
  END IF;
@@ -389,6 +400,11 @@ BEGIN
  IF (SELECT COUNT(*) FROM tenant_budget_policies) <> 1
     OR NOT EXISTS (SELECT 1 FROM tenant_budget_policies WHERE tenant_id='tenant-beta') THEN
    RAISE EXCEPTION 'tenant beta budget policy RLS failed';
+ END IF;
+ IF EXISTS (SELECT 1 FROM providers)
+    AND ((SELECT COUNT(*) FROM tenant_provider_connections) <> 1
+      OR NOT EXISTS (SELECT 1 FROM tenant_provider_connections WHERE tenant_id='tenant-beta')) THEN
+   RAISE EXCEPTION 'tenant beta provider connection RLS failed';
  END IF;
  IF NOT EXISTS (SELECT 1 FROM workspaces WHERE tenant_id='tenant-beta' AND id='default') THEN
    RAISE EXCEPTION 'tenant beta cannot read its own workspace';
@@ -453,6 +469,7 @@ RESET ROLE;
 DELETE FROM tenant_tokens WHERE id='77777777-7777-4777-8777-777777777777';
 DELETE FROM project_tokens WHERE id='88888888-8888-4888-8888-888888888888';
 DELETE FROM api_rate_limits WHERE token_hash IN (repeat('a',64),repeat('b',64));
+DELETE FROM tenant_provider_connections WHERE id IN ('aaaa0000-2222-4222-8222-aaaaaaaaaaaa','bbbb0000-2222-4222-8222-bbbbbbbbbbbb');
 DELETE FROM tenant_memberships WHERE id IN ('aaaa0000-1111-4111-8111-aaaaaaaaaaaa','bbbb0000-1111-4111-8111-bbbbbbbbbbbb');
 DELETE FROM tenant_resource_limits WHERE tenant_id='tenant-beta';
 DELETE FROM tenant_budget_policies WHERE tenant_id='tenant-beta';
