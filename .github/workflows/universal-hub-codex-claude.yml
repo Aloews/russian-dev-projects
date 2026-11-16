@@ -40,6 +40,8 @@ jobs:
       STARIMG_CODEX_MODEL: ${{ vars.STARIMG_CODEX_MODEL }}
       STARIMG_CLAUDE_MODEL: ${{ vars.STARIMG_CLAUDE_MODEL }}
       STARIMG_PLANNING_MODEL: ${{ vars.STARIMG_PLANNING_MODEL }}
+      STARIMG_FABLE_MODEL: ${{ vars.STARIMG_FABLE_MODEL }}
+      STARIMG_ASTRA_MODEL: ${{ vars.STARIMG_ASTRA_MODEL }}
       BASE_REF: ${{ inputs.base_ref || 'main' }}
       TASK_OBJECTIVE: "${{ inputs.objective || 'Complete the first genuinely usable Universal Hub control-center vertical slice. Inspect the existing Rust runtime, UI, auth, database, provider registry, migrations and tests before editing. Implement real AI-generated multi-step plans from user ideas using the existing authorized project/provider registry; validate structured model output, reject malformed plans safely, and never show a hardcoded or fabricated plan as generated. Persist ideas, plans, steps, attempts and outputs in PostgreSQL with project scoping, membership authorization, idempotency and audit-safe metadata. The browser journey must support create idea, preview the actual generated plan, approve only with a configured positive spend ceiling, start the approved work, and observe durable step states and results. If a durable executor exists, complete and test its real path; otherwise implement the smallest safe bounded executor compatible with current architecture and do not claim provider work is running until a real attempt is recorded. Never submit billable work without explicit per-job approval and spend ceiling; use mocked provider HTTP in tests. Add Rust unit/integration tests for success, malformed model output, provider errors, tenant isolation, duplicate requests, approval and budget rejection, plus an automated HTTP or browser end-to-end test for the full idea-to-result journey against PostgreSQL. Run formatting, lint, Rust tests, migration smoke and Docker/container smoke; fix all failures. Update docs/MAP.md and README with exact commit/test evidence and explicit blockers. Defer Music and Video workspaces to later isolated increments; do not add placeholders or imply they exist. No paid generation, production data changes, secret changes, deployment or resource provisioning. Prefer one complete tested vertical slice over broad scaffolding.' }}"
       BRANCH_NAME: agent/universal-hub-${{ github.run_id }}
@@ -134,15 +136,17 @@ jobs:
           explicit_codex = os.environ.get("STARIMG_CODEX_MODEL", "").strip()
           explicit_claude = os.environ.get("STARIMG_CLAUDE_MODEL", "").strip()
           explicit_planning = os.environ.get("STARIMG_PLANNING_MODEL", "").strip()
+          explicit_fable = os.environ.get("STARIMG_FABLE_MODEL", "").strip()
+          explicit_astra = os.environ.get("STARIMG_ASTRA_MODEL", "").strip()
           if explicit_codex and explicit_codex not in ids:
               raise SystemExit("STARIMG_CODEX_MODEL is not present in the live Starimg model catalogue.")
           if explicit_claude and explicit_claude not in ids:
               raise SystemExit("STARIMG_CLAUDE_MODEL is not present in the live Starimg model catalogue.")
-          if explicit_planning and explicit_planning not in ids:
-              raise SystemExit("STARIMG_PLANNING_MODEL is not present in the live Starimg model catalogue.")
-          if explicit_planning and "claude" not in explicit_planning.lower():
-              raise SystemExit("STARIMG_PLANNING_MODEL must identify a Claude model supported by the Anthropic Messages API.")
+          for variable, value in (("STARIMG_PLANNING_MODEL", explicit_planning), ("STARIMG_FABLE_MODEL", explicit_fable), ("STARIMG_ASTRA_MODEL", explicit_astra)):
+              if value and value not in ids:
+                  raise SystemExit(variable + " is not present in the live Starimg model catalogue.")
 
+          fable_candidates = [m for m in ids if re.search(r"fable.*5[._-]?2|5[._-]?2.*fable", m, re.I)]
           codex_candidates = [m for m in ids if re.search(r"codex", m, re.I)]
           if not codex_candidates:
               codex_candidates = [m for m in ids if re.match(r"gpt-", m, re.I)]
@@ -157,10 +161,11 @@ jobs:
           if not explicit_claude and not claude_candidates:
               raise SystemExit("No Claude model was found. Set STARIMG_CLAUDE_MODEL to an exact ID from Starimg.")
 
-          codex_model = explicit_codex or codex_candidates[0]
+          codex_model = explicit_codex or explicit_fable or (fable_candidates[0] if fable_candidates else codex_candidates[0])
           claude_model = explicit_claude or claude_candidates[0]
-          planner_candidates = [m for m in ids if re.search(r"claude.*opus|opus.*claude", m, re.I)]
-          planning_model = explicit_planning or (planner_candidates[0] if planner_candidates else claude_model)
+          astra_candidates = [m for m in ids if re.search(r"astra.*6[._-]?1|6[._-]?1.*astra", m, re.I)]
+          planner_candidates = astra_candidates or [m for m in ids if re.search(r"claude.*opus|opus.*claude", m, re.I)]
+          planning_model = explicit_planning or explicit_astra or (planner_candidates[0] if planner_candidates else claude_model)
 
           responses_body = {
               "model": codex_model,
@@ -211,6 +216,14 @@ jobs:
           if not any(block.get("type") == "tool_use" and block.get("name") == "ping" for block in blocks if isinstance(block, dict)):
               raise SystemExit("Starimg Messages API returned no tool_use for the Claude Code compatibility probe.")
 
+          if planning_model != claude_model:
+              planning_probe = dict(messages_body)
+              planning_probe["model"] = planning_model
+              _, planning_result = request(origin + "/v1/messages", planning_probe, claude_headers)
+              planning_blocks = planning_result.get("content") or []
+              if not any(block.get("type") == "tool_use" and block.get("name") == "ping" for block in planning_blocks if isinstance(block, dict)):
+                  raise SystemExit("Selected Astra/planning model failed the Anthropic Messages tool-call compatibility probe.")
+
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write("codex_model=" + codex_model + "\n")
               output.write("claude_model=" + claude_model + "\n")
@@ -220,6 +233,7 @@ jobs:
           print("Starimg verified: Responses API function calling and Anthropic Messages tool use both passed.")
           print("Selected Codex model: " + codex_model)
           print("Selected Claude Code model: " + claude_model)
+          print("Selected implementation model: " + codex_model)
           print("Selected planning model: " + planning_model)
           PY
 
