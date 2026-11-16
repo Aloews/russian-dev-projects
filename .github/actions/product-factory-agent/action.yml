@@ -67,6 +67,7 @@ runs:
         cp factory/.github/product-factory/agents/pf-*.md target/.claude/agents/
         cp factory/.github/product-factory/skills/reality-first-business/SKILL.md target/.claude/skills/reality-first-business/SKILL.md
         cp factory/.github/product-factory/AGENTS.md target/.claude/skills/product-factory-governance/SKILL.md
+        cp factory/.github/product-factory/templates/AGENTS.md target/.claude/skills/product-factory-governance/TARGET_AGENTS_TEMPLATE.md
 
     - name: Run primary agent and read-only specialists
       uses: anthropics/claude-code-base-action@4f75da3721f36973e9c08ca6eeadbd3c4648a56c
