@@ -462,7 +462,7 @@ The Rust Axum API in `src/main.rs` exposes these route families: `/healthz`, `/r
 | ID | Increment | Acceptance evidence | State |
 |---|---|---|---|
 | SELF-0 | Minimal runtime bootstrap: Rust service + PostgreSQL + authenticated health/readiness | clean Compose startup, SQLx migrations, 401 unauthenticated, authenticated route, exact-head CI | IN PROGRESS; PR #59 is open, latest exact-head CI must be rechecked |
-| SELF-1 | Provider protocols: OpenAI Responses and Anthropic Messages tool-use round-trips, exact model/provider IDs, normalized tool-call envelope | live forced-tool probes through the running Hub API, mocked contract/error/retry tests | NOT STARTED |
+| SELF-1 | Provider protocols: OpenAI Responses and Anthropic Messages tool-use round-trips, exact model/provider IDs, normalized tool-call envelope | live protocol tool-use probes through the running Hub API, mocked contract/error/retry tests | NOT STARTED |
 | SELF-2 | Durable engineering task API, project isolation, approval/budget/idempotency and state machine | PostgreSQL integration tests for create/approve/claim/complete/cancel/retry, duplicate and cross-project denial | NOT STARTED |
 | SELF-3 | Isolated workspace worker and typed tools | path/symlink/command/network/secret/CPU/memory/time/output/cancellation tests; no API-process shell | NOT STARTED |
 | SELF-4 | Candidate/evidence/review/publication pipeline | immutable base/candidate SHAs, artifact hashes, independent review, exact-SHA CI and separate publisher | NOT STARTED |
