@@ -337,14 +337,12 @@ async fn require_project_owner_or_admin(
         return Ok(principal);
     }
     let tenant_admin = ["tenant_owner", "tenant_admin"].contains(&principal.role.as_str());
-    if tenant_admin {
-        if let Some(tenant_id) = principal.tenant_id.as_deref() {
-            let owns_project = sqlx::query("SELECT id FROM projects WHERE id=$1 AND tenant_id=$2")
-                .bind(project_id).bind(tenant_id).fetch_optional(&state.db).await
-                .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_check_failed"))?
-                .is_some();
-            if owns_project { return Ok(principal); }
-        }
+    if tenant_admin && let Some(tenant_id) = principal.tenant_id.as_deref() {
+        let owns_project = sqlx::query("SELECT id FROM projects WHERE id=$1 AND tenant_id=$2")
+            .bind(project_id).bind(tenant_id).fetch_optional(&state.db).await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_check_failed"))?
+            .is_some();
+        if owns_project { return Ok(principal); }
     }
     Err(ApiError(StatusCode::FORBIDDEN, "project_owner_required"))
 }
