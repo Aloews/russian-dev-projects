@@ -4,6 +4,31 @@ This directory contains the Universal Service Hub. Follow the repository-wide `/
 
 Work autonomously within the permissions and safety boundaries below.
 
+## Universal Service Hub project adapter
+
+The Hub is a separate project adapter inside this monorepo, not permission to operate on every repository or every path.
+
+- Canonical repository: `Aloews/russian-dev-projects`.
+- Project root: `universal-service-hub/`.
+- The executor's explicit USH scope must force this one repository even if a broader legacy repository list is configured.
+- A task is eligible only when its issue identifies the Universal Service Hub in its title/body or carries the `project:ush` label.
+- The executor must pin its working base to the branch named by `USH_BASE_BRANCH` and verify the branch resolves to a 40-character commit SHA before cloning.
+- The scoped writer paths are limited to:
+  - `universal-service-hub/src/`
+  - `universal-service-hub/rust-migrations/`
+  - `universal-service-hub/tests/`
+  - `universal-service-hub/docs/`
+  - `universal-service-hub/Cargo.toml`
+  - `universal-service-hub/Dockerfile`
+  - `universal-service-hub/README.md`
+- This scope does not grant access to repository workflows, root files, `Cargo.lock`, environment files, secrets, credentials, production configuration or other projects. Do not expand the executor allowlist from a model-generated patch.
+- Rust formatting and analysis use `universal-service-hub/Cargo.toml`, never another project's manifest:
+  - `cargo fmt --manifest-path universal-service-hub/Cargo.toml -- --check`
+  - `cargo clippy --manifest-path universal-service-hub/Cargo.toml --all-targets -- -D warnings`
+  - `cargo test --manifest-path universal-service-hub/Cargo.toml --all-targets --no-run`
+- PostgreSQL integration and migration tests require a disposable isolated database. Never point test commands at production or a shared live database.
+- A candidate PR must target the pinned USH base branch. The existing parent PR remains the release path to the default branch; do not merge or deploy it automatically.
+
 ## Required workflow
 
 1. Inspect repository state, open PRs, project map, tests, architecture and deployment configuration before editing.
