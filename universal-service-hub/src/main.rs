@@ -985,9 +985,16 @@ async fn create_engineering_workspace(
     let valid_branch = |v: &str| !v.is_empty() && v.len()<=200 && !v.starts_with('/')
         && !v.split('/').any(|part| part==".." || part.is_empty())
         && v.chars().all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c));
+    let mut repository_parts=body.repository.split('/');
+    let repository_owner=repository_parts.next().unwrap_or("");
+    let repository_name=repository_parts.next().unwrap_or("");
+    let valid_repository=!repository_owner.is_empty() && !repository_name.is_empty()
+        && repository_parts.next().is_none()
+        && [repository_owner,repository_name].iter().all(|part|
+            part.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)));
     if body.workspace_key.trim().is_empty() || body.workspace_key.len()>160
         || !["railway","github_actions","local","other"].contains(&body.runtime_provider.as_str())
-        || !re.full_match(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", &body.repository)
+        || !valid_repository
         || !valid_branch(&body.base_branch) || !valid_sha
         || body.git_branch.as_ref().is_some_and(|v| !valid_branch(v))
         || body.git_worktree_path.as_ref().is_some_and(|v| v.is_empty() || v.len()>1000 || v.contains('\0'))
@@ -1033,18 +1040,23 @@ async fn list_engineering_workspaces(
 }
 
 #[derive(Deserialize)]
+struct WorkspaceLeaseRequest {
+    worker_id: String,
+    #[serde(default)]
+    lease_seconds: Option<i64>,
+}
+
+#[derive(Deserialize)]
 struct WorkspaceLeaseBody {
     worker_id: String,
     lease_token: String,
-    #[serde(default)]
-    lease_seconds: Option<i64>,
     #[serde(default)]
     head_sha: Option<String>,
 }
 
 async fn lease_next_engineering_workspace(
     State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>,
-    Json(body): Json<WorkspaceLeaseBody>
+    Json(body): Json<WorkspaceLeaseRequest>
 ) -> ApiResult<Json<Value>> {
     let principal=require_worker_identity(&state,&headers).await?;
     if principal.project_id.as_deref()!=Some(project_id.as_str())
