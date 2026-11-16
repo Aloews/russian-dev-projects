@@ -317,6 +317,9 @@ BEGIN
  IF EXISTS (SELECT 1 FROM tenants WHERE id='tenant-beta') THEN
    RAISE EXCEPTION 'tenant alpha can read another tenant record';
  END IF;
+ IF EXISTS (SELECT 1 FROM workspaces WHERE tenant_id='tenant-beta' AND id='default') THEN
+   RAISE EXCEPTION 'tenant alpha can read tenant beta workspace';
+ END IF;
  IF EXISTS (SELECT 1 FROM tenant_usage_events WHERE id='33333333-3333-4333-8333-333333333333')
     OR EXISTS (SELECT 1 FROM audit_events WHERE id='44444444-4444-4444-8444-444444444444') THEN
    RAISE EXCEPTION 'tenant alpha can read tenant beta usage or audit data';
@@ -347,6 +350,9 @@ BEGIN
  END IF;
  IF EXISTS (SELECT 1 FROM tenants WHERE id='aloews') THEN
    RAISE EXCEPTION 'tenant beta can read tenant alpha record';
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM workspaces WHERE tenant_id='tenant-beta' AND id='default') THEN
+   RAISE EXCEPTION 'tenant beta cannot read its own workspace';
  END IF;
  IF NOT EXISTS (SELECT 1 FROM tenant_usage_events WHERE id='33333333-3333-4333-8333-333333333333')
     OR NOT EXISTS (SELECT 1 FROM audit_events WHERE id='44444444-4444-4444-8444-444444444444') THEN
@@ -383,6 +389,9 @@ BEGIN
  END IF;
  IF EXISTS (SELECT 1 FROM tenant_tokens) OR EXISTS (SELECT 1 FROM project_tokens) THEN
    RAISE EXCEPTION 'missing tenant context exposed token records';
+ END IF;
+ IF EXISTS (SELECT 1 FROM workspaces) THEN
+   RAISE EXCEPTION 'missing tenant context exposed workspace rows';
  END IF;
 END;
 $no_context_test$;
