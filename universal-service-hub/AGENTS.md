@@ -61,3 +61,34 @@ Work autonomously within the permissions and safety boundaries below.
 - Distinguish provider probe, code correctness, integration readiness and production readiness.
 - Mark a task `VERIFIED` only with evidence from the exact candidate commit. Otherwise use `IN PROGRESS`, `BLOCKED` or `NOT VERIFIED`.
 - A task is complete only when the intended user outcome is delivered, relevant checks pass, the diff is reviewed, documentation reflects reality and all applicable security/release gates are satisfied.
+
+
+## Self-hosting development contract
+
+### Current boundary
+
+The Rust API currently exposes project/token management, provider registry/model discovery, health checks, integration verification, provider selection, `/v1/ai/chat` and audit reads. `/v1/ai/chat` accepts text messages and returns text; it does not expose tool calls, structured tool execution, repository workspaces, durable engineering tasks, checkpoints, review gates or patch publication. The current OpenAI-compatible adapter calls `/chat/completions`, not OpenAI `/responses`; the Anthropic adapter parses text blocks and does not execute `tool_use`. Therefore the current Hub cannot yet build itself through its API.
+
+### Bootstrap phase — temporary exception
+
+Until the self-hosting acceptance gate is met, a bounded external bootstrap runner may implement the missing API/worker foundations. It must use the existing repository rules, a dedicated branch, no production secrets, no paid provisioning and exact-SHA CI. Label the work as external bootstrap; never record it as a Hub-executed task. Direct GitHub file editing is allowed only for this bootstrap/documentation/repair boundary.
+
+### Required self-hosting architecture
+
+1. **Provider protocol layer:** support OpenAI Responses (including function-call input/output and continuation), Anthropic Messages (including `tool_use` / `tool_result`) and compatible text-only chat as distinct adapters. Preserve exact provider/model IDs and raw protocol family; never translate a Responses-only model into Chat Completions by name.
+2. **Durable task API:** authenticated, project-scoped create/read/approve/pause/resume/cancel/retry endpoints; idempotency keys; immutable task input; explicit budget ceiling; durable state transitions, attempt records, leases, heartbeats and checkpoints in PostgreSQL.
+3. **Worker and workspace:** isolated per-task worktree/container, pinned base SHA, allowlisted filesystem and typed tools, bounded CPU/memory/time/output, no ambient secrets, controlled network egress, cancellation and restart recovery. Do not run arbitrary model-generated shell in the API process.
+4. **Evidence pipeline:** candidate diff and artifact hashes, exact commands and exit codes, test results, provider/model/usage/latency, independent review, security scan and exact-SHA CI. Agent-authored summaries are not verification evidence.
+5. **Publication boundary:** only a separate publisher with narrowly scoped GitHub write permission may create a branch/PR after policy and verification gates pass. It cannot execute candidate code. No auto-merge or production deploy.
+6. **Dogfooding transition:** first execute one non-destructive documentation/test task against the Hub itself via its running API; then a bounded source-code task with a passing test; then prove worker restart/resume, duplicate-request idempotency, cross-project denial, provider failure handling and exact-SHA publication. Only after all pass may external bootstrap editing be disabled for ordinary work.
+
+### Provider diagnosis rules
+
+- The failure before PR #56 was a Hub workflow routing defect: a Fable/Claude model was selected for the OpenAI Responses endpoint, causing HTTP 400. PR #56 corrected model-family selection in the external CLI workflow; that change does not add Responses support to the Rust Hub API.
+- A direct Starimg `/v1/responses` or `/v1/messages` probe is not proof that the Rust Hub adapter works. Verify each adapter through the running Hub API with a forced tool-call request and inspect the normalized result.
+- Never label Starimg unavailable solely because the Hub's current `/chat/completions` adapter cannot use a Responses-only model. Diagnose endpoint/protocol/model/credential/quota independently.
+- Keep Starimg as the preferred cloud route when the exact model ID and protocol pass live probes. Use the local Qwen runner only as a separately identified, bounded fallback after its sandbox and quality gates pass. No silent provider switching.
+
+### Required workflow after transition
+
+Every Hub source change starts as a durable task submitted to the Hub API. The worker uses registered provider adapters and typed tools; no agent receives GitHub publication credentials. The coordinator reviews task evidence and approves publication. If the API is unavailable, preserve the task and stop; do not fall back to direct GitHub file writes without a recorded break-glass bootstrap decision.
