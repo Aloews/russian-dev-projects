@@ -1754,7 +1754,7 @@ async fn complete_engineering_task(
     let assigned_candidate:Option<String>=assignment.try_get("candidate_sha").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
     if assigned_role!=role{return Err(ApiError(StatusCode::FORBIDDEN,"workspace_assignment_role_mismatch"));}
     if body.next_status=="verified" {
-        if role!="reviewer" || assigned_scope.as_array().map_or(true,|scope|!scope.is_empty())
+        if role!="reviewer" || assigned_scope.as_array().is_none_or(|scope|!scope.is_empty())
             || body.candidate_sha.as_deref()!=existing_candidate.as_deref()
             || assigned_candidate.as_deref()!=existing_candidate.as_deref() {
             return Err(ApiError(StatusCode::FORBIDDEN,"reviewer_candidate_not_pinned_or_read_only"));
