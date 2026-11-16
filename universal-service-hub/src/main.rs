@@ -1488,8 +1488,8 @@ async fn acquire_engineering_task_path_locks(
     })) {
         return Err(ApiError(StatusCode::FORBIDDEN,"path_lock_outside_assigned_writer_scope"));
     }
-    let existing=sqlx::query("SELECT path_prefix FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND lease_expires_at>NOW()")
-        .bind(tenant_id).bind(&project_id).fetch_all(&mut *tx).await
+    let existing=sqlx::query("SELECT path_prefix FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND task_id<>$3 AND lease_expires_at>NOW()")
+        .bind(tenant_id).bind(&project_id).bind(&task_id).fetch_all(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_conflict_check_failed"))?;
     for row in existing {
         let existing_path:String=row.try_get("path_prefix").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"path_lock_conflict_check_failed"))?;
