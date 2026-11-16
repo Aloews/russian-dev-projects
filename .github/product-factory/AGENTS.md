@@ -12,7 +12,7 @@ Convert a product objective into a bounded, working, evidence-backed product inc
 - Never assume a target uses the control repository's language, database, authentication provider, hosting provider or design system.
 - Do not copy AUREL-specific assumptions into shared prompts, agents, validators or provider adapters.
 - Require each target project to have a project map or an explicitly documented equivalent.
-- Inject the canonical Reality-First Business skill from this control repository. Do not depend on a target repository containing a duplicate copy.
+- Inject the Product Factory governance contract, target-project AGENTS.md template and canonical Reality-First Business skill from this control repository into both hosted and local agent sessions. Do not depend on a target repository containing duplicate copies.
 
 ## Role separation
 
