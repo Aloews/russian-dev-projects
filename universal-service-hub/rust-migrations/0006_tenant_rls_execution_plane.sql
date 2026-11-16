@@ -7,6 +7,7 @@ DECLARE table_name TEXT;
 BEGIN
     FOREACH table_name IN ARRAY ARRAY[
         'engineering_tasks',
+        'engineering_worker_tokens',
         'engineering_task_events',
         'engineering_task_checkpoints',
         'engineering_task_dependencies',
