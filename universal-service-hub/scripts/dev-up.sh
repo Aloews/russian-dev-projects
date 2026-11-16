@@ -54,7 +54,18 @@ if [[ ! "$USH_API_TOKEN" =~ ^[A-Za-z0-9_-]{32,}$ || ! "$USH_DB_PASSWORD" =~ ^[A-
 fi
 export USH_API_TOKEN USH_DB_PASSWORD
 
-docker compose --env-file .env.local -f compose.yml up --build -d
+case "${USH_SKIP_BUILD:-0}" in
+  1)
+    docker compose --env-file .env.local -f compose.yml up -d
+    ;;
+  0)
+    docker compose --env-file .env.local -f compose.yml up --build -d
+    ;;
+  *)
+    echo "USH_SKIP_BUILD must be 0 or 1." >&2
+    exit 1
+    ;;
+esac
 
 base_url="http://127.0.0.1:${PORT:-8000}"
 ready=0
