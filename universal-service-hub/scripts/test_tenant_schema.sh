@@ -425,8 +425,8 @@ BEGIN
    INSERT INTO engineering_tasks (id,tenant_id,project_id,idempotency_key,title,objective,created_by)
    VALUES ('cccccccc-1111-4111-8111-cccccccccccc','tenant-beta','rls-alpha-project','forged','Forged','Cross tenant','test');
    RAISE EXCEPTION 'tenant beta inserted a task into tenant alpha project';
- EXCEPTION WHEN insufficient_privilege THEN
-   NULL;
+ EXCEPTION WHEN raise_exception THEN
+   IF SQLERRM = 'tenant beta inserted a task into tenant alpha project' THEN RAISE; END IF;
  END;
 END;
 $beta_test$;
