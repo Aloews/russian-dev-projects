@@ -393,6 +393,41 @@ jobs:
           ORIGIN="${ORIGIN%/v1}"
           ANTHROPIC_BASE_URL="$ORIGIN" ANTHROPIC_API_KEY="$STARIMG_API_KEY" claude -p --tools "Read,Write,Edit,Glob,Grep" --permission-mode bypassPermissions --model "$CLAUDE_MODEL" --max-turns 60 --output-format text "$(cat "$RUNNER_TEMP/claude-review.md")"
 
+      - name: Codex verification and bounded strategy repair
+        timeout-minutes: 35
+        env:
+          CODEX_MODEL: ${{ steps.starimg.outputs.codex_model }}
+          STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
+          STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
+          BASE_SHA: ${{ env.BASE_SHA }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ORIGIN="${STARIMG_BASE_URL%/}"
+          ORIGIN="${ORIGIN%/v1}"
+          cat > "$HOME/.codex/config.toml" <<EOF
+          model_provider = "starimg"
+          model = "$CODEX_MODEL"
+          approval_policy = "never"
+          sandbox_mode = "workspace-write"
+
+          [model_providers.starimg]
+          name = "Starimg"
+          base_url = "$ORIGIN/v1"
+          env_key = "STARIMG_API_KEY"
+          wire_api = "responses"
+          supports_websockets = false
+
+          [shell_environment_policy]
+          exclude = ["STARIMG_API_KEY"]
+          EOF
+          cat > "$RUNNER_TEMP/qa-closure.md" <<'PROMPT'
+          You are the verification and recovery engineer. Inspect the candidate diff against BASE_SHA and the plan in docs/MAP.md. Run Rust formatting, Clippy and tests from universal-service-hub. Run Python compile/static/tests only if their dependencies are available. Record exact commands and results. If checks pass, do not make speculative edits. If a check fails, inspect the actual failure, identify root cause, make the smallest justified fix and rerun the failed check plus relevant regressions. Do not delete or weaken tests. Do not repeat an unchanged failed approach: after two non-progress attempts, preserve the failure and change task decomposition, implementation strategy, context, model/effort, tool or verification method. Preserve budget for independent CI. Update docs/MAP.md only with evidence actually observed. Do not claim Docker, PostgreSQL, external provider, deployment or production checks unless executed successfully. No paid calls, production mutation, secrets, deployment, commit or push.
+          PROMPT
+          cd "$GITHUB_WORKSPACE/universal-service-hub"
+          printf "\nBase SHA: %s\n" "$BASE_SHA" >> "$RUNNER_TEMP/qa-closure.md"
+          codex exec --sandbox workspace-write --cd "$GITHUB_WORKSPACE/universal-service-hub" --model "$CODEX_MODEL" "$(cat "$RUNNER_TEMP/qa-closure.md")"
+
       - name: Validate candidate scope and preserve evidence
         id: candidate
         shell: bash
