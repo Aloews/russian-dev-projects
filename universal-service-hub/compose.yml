@@ -16,6 +16,7 @@ services:
 
   hub:
     image: universal-service-hub:test
+    image: universal-service-hub:local
     build:
       context: .
       dockerfile: Dockerfile
