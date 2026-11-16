@@ -940,7 +940,6 @@ async fn create_project_token(State(state): State<AppState>, headers: HeaderMap,
     if !principal.admin && body.role == "owner" {
         return Err(ApiError(StatusCode::FORBIDDEN, "administrator_required_for_owner_token"));
     }
-    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let exists = sqlx::query("SELECT id FROM projects WHERE id=$1").bind(&project_id).fetch_optional(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_lookup_failed"))?;
     if exists.is_none() { return Err(ApiError(StatusCode::NOT_FOUND, "project_not_found")); }
@@ -950,7 +949,6 @@ async fn create_project_token(State(state): State<AppState>, headers: HeaderMap,
     sqlx::query("INSERT INTO project_tokens (id,project_id,name,role,token_hash,created_at) VALUES ($1,$2,$3,$4,$5,NOW())")
         .bind(&id).bind(&project_id).bind(&body.name).bind(&body.role).bind(hash).execute(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_create_failed"))?;
-    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     audit(&state, &principal.actor, "project.token.create", "project", &project_id, json!({"token_id":id.clone(),"role":body.role.clone()})).await;
     Ok(Json(json!({"id":id,"project_id":project_id,"name":body.name,"role":body.role,"token":raw})))
@@ -2312,12 +2310,10 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_idempotency_key"));
     }
     let allowed_ids: Option<Vec<String>> = if let Some(project_id) = principal.project_id.as_deref() {
-        let mut tx=begin_principal_transaction(&state,&principal).await?;
         let project = sqlx::query("SELECT allowed_capabilities,allowed_provider_ids FROM projects WHERE id=$1")
             .bind(project_id).fetch_optional(&mut *tx).await
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_failed"))?
             .ok_or(ApiError(StatusCode::FORBIDDEN, "project_not_found"))?;
-        tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
         let caps: Value = project.get("allowed_capabilities");
         if caps.as_array().is_none_or(|a| !a.iter().any(|v| v.as_str()==Some("ai.chat"))) {
             return Err(ApiError(StatusCode::FORBIDDEN, "capability_not_allowed"));
