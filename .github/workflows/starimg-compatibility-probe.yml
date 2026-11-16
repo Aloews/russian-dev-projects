@@ -121,7 +121,7 @@ jobs:
           if claude and claude in ids:
               body = {
                   "model": claude, "max_tokens": 64,
-                  "messages": [{"role": "user", "content": "Call ping with value CLAUDE_TOOL_OK."}],
+                  "messages": [{"role": "user", "content": "You must call the ping tool exactly once with value CLAUDE_TOOL_OK. Do not answer in text."}],
                   "tools": [{
                       "name": "ping", "description": "Compatibility probe.",
                       "input_schema": {
@@ -131,7 +131,7 @@ jobs:
                           "additionalProperties": False
                       }
                   }],
-                  "tool_choice": {"type": "tool", "name": "ping"}
+                  "tool_choice": {"type": "auto"}
               }
               status, data = request(base + "/v1/messages", body, anthropic=True)
               ok = status == 200 and any(
