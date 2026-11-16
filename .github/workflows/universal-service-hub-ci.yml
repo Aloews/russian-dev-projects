@@ -104,6 +104,13 @@ jobs:
         run: pytest -q
       - name: Docker build
         run: docker build --network=host --progress=plain -t universal-service-hub:test .
+      - name: Local runtime scripts and Compose configuration
+        env:
+          USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
+          USH_DB_PASSWORD: ush-ci-db-password-with-at-least-32-characters
+        run: |
+          bash -n scripts/dev-up.sh scripts/dev-down.sh
+          docker compose -f compose.yml config -q
       - name: Local Compose runtime startup smoke
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
