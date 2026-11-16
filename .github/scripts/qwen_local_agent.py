@@ -267,6 +267,16 @@ def main():
             print("::error::Reality-First Business skill could not be loaded.")
             return 2
         system += "\n\nApply this Reality-First Business skill as a hard execution standard:\n" + reality_skill
+    contract_path = os.environ.get("PRODUCT_FACTORY_CONTRACT_PATH", "")
+    if not contract_path:
+        print("::error::Shared Product Factory agent contract path is missing.")
+        return 2
+    try:
+        factory_contract = Path(contract_path).read_text(encoding="utf-8")[:12000]
+    except (OSError, UnicodeError):
+        print("::error::Shared Product Factory agent contract could not be loaded.")
+        return 2
+    system += "\n\nApply this shared Product Factory agent contract as mandatory execution policy:\n" + factory_contract
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
     system += (
