@@ -104,6 +104,9 @@ jobs:
         run: alembic upgrade head
       - name: Tests
         run: pytest -q
+      - name: Docker build
+        run: docker build --network=host --progress=plain -t universal-service-hub:test .
+
       - name: Local runtime scripts and Compose configuration
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
