@@ -286,7 +286,7 @@ VALUES
    'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb','{}'::jsonb);
 COMMIT;
 
-SET ROLE ush_app;
+SET ROLE ush_runtime;
 DO $role_test$
 DECLARE is_superuser BOOLEAN; bypasses_rls BOOLEAN;
 BEGIN
