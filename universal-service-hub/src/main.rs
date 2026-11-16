@@ -236,15 +236,16 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
     ).bind(&digest).fetch_optional(&mut *worker_auth_tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     if let Some(row) = worker_row {
-        enforce_rate_limit(state, &digest, Some(&tenant_id), false).await?;
         let id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let tenant_id: String = row.try_get("tenant_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let project_id: String = row.try_get("project_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let worker_id: String = row.try_get("worker_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let worker_role: String = row.try_get("worker_role").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let queue_name: String = row.try_get("queue_name").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
-        let _ = sqlx::query("UPDATE engineering_worker_tokens SET last_used_at=NOW() WHERE id=$1").bind(&id).execute(&mut *worker_auth_tx).await;
+        let _ = sqlx::query("UPDATE engineering_worker_tokens SET last_used_at=NOW() WHERE id=$1")
+            .bind(&id).execute(&mut *worker_auth_tx).await;
         worker_auth_tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
+        enforce_rate_limit(state, &digest, Some(&tenant_id), false).await?;
         return Ok(Principal {
             actor: format!("worker:{tenant_id}:{project_id}:{worker_id}:{id}"),
             role: "worker".into(), tenant_id: Some(tenant_id), project_id: Some(project_id),
@@ -262,9 +263,10 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
         let id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let tenant_id: String = row.try_get("tenant_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
         let role: String = row.try_get("role").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
-        let _ = sqlx::query("UPDATE tenant_tokens SET last_used_at=NOW() WHERE id=$1").bind(&id).execute(&mut *tenant_auth_tx).await;
+        let _ = sqlx::query("UPDATE tenant_tokens SET last_used_at=NOW() WHERE id=$1")
+            .bind(&id).execute(&mut *tenant_auth_tx).await;
         tenant_auth_tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
-        enforce_rate_limit(state, &digest).await?;
+        enforce_rate_limit(state, &digest, Some(&tenant_id), false).await?;
         return Ok(Principal {
             actor: format!("tenant:{tenant_id}:token:{id}"), role, tenant_id: Some(tenant_id),
             project_id: None, worker_id: None, worker_role: None, queue_name: None, admin: false
@@ -282,15 +284,15 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
     let tenant_id: String = row.try_get("tenant_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     let project_id: String = row.try_get("project_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     let role: String = row.try_get("role").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
-    let _ = sqlx::query("UPDATE project_tokens SET last_used_at=NOW() WHERE id=$1").bind(&id).execute(&mut *project_auth_tx).await;
+    let _ = sqlx::query("UPDATE project_tokens SET last_used_at=NOW() WHERE id=$1")
+        .bind(&id).execute(&mut *project_auth_tx).await;
     project_auth_tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
-    enforce_rate_limit(state, &digest).await?;
+    enforce_rate_limit(state, &digest, Some(&tenant_id), false).await?;
     Ok(Principal {
         actor: format!("project:{project_id}:token:{id}"), role, tenant_id: Some(tenant_id),
         project_id: Some(project_id), worker_id: None, worker_role: None, queue_name: None, admin: false
     })
 }
-
 
 async fn require_admin(state: &AppState, headers: &HeaderMap) -> ApiResult<Principal> {
     let principal = authenticate(state, headers).await?;
