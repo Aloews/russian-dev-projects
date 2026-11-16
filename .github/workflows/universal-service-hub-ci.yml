@@ -100,7 +100,7 @@ jobs:
         run: ruff check app tests migrations
       - name: Migration smoke test
         env:
-          USH_DATABASE_URL: postgresql+asyncpg://ush:ush-test-password@localhost:5432/ush_test
+          USH_DATABASE_URL: postgresql+asyncpg://ush_app:ush-test-password@localhost:5432/ush_test
         run: alembic upgrade head
       - name: Tests
         run: pytest -q
@@ -111,6 +111,7 @@ jobs:
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
           USH_DB_PASSWORD: ush-ci-db-password-with-at-least-32-characters
+          USH_APP_DB_PASSWORD: ush-test-password
         run: |
           bash -n scripts/dev-up.sh scripts/dev-down.sh
           docker compose --env-file .env.example -f compose.yml config -q
@@ -131,7 +132,7 @@ jobs:
           set -eu
           docker run -d --rm --name ush-smoke --network host \
             -e USH_API_TOKEN="$USH_API_TOKEN" \
-            -e USH_DATABASE_URL="postgres://ush:ush-test-password@127.0.0.1:5432/ush_test" \
+            -e USH_DATABASE_URL="postgres://ush_app:ush-test-password@127.0.0.1:5432/ush_test" \
             -e USH_RATE_LIMIT_PER_MINUTE=100 \
             universal-service-hub:test
           trap 'docker stop ush-smoke >/dev/null 2>&1 || true' EXIT
