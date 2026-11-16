@@ -104,6 +104,32 @@ jobs:
         run: pytest -q
       - name: Docker build
         run: docker build --network=host --progress=plain -t universal-service-hub:test .
+      - name: Local Compose runtime startup smoke
+        env:
+          USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
+          USH_DB_PASSWORD: ush-ci-db-password-with-at-least-32-characters
+          PORT: "18000"
+        run: |
+          set -eu
+          docker compose -f compose.yml up --build -d
+          trap 'docker compose -f compose.yml down -v >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:18000/readyz >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker compose -f compose.yml logs --no-color hub postgres
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:18000/healthz >/dev/null
+          unauthorized=$(curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:18000/v1/providers)
+          test "$unauthorized" = "401"
+          curl -fsS -H "Authorization: Bearer $USH_API_TOKEN" http://127.0.0.1:18000/v1/providers >/dev/null
+
       - name: Container smoke test
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
