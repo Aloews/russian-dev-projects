@@ -1670,6 +1670,120 @@ async fn release_engineering_task_path_locks(
     Ok(Json(json!({"task_id":task_id,"released":result.rows_affected()})))
 }
 
+#[derive(Deserialize)]
+struct TaskCompletionBody {
+    worker_id: String,
+    task_lease_token: String,
+    workspace_id: String,
+    workspace_lease_token: String,
+    next_status: String,
+    #[serde(default)]
+    candidate_sha: Option<String>,
+    #[serde(default)]
+    evidence: Value,
+}
+
+async fn complete_engineering_task(
+    State(state): State<AppState>, headers: HeaderMap, Path(task_id): Path<String>,
+    Json(body): Json<TaskCompletionBody>
+) -> ApiResult<Json<Value>> {
+    let principal=require_worker_identity(&state,&headers).await?;
+    let worker_id=principal.worker_id.as_deref().unwrap_or("");
+    let role=principal.worker_role.as_deref().unwrap_or("");
+    let project_id=principal.project_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_project_scope_required"))?;
+    let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
+    let allowed=match role {
+        "architect" => ["queued","blocked","recovery"].contains(&body.next_status.as_str()),
+        "implementer" => ["queued_build","queued_test","review","blocked","recovery"].contains(&body.next_status.as_str()),
+        "builder" => ["queued_test","review","blocked","recovery"].contains(&body.next_status.as_str()),
+        "tester" => ["review","blocked","recovery"].contains(&body.next_status.as_str()),
+        "reviewer" => ["verified","blocked","recovery"].contains(&body.next_status.as_str()),
+        "recovery" => ["queued","failed","blocked"].contains(&body.next_status.as_str()),
+        _ => false,
+    };
+    if !allowed || body.worker_id!=worker_id || body.task_lease_token.len()<32
+        || body.workspace_lease_token.len()<32 || Uuid::parse_str(&body.workspace_id).is_err()
+        || !body.evidence.is_object() || body.evidence.to_string().len()>16_384
+        || metadata_contains_sensitive_key(&body.evidence)
+        || body.candidate_sha.as_ref().is_some_and(|sha|sha.len()!=40 || !sha.chars().all(|c|c.is_ascii_hexdigit()))
+        || (["queued_build","queued_test","review","verified"].contains(&body.next_status.as_str()) && body.candidate_sha.is_none()) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_worker_task_completion"));
+    }
+    let queue=match body.next_status.as_str() {
+        "queued" => "implementation",
+        "queued_build" => "build",
+        "queued_test" => "test",
+        "review" | "verified" => "review",
+        "blocked" | "recovery" | "failed" => "recovery",
+        _ => return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_worker_task_completion")),
+    };
+    let task_hash=hex::encode(Sha256::digest(body.task_lease_token.as_bytes()));
+    let workspace_hash=hex::encode(Sha256::digest(body.workspace_lease_token.as_bytes()));
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
+    let task=sqlx::query("SELECT queue_name,status,candidate_sha FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+        .bind(&task_id).bind(tenant_id).bind(project_id).bind(worker_id).bind(&task_hash)
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_lease_check_failed"))?;
+    let Some(task)=task else{return Err(ApiError(StatusCode::CONFLICT,"task_lease_expired_or_invalid"));};
+    let task_queue:String=task.try_get("queue_name").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_lease_check_failed"))?;
+    let current_status:String=task.try_get("status").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_lease_check_failed"))?;
+    let existing_candidate:Option<String>=task.try_get("candidate_sha").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_lease_check_failed"))?;
+    if principal.queue_name.as_deref()!=Some(task_queue.as_str()) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"worker_queue_scope_forbidden"));
+    }
+    let workspace=sqlx::query("SELECT id FROM engineering_workspaces WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
+        .bind(&body.workspace_id).bind(tenant_id).bind(project_id).bind(worker_id).bind(&workspace_hash)
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_workspace_check_failed"))?;
+    if workspace.is_none(){return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));}
+    let assignment=sqlx::query("SELECT worker_role,writer_scope,candidate_sha FROM engineering_task_workspace_assignments WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND workspace_id=$4 AND released_at IS NULL FOR UPDATE")
+        .bind(tenant_id).bind(project_id).bind(&task_id).bind(&body.workspace_id)
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
+    let Some(assignment)=assignment else{return Err(ApiError(StatusCode::CONFLICT,"active_task_workspace_assignment_required"));};
+    let assigned_role:String=assignment.try_get("worker_role").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
+    let assigned_scope:Value=assignment.try_get("writer_scope").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
+    let assigned_candidate:Option<String>=assignment.try_get("candidate_sha").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
+    if assigned_role!=role{return Err(ApiError(StatusCode::FORBIDDEN,"workspace_assignment_role_mismatch"));}
+    if body.next_status=="verified" {
+        if role!="reviewer" || assigned_scope.as_array().is_none_or(|scope|!scope.is_empty())
+            || body.candidate_sha.as_deref()!=existing_candidate.as_deref()
+            || assigned_candidate.as_deref()!=existing_candidate.as_deref() {
+            return Err(ApiError(StatusCode::FORBIDDEN,"reviewer_candidate_not_pinned_or_read_only"));
+        }
+        let prior=sqlx::query("SELECT worker_id FROM engineering_task_attempts WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND worker_role IN ('implementer','builder','tester') ORDER BY attempt_no DESC LIMIT 1")
+            .bind(tenant_id).bind(project_id).bind(&task_id).fetch_optional(&mut *tx).await
+            .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"reviewer_independence_check_failed"))?;
+        let Some(prior)=prior else{return Err(ApiError(StatusCode::CONFLICT,"independent_implementation_attempt_required"));};
+        let prior_worker:String=prior.try_get("worker_id").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"reviewer_independence_check_failed"))?;
+        if prior_worker==worker_id{return Err(ApiError(StatusCode::FORBIDDEN,"reviewer_must_be_independent"));}
+    } else if body.candidate_sha.is_some() && existing_candidate.as_deref().is_some_and(|existing|body.candidate_sha.as_deref()!=Some(existing)) && role!="implementer" {
+        return Err(ApiError(StatusCode::CONFLICT,"candidate_sha_change_requires_implementer"));
+    }
+    if !["blocked","recovery","failed"].contains(&body.next_status.as_str())
+        && !matches!(
+            (current_status.as_str(),body.next_status.as_str()),
+            ("in_progress","queued") | ("in_progress","queued_build") | ("in_progress","queued_test")
+            | ("in_progress","review") | ("building","queued_test") | ("building","review")
+            | ("testing","review") | ("review","verified") | ("recovery","queued") | ("recovery","failed")
+        ) {
+        return Err(ApiError(StatusCode::CONFLICT,"invalid_worker_task_state_transition"));
+    }
+    let updated=sqlx::query("UPDATE engineering_tasks SET status=$1,queue_name=$2,candidate_sha=COALESCE($3,candidate_sha),worker_id=NULL,lease_token_hash=NULL,lease_expires_at=NULL,claimed_at=NULL,available_at=NOW(),version=version+1,updated_at=NOW() WHERE id=$4 AND tenant_id=$5 AND project_id=$6 RETURNING version")
+        .bind(&body.next_status).bind(queue).bind(&body.candidate_sha).bind(&task_id).bind(tenant_id).bind(project_id)
+        .fetch_one(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_write_failed"))?;
+    sqlx::query("INSERT INTO engineering_task_events (id,task_id,project_id,actor,event_type,payload) VALUES ($1,$2,$3,$4,'task.worker_completed',$5)")
+        .bind(Uuid::new_v4().to_string()).bind(&task_id).bind(project_id).bind(&principal.actor)
+        .bind(json!({"from":current_status,"to":body.next_status,"queue":queue,"candidate_sha":body.candidate_sha,"evidence":body.evidence}))
+        .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_event_failed"))?;
+    sqlx::query("UPDATE engineering_task_workspace_assignments SET released_at=NOW() WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND workspace_id=$4 AND released_at IS NULL")
+        .bind(tenant_id).bind(project_id).bind(&task_id).bind(&body.workspace_id).execute(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_release_failed"))?;
+    sqlx::query("DELETE FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND workspace_id=$4")
+        .bind(tenant_id).bind(project_id).bind(&task_id).bind(&body.workspace_id).execute(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_path_lock_release_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
+    audit(&state,&principal.actor,"engineering_task.complete","engineering_task",&task_id,json!({"status":body.next_status,"candidate_sha":body.candidate_sha})).await;
+    Ok(Json(json!({"task_id":task_id,"status":body.next_status,"queue":queue,"version":updated.try_get::<i64,_>("version").unwrap_or(0),"candidate_sha":body.candidate_sha})))
+}
+
 async fn record_engineering_task_attempt(
     State(state): State<AppState>, headers: HeaderMap, Path(task_id): Path<String>,
     Json(body): Json<TaskAttemptBody>
@@ -2688,6 +2802,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/tasks/{task_id}/workspace-assignment", post(assign_engineering_task_workspace).delete(release_engineering_task_workspace))
         .route("/v1/projects/{project_id}/tasks/{task_id}/path-locks", post(acquire_engineering_task_path_locks).delete(release_engineering_task_path_locks))
         .route("/v1/tasks/{task_id}/attempts", post(record_engineering_task_attempt))
+        .route("/v1/tasks/{task_id}/complete", post(complete_engineering_task))
         .route("/v1/projects/{project_id}/tasks/{task_id}/attempts", get(list_engineering_task_attempts))
         .route("/v1/projects/{project_id}", put(update_project).delete(delete_project))
         .route("/v1/projects/{project_id}/tokens", get(list_project_tokens).post(create_project_token))
