@@ -446,3 +446,35 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - **API-only:** the current product has no browser management UI; only health/readiness endpoints are directly viewable in a browser, and administrative workflows use the authenticated HTTP API.
 - **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
 - Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
+
+## Durable engineering task dispatcher — bootstrap increment
+
+Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63). This branch introduces the first persisted task-control slice; it is not yet a complete autonomous executor or self-hosting system.
+
+### Implemented in this increment
+- PostgreSQL schema for project-scoped engineering tasks, idempotency keys, task events and checkpoint metadata.
+- Explicit task lifecycle enum and transition policy with tests for the happy path, illegal shortcuts, terminal states and recovery.
+- Authenticated project-scoped task intake and listing endpoints.
+- Append-only comment/clarification/requirement events; incoming user context is stored as a task event and does not mutate unrelated task state.
+- Version-checked task transitions with explicit queue assignment.
+- PostgreSQL worker claims using FOR UPDATE SKIP LOCKED, bounded lease duration, random lease tokens stored only as SHA-256 hashes, heartbeat and checkpoint metadata endpoints.
+- Project-scoped operator checks and audit events for task creation, transition, claim and checkpoint.
+
+### API surface added
+- POST/GET /v1/projects/{project_id}/tasks
+- POST /v1/projects/{project_id}/tasks/{task_id}/events
+- POST /v1/projects/{project_id}/tasks/{task_id}/transition
+- POST /v1/tasks/claim
+- POST /v1/tasks/{task_id}/heartbeat
+- POST /v1/tasks/{task_id}/checkpoints
+
+### Not implemented or not yet proven
+- Lease-expiry reaper and automatic recovery/requeue.
+- Isolated Git worktrees, path-scoped writer locks and candidate patch packaging.
+- Independent build/test/review workers and trusted evidence ingestion.
+- Budget reservations/enforcement, full DAG scheduling and cycle detection.
+- Full OpenAPI generation and project adapter conformance.
+- Hub API self-hosting acceptance and production deployment.
+
+### Verification gate
+The branch must pass exact-head CI, Rust formatting/tests, migration smoke and container API integration tests before merge. A successful CI run alone does not establish external worker connectivity or self-hosting. Update this section only with exact commit SHA and run evidence after those checks execute.
