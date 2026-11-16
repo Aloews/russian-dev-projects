@@ -23,7 +23,9 @@ Users may have different memberships in multiple tenants. Project ownership is i
 
 - Tenant-owned tables carry `tenant_id`; project references use composite tenant/project foreign keys. Task, event and checkpoint ownership is derived from the owning project/task by database triggers, not from request JSON.
 - Tenant ID is immutable after resource creation. Resource IDs and idempotency constraints include tenant scope where appropriate.
-- PostgreSQL RLS is a planned second enforcement layer. It will only be enabled together with transaction-scoped tenant context, pool-reuse tests and an application role that does not bypass RLS. Do not enable RLS using a session-global setting or a superuser connection.
+- PostgreSQL RLS is enabled and forced on the engineering execution-plane tables: tasks, events, checkpoints, dependencies, attempts, workspaces, task/workspace assignments and path locks. The Rust API sets tenant context with transaction-local `set_config(..., true)`.
+- Application queries are role-switched to the non-login `ush_runtime` role after privileged startup migrations. That role is explicitly `NOSUPERUSER NOBYPASSRLS`; startup fails closed if the runtime connection does not resolve to that role or its flags are unsafe. Do not run API queries directly as the migration login.
+- Exact-head CI tests tenant A/B visibility, forged cross-tenant insert denial, missing-context fail-closed behavior and transaction-local context reset across sequential transactions on one reused connection. These checks must pass before calling RLS verified.
 - Provider credentials are references into a secret manager, never plaintext in configuration. Provider connections and model policy are tenant-scoped.
 - Artifacts, workspaces, caches, logs, vector indexes, backups and object storage must be partitioned by tenant before those capabilities are exposed.
 - Tenant audit and usage data are partitioned and attributable. Unknown usage prices remain NULL/unknown, never zero.
@@ -38,10 +40,12 @@ Tenant deletion is a state machine: suspend access and new work, drain/cancel te
 
 ## Implementation status
 
-- Schema foundation is being introduced in the bootstrap PR: tenants, workspaces, external-identity memberships, tenant service tokens, tenant-owned project/token/task/event/checkpoint records, tenant provider connections, quotas, budget policy and usage ledger.
+- Schema foundation is in the bootstrap PR: tenants, workspaces, external-identity membership records, tenant service tokens, tenant-owned project/token/task/event/checkpoint records, tenant provider connections, quotas, budget policy and usage ledger.
 - Existing projects are backfilled into tenant `aloews` / workspace `default`.
-- Existing root and project-token endpoints remain compatibility bootstrap paths; tenant membership/token API authentication and full runtime policy enforcement are the next implementation slice.
-- RLS, tenant-specific execution sandboxes, artifact storage, fair scheduling, billing enforcement, export/deletion, cross-tenant penetration tests and public onboarding are not yet implemented. Do not claim complete multi-tenancy or enable external signup until these gates pass.
+- Tenant service-token authentication and token lifecycle endpoints are wired into the Rust principal; project/worker tokens derive tenant ownership from stored records. Human OIDC membership authentication is not yet wired.
+- Execution-plane RLS, forced RLS, a non-bypass runtime DB role and transaction-local tenant context are implemented in the candidate branch. Exact-head PostgreSQL RLS and pooled-connection tests are pending; this is not yet verified.
+- Task/workspace leases, task/workspace assignment and overlapping path locks are implemented. Actual persistent Git worktree provisioning and execution sandboxing remain outstanding.
+- Full tenant isolation across project/token/provider/usage/audit/artifact/cache/log surfaces, quotas/budgets, fair scheduling, export/deletion, cross-tenant penetration tests and public onboarding are not complete. Do not claim complete multi-tenancy or enable external signup until these gates pass.
 
 ## Release acceptance
 
