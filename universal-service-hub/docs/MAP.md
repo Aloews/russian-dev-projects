@@ -36,6 +36,36 @@ A lower item must never be delivered by bypassing a higher item.
 - Never retry a billable generation request unless idempotency is explicitly supported by that provider and a request key is present.
 - Do not store prompts, generated content or credentials in logs/audit events.
 
+## Engineering planning protocol
+
+Planning is a first-class engineering phase, not a short preamble to coding. The system deliberately spends more model capability, context and iteration budget on discovery, architecture, decomposition and acceptance design because a precise plan reduces rework, integration defects and total delivery time.
+
+### Required phase gates
+
+1. **Discovery and evidence inventory** — inspect the current commit, project map, architecture, runtime, data model, migrations, auth/tenant boundaries, provider registry, UI, tests, CI and deployment constraints. Record exact paths/symbols and distinguish verified facts from assumptions and unknowns.
+2. **Product and system design** — convert the requested outcome into user journeys, functional/non-functional requirements, explicit non-goals, data/control flows, trust boundaries, failure states and operational constraints. Prefer existing abstractions; justify any new abstraction.
+3. **Task decomposition** — create a dependency DAG of small tasks. Every task must have a stable ID, owner role, objective, exact expected modules/files, prerequisites, inputs/outputs, interface/data contracts, acceptance criteria, tests, risks and required evidence. Tasks must be independently reviewable and sized to fit one bounded implementation pass.
+4. **Resource and model allocation** — reserve the strongest available reasoning model for architecture, security, ambiguity resolution and plan critique. Use a coding-specialist model for implementation and a separate strong model for adversarial review. Prefer Astra 6.1 for deep planning when its exact model ID is present in the live Starimg catalogue and it passes the Anthropic Messages tool-call probe; otherwise fall back to the strongest verified Claude model. Prefer Fable 5.2 for Codex implementation when its exact ID is present and it passes the Responses API function-call probe; otherwise use the verified Codex/GPT candidate. `STARIMG_ASTRA_MODEL`, `STARIMG_FABLE_MODEL` and `STARIMG_PLANNING_MODEL` may explicitly select exact catalogue IDs. Never claim either model was used unless the workflow log records its selected ID and successful protocol probe. Allocate more reasoning turns/time to planning than to routine code edits; preserve meaningful budget for implementation, tests, independent review and repair. Never infer capability from a model name alone: protocol probes and actual results are evidence.
+5. **Execution and integration** — execute tasks in topological order, parallelizing only tasks without shared-file or data-contract conflicts. Integrate at explicit checkpoints. Re-plan when evidence invalidates an assumption; record the change and impact before continuing.
+6. **Verification and closure** — map every acceptance criterion to a test or observable artifact. Track task state as `planned`, `in_progress`, `blocked` or `verified`; only use `verified` with exact commit/test/run evidence. A green unit suite does not substitute for API, database, authorization or user-journey checks.
+
+### Mandatory task contract
+
+Each execution plan must include: objective and user outcome; repository evidence; architecture decision and alternatives; task DAG/critical path; task IDs and role assignments; API/schema contracts; acceptance criteria; test matrix (success, malformed input, provider failure, authorization/tenant isolation, idempotency, concurrency and recovery where applicable); security and spend boundaries; effort/model allocation; stop conditions; and exact evidence required to close each task.
+
+### Planning quality gate
+
+Implementation must not begin until the planner has written the plan to this map and the coordinator has checked that:
+- every requested outcome maps to one or more tasks;
+- dependencies and integration order are explicit;
+- each task has measurable acceptance criteria and tests;
+- data ownership, auth and failure semantics are designed before handlers/UI are changed;
+- tasks are small enough to implement and review without broad speculative scaffolding;
+- model selection and effort allocation match task complexity;
+- unknowns, blockers and non-goals are visible.
+
+The planner may not claim implementation or test completion. The implementation agent must follow the plan, and the independent reviewer must challenge both plan quality and implementation coverage. This protocol applies to every future Hub run and to product projects orchestrated by the Hub.
+
 ## Current verified state
 
 Base repository: `Aloews/russian-dev-projects`
