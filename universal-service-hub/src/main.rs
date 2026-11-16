@@ -685,7 +685,7 @@ async fn claim_engineering_task(
             SELECT t.id FROM engineering_tasks t
             WHERE t.queue_name=$1
               AND (($1='recovery' AND t.status IN ('recovery','blocked','failed')) OR ($1<>'recovery' AND t.status=CASE $1 WHEN 'build' THEN 'queued_build' WHEN 'test' THEN 'queued_test' WHEN 'review' THEN 'review' ELSE 'queued' END))
-              AND t.attempt_count < t.max_attempts
+              AND (t.attempt_count < t.max_attempts OR $1='recovery')
               AND t.available_at <= NOW()
               AND t.project_id=$2 AND t.tenant_id=$6
               AND NOT EXISTS (
@@ -1771,9 +1771,10 @@ async fn complete_engineering_task(
     if !["blocked","recovery","failed"].contains(&body.next_status.as_str())
         && !matches!(
             (current_status.as_str(),body.next_status.as_str()),
-            ("in_progress","queued") | ("in_progress","queued") | ("in_progress","queued_build") | ("in_progress","queued_test")
+            ("in_progress","queued") | ("in_progress","queued_build") | ("in_progress","queued_test")
             | ("in_progress","review") | ("building","queued_test") | ("building","review")
             | ("testing","review") | ("review","verified") | ("recovery","queued") | ("recovery","failed")
+            | ("blocked","queued") | ("failed","queued")
         ) {
         return Err(ApiError(StatusCode::CONFLICT,"invalid_worker_task_state_transition"));
     }
