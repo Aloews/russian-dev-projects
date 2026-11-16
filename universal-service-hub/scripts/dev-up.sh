@@ -14,8 +14,9 @@ if [[ -L .env.local ]]; then
   exit 1
 fi
 if [[ ! -f .env.local ]]; then
-  touch .env.local
+  (umask 077; : > .env.local)
 fi
+chmod 600 .env.local
 USH_API_TOKEN="$(sed -n 's/^USH_API_TOKEN=//p' .env.local | tail -n 1)"
 USH_DB_PASSWORD="$(sed -n 's/^USH_DB_PASSWORD=//p' .env.local | tail -n 1)"
 if [[ -z "$USH_API_TOKEN" || -z "$USH_DB_PASSWORD" ]]; then
@@ -54,7 +55,11 @@ if [[ ! "$USH_API_TOKEN" =~ ^[A-Za-z0-9_-]{32,}$ || ! "$USH_DB_PASSWORD" =~ ^[A-
 fi
 export USH_API_TOKEN USH_DB_PASSWORD
 
-docker compose --env-file .env.local -f compose.yml up --build -d
+if [[ "${USH_SKIP_BUILD:-0}" == "1" ]]; then
+  docker compose --env-file .env.local -f compose.yml up -d
+else
+  docker compose --env-file .env.local -f compose.yml up --build -d
+fi
 
 base_url="http://127.0.0.1:${PORT:-8000}"
 ready=0
