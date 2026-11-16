@@ -903,7 +903,7 @@ async fn delete_project(State(state): State<AppState>, headers: HeaderMap, Path(
 async fn list_project_tokens(State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>) -> ApiResult<Json<Value>> {
     require_project_owner_or_admin(&state, &headers, &project_id).await?;
     let rows = sqlx::query("SELECT id,project_id,name,role,created_at,last_used_at,revoked_at FROM project_tokens WHERE project_id=$1 ORDER BY created_at DESC")
-        .bind(&project_id).fetch_all(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_list_failed"))?;
+        .bind(&project_id).fetch_all(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_token_list_failed"))?;
     let values: Vec<Value> = rows.into_iter().map(|r| json!({
         "id":r.get::<String,_>("id"),"project_id":r.get::<String,_>("project_id"),
         "name":r.get::<String,_>("name"),"role":r.get::<String,_>("role"),
