@@ -352,10 +352,12 @@ async fn require_project_owner_or_admin(
     }
     let tenant_admin = ["tenant_owner", "tenant_admin"].contains(&principal.role.as_str());
     if tenant_admin && let Some(tenant_id) = principal.tenant_id.as_deref() {
+        let mut tx=begin_principal_transaction(state,&principal).await?;
         let owns_project = sqlx::query("SELECT id FROM projects WHERE id=$1 AND tenant_id=$2")
-            .bind(project_id).bind(tenant_id).fetch_optional(&state.db).await
+            .bind(project_id).bind(tenant_id).fetch_optional(&mut *tx).await
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_check_failed"))?
             .is_some();
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
         if owns_project { return Ok(principal); }
     }
     Err(ApiError(StatusCode::FORBIDDEN, "project_owner_required"))
@@ -417,13 +419,15 @@ async fn task_project_scope(
     let Some(tenant_id) = principal.tenant_id.as_deref() else {
         return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_forbidden"));
     };
-    if !tenant_role_allowed {
+    if !tenant_role_allowed {    let mut tx=begin_principal_transaction(state,principal).await?;
+
         return Err(ApiError(StatusCode::FORBIDDEN, "tenant_role_forbidden"));
     }
     let belongs_to_tenant = sqlx::query("SELECT id FROM projects WHERE id=$1 AND tenant_id=$2")
-        .bind(project_id).bind(tenant_id).fetch_optional(&state.db).await
+        .bind(project_id).bind(tenant_id).fetch_optional(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_scope_check_failed"))?
         .is_some();
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     if !belongs_to_tenant {
         return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_forbidden"));
     }
@@ -845,13 +849,15 @@ struct ProjectCreate {
 
 async fn create_project(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<ProjectCreate>) -> ApiResult<Json<Value>> {
     let principal = require_admin(&state, &headers).await?;
+    let mut tx=begin_platform_transaction(&state).await?;
     if body.id.is_empty() || body.id.len() > 80 || !body.id.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) || body.name.trim().is_empty() || body.name.len() > 160 || body.allowed_capabilities.is_empty() || body.allowed_capabilities.len() > 100 || body.allowed_provider_ids.len() > 100 {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_project"));
     }
     let result = sqlx::query(
         "INSERT INTO projects (id,name,allowed_capabilities,allowed_provider_ids,created_at,updated_at) VALUES ($1,$2,$3,$4,NOW(),NOW()) ON CONFLICT (id) DO NOTHING"
     ).bind(&body.id).bind(&body.name).bind(json!(body.allowed_capabilities.clone())).bind(json!(body.allowed_provider_ids.clone()))
-     .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_create_failed"))?;
+     .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_create_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     if result.rows_affected() == 0 { return Err(ApiError(StatusCode::CONFLICT, "project_exists")); }
     audit(&state, &principal.actor, "project.create", "project", &body.id, json!({})).await;
     Ok(Json(json!({"id":body.id,"name":body.name,"allowed_capabilities":body.allowed_capabilities,"allowed_provider_ids":body.allowed_provider_ids})))
@@ -859,8 +865,10 @@ async fn create_project(State(state): State<AppState>, headers: HeaderMap, Json(
 
 async fn list_projects(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
     require_admin(&state, &headers).await?;
+    let mut tx=begin_platform_transaction(&state).await?;
     let rows = sqlx::query("SELECT id,name,allowed_capabilities,allowed_provider_ids,created_at FROM projects ORDER BY id")
-        .fetch_all(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_list_failed"))?;
+        .fetch_all(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_list_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let values: Vec<Value> = rows.into_iter().map(|r| json!({
         "id":r.get::<String,_>("id"), "name":r.get::<String,_>("name"),
         "allowed_capabilities":r.get::<Value,_>("allowed_capabilities"),
@@ -880,12 +888,14 @@ struct ProjectUpdate {
 
 async fn update_project(State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>, Json(body): Json<ProjectUpdate>) -> ApiResult<Json<Value>> {
     let principal = require_admin(&state, &headers).await?;
+    let mut tx=begin_platform_transaction(&state).await?;
     if body.name.trim().is_empty() || body.name.len() > 160 || body.allowed_capabilities.is_empty() || body.allowed_capabilities.len() > 100 || body.allowed_provider_ids.len() > 100 {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_project"));
     }
     let result = sqlx::query("UPDATE projects SET name=$1,allowed_capabilities=$2,allowed_provider_ids=$3,updated_at=NOW() WHERE id=$4")
         .bind(&body.name).bind(json!(body.allowed_capabilities)).bind(json!(body.allowed_provider_ids)).bind(&project_id)
-        .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_update_failed"))?;
+        .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_update_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     if result.rows_affected()==0 { return Err(ApiError(StatusCode::NOT_FOUND, "project_not_found")); }
     audit(&state, &principal.actor, "project.update", "project", &project_id, json!({})).await;
     Ok(Json(json!({"id":project_id,"name":body.name})))
@@ -893,8 +903,10 @@ async fn update_project(State(state): State<AppState>, headers: HeaderMap, Path(
 
 async fn delete_project(State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>) -> ApiResult<StatusCode> {
     let principal = require_admin(&state, &headers).await?;
-    let result = sqlx::query("DELETE FROM projects WHERE id=$1").bind(&project_id).execute(&state.db).await
+    let mut tx=begin_platform_transaction(&state).await?;
+    let result = sqlx::query("DELETE FROM projects WHERE id=$1").bind(&project_id).execute(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_delete_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     if result.rows_affected()==0 { return Err(ApiError(StatusCode::NOT_FOUND, "project_not_found")); }
     audit(&state, &principal.actor, "project.delete", "project", &project_id, json!({})).await;
     Ok(StatusCode::NO_CONTENT)
@@ -1050,6 +1062,7 @@ async fn create_tenant_token(
     Json(body): Json<TenantTokenCreateBody>
 ) -> ApiResult<Json<Value>> {
     let principal = require_tenant_admin(&state, &headers, &tenant_id).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let allowed_roles = [
         "tenant_owner", "tenant_admin", "workspace_admin", "project_maintainer",
         "developer", "reviewer", "operator", "auditor", "viewer", "service_agent",
@@ -1063,7 +1076,7 @@ async fn create_tenant_token(
         return Err(ApiError(StatusCode::FORBIDDEN, "administrator_required_for_tenant_owner_token"));
     }
     let exists = sqlx::query("SELECT id FROM tenants WHERE id=$1 AND status='active'")
-        .bind(&tenant_id).fetch_optional(&state.db).await
+        .bind(&tenant_id).fetch_optional(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "tenant_lookup_failed"))?;
     if exists.is_none() { return Err(ApiError(StatusCode::NOT_FOUND, "tenant_not_found")); }
     let raw: String = rand::rng().sample_iter(&Alphanumeric).take(48).map(char::from).collect();
@@ -1071,8 +1084,9 @@ async fn create_tenant_token(
     let id = Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO tenant_tokens (id,tenant_id,name,role,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,CASE WHEN $6::bigint IS NULL THEN NULL ELSE NOW()+($6::text||' seconds')::interval END)")
         .bind(&id).bind(&tenant_id).bind(&body.name).bind(&body.role).bind(hash).bind(body.expires_in_seconds)
-        .execute(&state.db).await
+        .execute(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "tenant_token_create_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     audit(&state, &principal.actor, "tenant.token.create", "tenant", &tenant_id, json!({"token_id":id,"role":body.role})).await;
     Ok(Json(json!({"id":id,"tenant_id":tenant_id,"name":body.name,"role":body.role,"token":raw})))
 }
@@ -2426,9 +2440,11 @@ fn default_limit() -> i64 { 50 }
 
 async fn list_audit(State(state): State<AppState>, headers: HeaderMap, Query(query): Query<AuditQuery>) -> ApiResult<Json<Value>> {
     require_admin(&state, &headers).await?;
+    let mut tx=begin_platform_transaction(&state).await?;
     let limit = query.limit.clamp(1,100);
     let rows = sqlx::query("SELECT id,occurred_at,actor,action,resource_type,resource_id,details FROM audit_events ORDER BY occurred_at DESC LIMIT $1")
-        .bind(limit).fetch_all(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "audit_list_failed"))?;
+        .bind(limit).fetch_all(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "audit_list_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let values: Vec<Value> = rows.into_iter().map(|r| json!({
         "id":r.get::<String,_>("id"),"occurred_at":r.get::<DateTime<Utc>,_>("occurred_at"),
         "actor":r.get::<String,_>("actor"),"action":r.get::<String,_>("action"),
