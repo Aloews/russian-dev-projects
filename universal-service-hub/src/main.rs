@@ -1444,12 +1444,18 @@ async fn release_engineering_workspace(
     }
     let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
     let hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
-    let active_assignment=sqlx::query("SELECT task_id FROM engineering_task_workspace_assignments WHERE tenant_id=$1 AND project_id=$2 AND workspace_id=$3 AND released_at IS NULL LIMIT 1")
+    let active_task=sqlx::query("SELECT a.task_id FROM engineering_task_workspace_assignments a JOIN engineering_tasks t ON t.id=a.task_id AND t.tenant_id=a.tenant_id AND t.project_id=a.project_id WHERE a.tenant_id=$1 AND a.project_id=$2 AND a.workspace_id=$3 AND a.released_at IS NULL AND t.lease_expires_at>NOW() LIMIT 1")
         .bind(tenant_id).bind(&project_id).bind(&workspace_id).fetch_optional(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_release_check_failed"))?;
-    if active_assignment.is_some() {
+    if active_task.is_some() {
         return Err(ApiError(StatusCode::CONFLICT,"active_task_workspace_assignment_must_be_released"));
     }
+    sqlx::query("UPDATE engineering_task_workspace_assignments SET released_at=NOW() WHERE tenant_id=$1 AND project_id=$2 AND workspace_id=$3 AND released_at IS NULL")
+        .bind(tenant_id).bind(&project_id).bind(&workspace_id).execute(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_recovery_release_failed"))?;
+    sqlx::query("DELETE FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND workspace_id=$3")
+        .bind(tenant_id).bind(&project_id).bind(&workspace_id).execute(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_recovery_release_failed"))?;
     let result=sqlx::query("UPDATE engineering_workspaces SET state='idle',lease_owner=NULL,lease_token_hash=NULL,lease_expires_at=NULL,last_heartbeat_at=NOW(),head_sha=COALESCE($6,head_sha),updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW()")
         .bind(&workspace_id).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(hash).bind(&body.head_sha)
         .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_release_failed"))?;
