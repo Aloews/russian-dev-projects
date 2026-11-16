@@ -14,11 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      STARIMG_BASE_URL: \${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
-      STARIMG_API_KEY: \${{ secrets.STARIMG_API_KEY }}
-      STARIMG_CODEX_MODEL: \${{ vars.STARIMG_CODEX_MODEL }}
-      STARIMG_CLAUDE_MODEL: \${{ vars.STARIMG_CLAUDE_MODEL }}
-      STARIMG_FABLE_MODEL: \${{ vars.STARIMG_FABLE_MODEL }}
+      STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
+      STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
+      STARIMG_CODEX_MODEL: ${{ vars.STARIMG_CODEX_MODEL }}
+      STARIMG_CLAUDE_MODEL: ${{ vars.STARIMG_CLAUDE_MODEL }}
+      STARIMG_FABLE_MODEL: ${{ vars.STARIMG_FABLE_MODEL }}
     steps:
       - name: Probe direct Starimg endpoints without exposing credentials
         shell: bash
@@ -63,6 +63,8 @@ jobs:
                       pass
                   detail = detail.replace(key, "[REDACTED]")[:500]
                   return exc.code, {"safe_error": detail or "provider_rejected_request"}
+              except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                  return 0, {"safe_error": type(exc).__name__}
 
           status, catalogue = request(base + "/v1/models")
           if status != 200:
