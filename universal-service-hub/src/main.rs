@@ -416,6 +416,7 @@ async fn create_engineering_task(
     Json(body): Json<TaskCreateBody>
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let principal = authenticate(&state, &headers).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     task_project_scope(&state, &principal, &project_id, true).await?;
     if body.idempotency_key.trim().is_empty() || body.idempotency_key.len() > 160
         || body.title.trim().is_empty() || body.title.len() > 200
@@ -433,7 +434,7 @@ async fn create_engineering_task(
     }
     if !body.dependencies.is_empty() {
         let row = sqlx::query("SELECT COUNT(*) AS count FROM engineering_tasks WHERE id=ANY($1::varchar[]) AND project_id=$2")
-            .bind(&body.dependencies).bind(&project_id).fetch_one(&state.db).await
+            .bind(&body.dependencies).bind(&project_id).fetch_one(&mut *tx).await
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_dependency_check_failed"))?;
         let count: i64 = row.try_get("count").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_dependency_check_failed"))?;
         if count != body.dependencies.len() as i64 {
@@ -445,10 +446,11 @@ async fn create_engineering_task(
         "INSERT INTO engineering_tasks (id,project_id,idempotency_key,title,objective,acceptance_criteria,dependencies,priority,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (project_id,idempotency_key) DO NOTHING"
     ).bind(&id).bind(&project_id).bind(&body.idempotency_key).bind(&body.title)
      .bind(&body.objective).bind(json!(body.acceptance_criteria)).bind(json!(body.dependencies))
-     .bind(body.priority).bind(&principal.actor).execute(&state.db).await
+     .bind(body.priority).bind(&principal.actor).execute(&mut *tx).await
      .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_create_failed"))?;
+    let created = inserted.rows_affected() == 1;
     let row = sqlx::query("SELECT id,title,objective,dependencies,status,queue_name,priority,version,created_at FROM engineering_tasks WHERE project_id=$1 AND idempotency_key=$2")
-        .bind(&project_id).bind(&body.idempotency_key).fetch_one(&state.db).await
+        .bind(&project_id).bind(&body.idempotency_key).fetch_one(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_after_create_failed"))?;
     let task_id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
     let stored_dependencies: Value = row.try_get("dependencies").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
@@ -457,15 +459,14 @@ async fn create_engineering_task(
     }
     for dependency_id in &body.dependencies {
         sqlx::query("INSERT INTO engineering_task_dependencies (tenant_id,project_id,parent_task_id,child_task_id) SELECT tenant_id,project_id,$1,$2 FROM engineering_tasks WHERE id=$1 AND project_id=$3 ON CONFLICT DO NOTHING")
-            .bind(dependency_id).bind(&task_id).bind(&project_id).execute(&state.db).await
+            .bind(dependency_id).bind(&task_id).bind(&project_id).execute(&mut *tx).await
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_dependency_write_failed"))?;
     }
-    if inserted.rows_affected() == 1 {
+    if created {
         sqlx::query("INSERT INTO engineering_task_events (id,task_id,project_id,actor,event_type,payload) VALUES ($1,$2,$3,$4,'task.received',$5)")
             .bind(Uuid::new_v4().to_string()).bind(&task_id).bind(&project_id).bind(&principal.actor)
-            .bind(json!({"source":"api"})).execute(&state.db).await
+            .bind(json!({"source":"api"})).execute(&mut *tx).await
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_event_write_failed"))?;
-        audit(&state, &principal.actor, "engineering_task.create", "engineering_task", &task_id, json!({"project_id":project_id})).await;
     } else {
         let existing_title: String = row.try_get("title").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
         let existing_objective: String = row.try_get("objective").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
@@ -473,6 +474,8 @@ async fn create_engineering_task(
             return Err(ApiError(StatusCode::CONFLICT, "idempotency_key_payload_mismatch"));
         }
     }
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
+    if created { audit(&state, &principal.actor, "engineering_task.create", "engineering_task", &task_id, json!({"project_id":project_id})).await; }
     Ok((if inserted.rows_affected() == 1 { StatusCode::CREATED } else { StatusCode::OK }, Json(json!({
         "id":task_id, "title":row.try_get::<String,_>("title").unwrap_or_default(),
         "objective":row.try_get::<String,_>("objective").unwrap_or_default(),
@@ -488,10 +491,12 @@ async fn list_engineering_tasks(
     State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>
 ) -> ApiResult<Json<Value>> {
     let principal = require_project_access(&state, &headers).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     task_project_scope(&state, &principal, &project_id, false).await?;
     let rows = sqlx::query("SELECT id,title,status,queue_name,priority,version,attempt_count,created_at,updated_at FROM engineering_tasks WHERE project_id=$1 ORDER BY priority ASC,created_at ASC LIMIT 200")
-        .bind(&project_id).fetch_all(&state.db).await
+        .bind(&project_id).fetch_all(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_list_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let values: Vec<Value> = rows.into_iter().map(|r| json!({
         "id":r.get::<String,_>("id"), "title":r.get::<String,_>("title"),
         "status":r.get::<String,_>("status"), "queue":r.get::<String,_>("queue_name"),
@@ -517,7 +522,8 @@ async fn append_engineering_task_event(
     Json(body): Json<TaskEventBody>
 ) -> ApiResult<Json<Value>> {
     let principal = authenticate(&state, &headers).await?;
-    task_project_scope(&principal, &project_id)?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
+    task_project_scope(&state, &principal, &project_id, true).await?;
     if body.event_type != "comment" && body.event_type != "clarification" && body.event_type != "requirement.added" {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_task_event"));
     }
@@ -525,15 +531,16 @@ async fn append_engineering_task_event(
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task_event"));
     }
     let exists = sqlx::query("SELECT id FROM engineering_tasks WHERE id=$1 AND project_id=$2")
-        .bind(&task_id).bind(&project_id).fetch_optional(&state.db).await
+        .bind(&task_id).bind(&project_id).fetch_optional(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_lookup_failed"))?;
     if exists.is_none() { return Err(ApiError(StatusCode::NOT_FOUND, "task_not_found")); }
     let event_id = Uuid::new_v4().to_string();
     let result = sqlx::query("INSERT INTO engineering_task_events (id,task_id,project_id,actor,event_type,idempotency_key,payload) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (task_id,idempotency_key) DO NOTHING")
         .bind(&event_id).bind(&task_id).bind(&project_id).bind(&principal.actor)
         .bind(&body.event_type).bind(&body.idempotency_key).bind(&body.payload)
-        .execute(&state.db).await
+        .execute(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_event_write_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     audit(&state, &principal.actor, "engineering_task.event", "engineering_task", &task_id, json!({"event_type":body.event_type})).await;
     Ok(Json(json!({"accepted":true,"duplicate":result.rows_affected()==0,"event_id":if result.rows_affected()==1 {Some(event_id)} else {None}})))
 }
@@ -546,11 +553,12 @@ async fn transition_engineering_task(
     Json(body): Json<TaskTransitionBody>
 ) -> ApiResult<Json<Value>> {
     let principal = authenticate(&state, &headers).await?;
-    task_project_scope(&principal, &project_id)?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
+    task_project_scope(&state, &principal, &project_id, true).await?;
     let next = task_state::TaskStatus::parse(&body.next_status)
         .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unknown_task_status"))?;
     let row = sqlx::query("SELECT status,version FROM engineering_tasks WHERE id=$1 AND project_id=$2")
-        .bind(&task_id).bind(&project_id).fetch_optional(&state.db).await
+        .bind(&task_id).bind(&project_id).fetch_optional(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_lookup_failed"))?;
     let Some(row) = row else { return Err(ApiError(StatusCode::NOT_FOUND, "task_not_found")); };
     let current_text: String = row.try_get("status").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
@@ -572,12 +580,13 @@ async fn transition_engineering_task(
     }
     let updated = sqlx::query("UPDATE engineering_tasks SET status=$1,queue_name=$2,version=version+1,updated_at=NOW(),worker_id=NULL,lease_token_hash=NULL,lease_expires_at=NULL WHERE id=$3 AND project_id=$4 AND version=$5 RETURNING version")
         .bind(next.as_str()).bind(&queue).bind(&task_id).bind(&project_id).bind(body.expected_version)
-        .fetch_optional(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_transition_failed"))?;
+        .fetch_optional(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_transition_failed"))?;
     let Some(updated) = updated else { return Err(ApiError(StatusCode::CONFLICT, "task_version_conflict")); };
     sqlx::query("INSERT INTO engineering_task_events (id,task_id,project_id,actor,event_type,payload) VALUES ($1,$2,$3,$4,'task.transition',$5)")
         .bind(Uuid::new_v4().to_string()).bind(&task_id).bind(&project_id).bind(&principal.actor)
         .bind(json!({"from":current_text,"to":next.as_str(),"queue":queue}))
-        .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_event_write_failed"))?;
+        .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_event_write_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     audit(&state, &principal.actor, "engineering_task.transition", "engineering_task", &task_id, json!({"from":current_text,"to":next.as_str()})).await;
     Ok(Json(json!({"task_id":task_id,"status":next.as_str(),"queue":queue,"version":updated.try_get::<i64,_>("version").unwrap_or(body.expected_version+1)})))
 }
@@ -590,6 +599,7 @@ async fn claim_engineering_task(
     State(state): State<AppState>, headers: HeaderMap, Json(body): Json<TaskClaimBody>
 ) -> ApiResult<Json<Value>> {
     let principal = require_worker_queue(&state, &headers, &body.queue).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     if body.worker_id.trim().is_empty() || body.worker_id.len() > 120
         || principal.worker_id.as_deref() != Some(body.worker_id.as_str()) {
         return Err(ApiError(StatusCode::FORBIDDEN, "worker_identity_mismatch"));
@@ -641,7 +651,8 @@ async fn claim_engineering_task(
         FROM candidate WHERE t.id=candidate.id
         RETURNING t.id,t.project_id,t.title,t.objective,t.acceptance_criteria,t.dependencies,t.status,t.queue_name,t.version,t.lease_expires_at,t.lease_generation"
     ).bind(&body.queue).bind(project_id).bind(&body.worker_id).bind(&lease_hash).bind(lease_seconds).bind(tenant_id)
-     .fetch_optional(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_claim_failed"))?;
+     .fetch_optional(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_claim_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let Some(row) = row else { return Ok(Json(json!({"task":null}))); };
     let task_id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_claim_failed"))?;
     audit(&state, &principal.actor, "engineering_task.claim", "engineering_task", &task_id, json!({"queue":body.queue,"worker_id":body.worker_id})).await;
@@ -666,6 +677,7 @@ async fn heartbeat_engineering_task(
     State(state): State<AppState>, headers: HeaderMap, Path(task_id): Path<String>, Json(body): Json<TaskLeaseBody>
 ) -> ApiResult<Json<Value>> {
     let principal = require_worker_identity(&state, &headers).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     if body.lease_token.len() < 32 || body.worker_id.trim().is_empty()
         || principal.worker_id.as_deref() != Some(body.worker_id.as_str()) {
         return Err(ApiError(StatusCode::FORBIDDEN, "worker_identity_mismatch"));
@@ -677,7 +689,8 @@ async fn heartbeat_engineering_task(
     let hash = hex::encode(Sha256::digest(body.lease_token.as_bytes()));
     let row = sqlx::query("UPDATE engineering_tasks SET lease_expires_at=NOW()+INTERVAL '120 seconds',updated_at=NOW(),version=version+1 WHERE id=$1 AND lease_token_hash=$2 AND worker_id=$3 AND lease_expires_at>NOW() AND project_id=$4 AND tenant_id=$5 RETURNING project_id,lease_expires_at,lease_generation")
         .bind(&task_id).bind(hash).bind(&body.worker_id).bind(project_id).bind(tenant_id)
-        .fetch_optional(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_heartbeat_failed"))?;
+        .fetch_optional(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_heartbeat_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let Some(row) = row else { return Err(ApiError(StatusCode::CONFLICT, "task_lease_expired_or_invalid")); };
     Ok(Json(json!({"task_id":task_id,"lease_generation":row.try_get::<i64,_>("lease_generation").unwrap_or(0),"lease_expires_at":row.try_get::<DateTime<Utc>,_>("lease_expires_at").ok()})))
 }
@@ -707,6 +720,7 @@ async fn create_engineering_checkpoint(
     State(state): State<AppState>, headers: HeaderMap, Path(task_id): Path<String>, Json(body): Json<TaskCheckpointBody>
 ) -> ApiResult<Json<Value>> {
     let principal = require_worker_identity(&state, &headers).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let valid_sha = |v: &Option<String>| v.as_ref().is_none_or(|s| s.len()==40 && s.chars().all(|c| c.is_ascii_hexdigit()));
     if body.lease_token.len()<32 || body.worker_id.trim().is_empty()
         || principal.worker_id.as_deref() != Some(body.worker_id.as_str())
@@ -726,7 +740,7 @@ async fn create_engineering_checkpoint(
     let lease_hash = hex::encode(Sha256::digest(body.lease_token.as_bytes()));
     let row = sqlx::query("SELECT project_id FROM engineering_tasks WHERE id=$1 AND lease_token_hash=$2 AND worker_id=$3 AND lease_expires_at>NOW() AND project_id=$4 AND tenant_id=$5")
         .bind(&task_id).bind(lease_hash).bind(&body.worker_id).bind(project_id).bind(tenant_id)
-        .fetch_optional(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "checkpoint_lease_check_failed"))?;
+        .fetch_optional(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "checkpoint_lease_check_failed"))?;
     let Some(row) = row else { return Err(ApiError(StatusCode::CONFLICT, "task_lease_expired_or_invalid")); };
     let project_id: String = row.try_get("project_id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "checkpoint_lease_check_failed"))?;
     let checkpoint_id=Uuid::new_v4().to_string();
@@ -734,10 +748,11 @@ async fn create_engineering_checkpoint(
         .bind(&checkpoint_id).bind(&task_id).bind(&project_id).bind(&body.worker_id).bind(&body.stage)
         .bind(&body.base_sha).bind(&body.candidate_sha).bind(&body.artifact_digest)
         .bind(&body.workspace_id).bind(&body.git_ref).bind(&body.worktree_path).bind(&body.metadata)
-        .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "checkpoint_write_failed"))?;
+        .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "checkpoint_write_failed"))?;
     sqlx::query("UPDATE engineering_tasks SET last_checkpoint_id=$1,updated_at=NOW() WHERE id=$2 AND tenant_id=$3 AND project_id=$4")
         .bind(&checkpoint_id).bind(&task_id).bind(tenant_id).bind(&project_id)
-        .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "checkpoint_task_update_failed"))?;
+        .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "checkpoint_task_update_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     audit(&state, &principal.actor, "engineering_task.checkpoint", "engineering_task", &task_id, json!({"stage":body.stage,"checkpoint_id":checkpoint_id})).await;
     Ok(Json(json!({"checkpoint_id":checkpoint_id,"task_id":task_id,"stage":body.stage})))
 }
@@ -1038,6 +1053,7 @@ async fn create_engineering_workspace(
     Json(body): Json<WorkspaceCreateBody>
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let principal = require_project_owner_or_admin(&state, &headers, &project_id).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let valid_sha = body.base_sha.len()==40 && body.base_sha.chars().all(|c| c.is_ascii_hexdigit());
     let valid_branch = |v: &str| !v.is_empty() && v.len()<=200 && !v.starts_with('/')
         && !v.split('/').any(|part| part==".." || part.is_empty())
@@ -1063,13 +1079,14 @@ async fn create_engineering_workspace(
         .bind(&id).bind(&project_id).bind(&body.workspace_key).bind(&body.runtime_provider)
         .bind(&body.repository).bind(&body.base_branch).bind(&body.base_sha)
         .bind(&body.git_worktree_path).bind(&body.git_branch).bind(&body.metadata)
-        .execute(&state.db).await;
+        .execute(&mut *tx).await;
     if let Err(error)=result {
         if error.as_database_error().is_some_and(|db_error| db_error.code().as_deref()==Some("23505")) {
             return Err(ApiError(StatusCode::CONFLICT, "workspace_key_already_exists"));
         }
         return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "engineering_workspace_create_failed"));
     }
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     audit(&state,&principal.actor,"engineering_workspace.create","project",&project_id,json!({"workspace_id":id,"workspace_key":body.workspace_key})).await;
     Ok((StatusCode::CREATED,Json(json!({"id":id,"project_id":project_id,"workspace_key":body.workspace_key,"state":"idle","runtime_provider":body.runtime_provider,"repository":body.repository,"base_branch":body.base_branch,"base_sha":body.base_sha,"git_branch":body.git_branch}))))
 }
@@ -1078,10 +1095,12 @@ async fn list_engineering_workspaces(
     State(state): State<AppState>, headers: HeaderMap, Path(project_id): Path<String>
 ) -> ApiResult<Json<Value>> {
     let principal=require_project_access(&state,&headers).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     task_project_scope(&state,&principal,&project_id,false).await?;
     let rows=sqlx::query("SELECT id,workspace_key,runtime_provider,repository,base_branch,base_sha,git_worktree_path,git_branch,head_sha,state,lease_owner,lease_expires_at,last_heartbeat_at,created_at,updated_at FROM engineering_workspaces WHERE project_id=$1 ORDER BY created_at DESC LIMIT 200")
-        .bind(&project_id).fetch_all(&state.db).await
+        .bind(&project_id).fetch_all(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"engineering_workspace_list_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let values:Vec<Value>=rows.into_iter().map(|row|json!({
         "id":row.get::<String,_>("id"),"workspace_key":row.get::<String,_>("workspace_key"),
         "runtime_provider":row.get::<String,_>("runtime_provider"),"repository":row.get::<String,_>("repository"),
@@ -1116,6 +1135,7 @@ async fn lease_next_engineering_workspace(
     Json(body): Json<WorkspaceLeaseRequest>
 ) -> ApiResult<Json<Value>> {
     let principal=require_worker_identity(&state,&headers).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     if principal.project_id.as_deref()!=Some(project_id.as_str())
         || principal.worker_id.as_deref()!=Some(body.worker_id.as_str())
         || body.worker_id.trim().is_empty() {
@@ -1131,7 +1151,8 @@ async fn lease_next_engineering_workspace(
     let row=sqlx::query(
         "WITH candidate AS (SELECT id FROM engineering_workspaces WHERE tenant_id=$1 AND project_id=$2 AND state='idle' ORDER BY updated_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE engineering_workspaces w SET state='leased',lease_owner=$3,lease_token_hash=$4,lease_expires_at=NOW()+($5::text||' seconds')::interval,last_heartbeat_at=NOW(),updated_at=NOW() FROM candidate WHERE w.id=candidate.id RETURNING w.id,w.workspace_key,w.repository,w.base_branch,w.base_sha,w.git_worktree_path,w.git_branch,w.state,w.lease_expires_at"
     ).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(&hash).bind(lease_seconds)
-     .fetch_optional(&state.db).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_lease_failed"))?;
+     .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_lease_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let Some(row)=row else{return Ok(Json(json!({"workspace":null})));};
     let workspace_id:String=row.try_get("id").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_lease_failed"))?;
     audit(&state,&principal.actor,"engineering_workspace.lease","engineering_workspace",&workspace_id,json!({"worker_id":body.worker_id})).await;
@@ -1152,6 +1173,7 @@ async fn heartbeat_engineering_workspace(
     Json(body): Json<WorkspaceLeaseBody>
 ) -> ApiResult<Json<Value>> {
     let principal=require_worker_identity(&state,&headers).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     if principal.project_id.as_deref()!=Some(project_id.as_str())
         || principal.worker_id.as_deref()!=Some(body.worker_id.as_str())
         || body.lease_token.len()<32 {
@@ -1161,7 +1183,8 @@ async fn heartbeat_engineering_workspace(
     let hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
     let row=sqlx::query("UPDATE engineering_workspaces SET lease_expires_at=NOW()+INTERVAL '120 seconds',last_heartbeat_at=NOW(),updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() RETURNING lease_expires_at")
         .bind(&workspace_id).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(hash)
-        .fetch_optional(&state.db).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_heartbeat_failed"))?;
+        .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_heartbeat_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let Some(row)=row else{return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));};
     Ok(Json(json!({"workspace_id":workspace_id,"lease_expires_at":row.try_get::<DateTime<Utc>,_>("lease_expires_at").ok()})))
 }
@@ -1171,6 +1194,7 @@ async fn release_engineering_workspace(
     Json(body): Json<WorkspaceLeaseBody>
 ) -> ApiResult<StatusCode> {
     let principal=require_worker_identity(&state,&headers).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     if principal.project_id.as_deref()!=Some(project_id.as_str())
         || principal.worker_id.as_deref()!=Some(body.worker_id.as_str())
         || body.lease_token.len()<32 {
@@ -1183,8 +1207,9 @@ async fn release_engineering_workspace(
     let hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
     let result=sqlx::query("UPDATE engineering_workspaces SET state='idle',lease_owner=NULL,lease_token_hash=NULL,lease_expires_at=NULL,last_heartbeat_at=NOW(),head_sha=COALESCE($6,head_sha),updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW()")
         .bind(&workspace_id).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(hash).bind(&body.head_sha)
-        .execute(&state.db).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_release_failed"))?;
+        .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_release_failed"))?;
     if result.rows_affected()==0{return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));}
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     audit(&state,&principal.actor,"engineering_workspace.release","engineering_workspace",&workspace_id,json!({"worker_id":body.worker_id})).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1234,7 +1259,7 @@ async fn record_engineering_task_attempt(
     let project_id=principal.project_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_project_scope_required"))?;
     let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
     let lease_hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
-    let mut tx=state.db.begin().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_transaction_failed"))?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     let row=sqlx::query("SELECT model_attempts FROM engineering_tasks WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND worker_id=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() FOR UPDATE")
         .bind(&task_id).bind(tenant_id).bind(project_id).bind(&body.worker_id).bind(&lease_hash)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_lease_check_failed"))?;
@@ -1261,6 +1286,7 @@ async fn list_engineering_task_attempts(
     State(state): State<AppState>, headers: HeaderMap, Path((project_id,task_id)): Path<(String,String)>
 ) -> ApiResult<Json<Value>> {
     let principal=authenticate(&state,&headers).await?;
+    let mut tx=begin_principal_transaction(&state,&principal).await?;
     if principal.worker_id.is_some() {
         if principal.project_id.as_deref()!=Some(project_id.as_str()) {
             return Err(ApiError(StatusCode::FORBIDDEN,"project_scope_forbidden"));
@@ -1269,8 +1295,9 @@ async fn list_engineering_task_attempts(
         task_project_scope(&state,&principal,&project_id,false).await?;
     }
     let rows=sqlx::query("SELECT id,attempt_no,worker_id,worker_role,provider_id,model_id,strategy,outcome,error_code,error_summary,acceptance_progress::text AS acceptance_progress,estimated_cost_minor,actual_cost_minor,started_at,finished_at FROM engineering_task_attempts WHERE tenant_id=(SELECT tenant_id FROM projects WHERE id=$1) AND project_id=$1 AND task_id=$2 ORDER BY attempt_no ASC")
-        .bind(&project_id).bind(&task_id).fetch_all(&state.db).await
+        .bind(&project_id).bind(&task_id).fetch_all(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_list_failed"))?;
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
     let values:Vec<Value>=rows.into_iter().map(|row|json!({
         "id":row.get::<String,_>("id"),"attempt_no":row.get::<i32,_>("attempt_no"),
         "worker_id":row.get::<String,_>("worker_id"),"worker_role":row.get::<String,_>("worker_role"),
