@@ -350,10 +350,17 @@ async fn require_project_owner_or_admin(
 }
 
 async fn audit(state: &AppState, actor: &str, action: &str, resource_type: &str, resource_id: &str, details: Value) {
-    if let Err(err) = sqlx::query(
-        "INSERT INTO audit_events (id, occurred_at, actor, action, resource_type, resource_id, details) VALUES ($1,$2,$3,$4,$5,$6,$7)"
-    ).bind(Uuid::new_v4().to_string()).bind(Utc::now()).bind(actor).bind(action)
-     .bind(resource_type).bind(resource_id).bind(details).execute(&state.db).await {
+    let result = async {
+        let mut tx=state.db.begin().await?;
+        sqlx::query("SELECT set_config('app.is_admin','true',true),set_config('app.tenant_id','',true)")
+            .execute(&mut *tx).await?;
+        sqlx::query(
+            "INSERT INTO audit_events (id, occurred_at, actor, action, resource_type, resource_id, details) VALUES ($1,$2,$3,$4,$5,$6,$7)"
+        ).bind(Uuid::new_v4().to_string()).bind(Utc::now()).bind(actor).bind(action)
+         .bind(resource_type).bind(resource_id).bind(details).execute(&mut *tx).await?;
+        tx.commit().await
+    }.await;
+    if let Err(err) = result {
         error!(error = %err, action, "audit persistence failed");
     }
 }
