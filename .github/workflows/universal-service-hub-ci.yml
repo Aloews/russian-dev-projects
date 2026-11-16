@@ -345,6 +345,41 @@ jobs:
               --arg base_sha "$assigned_workspace_base_sha" \
               '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"implementer",writer_scope:["universal-service-hub/src/","universal-service-hub/rust-migrations/"],base_sha:$base_sha}')")
           printf '%s' "$assignment_response" | jq -e '.assignment_id != null and (.writer_scope | length == 2)' >/dev/null
+
+          second_task=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tasks \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"idempotency_key":"smoke-task-2","title":"Concurrent writer task","objective":"Prove overlapping writer scopes are exclusive","acceptance_criteria":["Reject overlapping writer scope"],"dependencies":[]}')
+          second_task_id=$(printf '%s' "$second_task" | jq -r '.id')
+          second_version=$(printf '%s' "$second_task" | jq -r '.version')
+          for next_status in classified planned queued; do
+            second_transition=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$second_task_id/transition" \
+              -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+              -d "$(jq -nc --arg next_status "$next_status" --argjson expected_version "$second_version" '{next_status:$next_status,expected_version:$expected_version}')")
+            second_version=$(printf '%s' "$second_transition" | jq -r '.version')
+          done
+          second_claim=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d '{"queue":"implementation","worker_id":"implementer-smoke"}')
+          second_task_lease=$(printf '%s' "$second_claim" | jq -r '.lease_token')
+          echo "::add-mask::$second_task_lease"
+          second_workspace=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/lease-next \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d '{"worker_id":"implementer-smoke","lease_seconds":120}')
+          second_workspace_id=$(printf '%s' "$second_workspace" | jq -r '.workspace.id')
+          second_workspace_lease=$(printf '%s' "$second_workspace" | jq -r '.lease_token')
+          second_workspace_sha=$(printf '%s' "$second_workspace" | jq -r '.workspace.base_sha')
+          echo "::add-mask::$second_workspace_lease"
+          overlap_status=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:8000/v1/tasks/$second_task_id/workspace-assignment" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg task_lease_token "$second_task_lease" \
+              --arg workspace_id "$second_workspace_id" --arg workspace_lease_token "$second_workspace_lease" \
+              --arg base_sha "$second_workspace_sha" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"implementer",writer_scope:["universal-service-hub/src/"],base_sha:$base_sha}')")
+          test "$overlap_status" = "409"
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$second_workspace_id/release" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$second_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
+
           curl -fsS -X DELETE "http://127.0.0.1:8000/v1/tasks/$task_id/workspace-assignment" \
             -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
             -d "$(jq -nc --arg worker_id "implementer-smoke" --arg task_lease_token "$task_lease" \
