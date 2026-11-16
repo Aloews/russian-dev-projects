@@ -545,6 +545,7 @@ async fn create_engineering_task(
         "id":task_id, "title":row.try_get::<String,_>("title").unwrap_or_default(),
         "objective":row.try_get::<String,_>("objective").unwrap_or_default(),
         "metadata":row.try_get::<Value,_>("metadata").unwrap_or(json!({})),
+        "candidate_sha":row.try_get::<Option<String>,_>("candidate_sha").unwrap_or(None),
         "status":row.try_get::<String,_>("status").unwrap_or_default(),
         "queue":row.try_get::<String,_>("queue_name").unwrap_or_default(),
         "priority":row.try_get::<i32,_>("priority").unwrap_or(100),
@@ -559,7 +560,7 @@ async fn list_engineering_tasks(
     let principal = require_project_access(&state, &headers).await?;
     let mut tx=begin_principal_transaction(&state,&principal).await?;
     task_project_scope(&state, &principal, &project_id, false).await?;
-    let rows = sqlx::query("SELECT id,title,status,queue_name,priority,version,attempt_count,created_at,updated_at FROM engineering_tasks WHERE project_id=$1 ORDER BY priority ASC,created_at ASC LIMIT 200")
+    let rows = sqlx::query("SELECT id,title,status,queue_name,priority,version,attempt_count,metadata,candidate_sha,created_at,updated_at FROM engineering_tasks WHERE project_id=$1 ORDER BY priority ASC,created_at ASC LIMIT 200")
         .bind(&project_id).fetch_all(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_list_failed"))?;
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
@@ -568,6 +569,8 @@ async fn list_engineering_tasks(
         "status":r.get::<String,_>("status"), "queue":r.get::<String,_>("queue_name"),
         "priority":r.get::<i32,_>("priority"), "version":r.get::<i64,_>("version"),
         "attempt_count":r.get::<i32,_>("attempt_count"),
+        "metadata":r.get::<Value,_>("metadata"),
+        "candidate_sha":r.get::<Option<String>,_>("candidate_sha"),
         "created_at":r.get::<DateTime<Utc>,_>("created_at"),
         "updated_at":r.get::<DateTime<Utc>,_>("updated_at")
     })).collect();
@@ -715,7 +718,7 @@ async fn claim_engineering_task(
             claimed_at=NOW(), lease_generation=t.lease_generation+1,
             attempt_count=t.attempt_count+1, version=t.version+1, updated_at=NOW()
         FROM candidate WHERE t.id=candidate.id
-        RETURNING t.id,t.project_id,t.title,t.objective,t.acceptance_criteria,t.dependencies,t.status,t.queue_name,t.version,t.lease_expires_at,t.lease_generation"
+        RETURNING t.id,t.project_id,t.title,t.objective,t.acceptance_criteria,t.dependencies,t.metadata,t.candidate_sha,t.status,t.queue_name,t.version,t.lease_expires_at,t.lease_generation"
     ).bind(&body.queue).bind(project_id).bind(&body.worker_id).bind(&lease_hash).bind(lease_seconds).bind(tenant_id)
      .fetch_optional(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_claim_failed"))?;
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
@@ -728,6 +731,8 @@ async fn claim_engineering_task(
         "objective":row.try_get::<String,_>("objective").unwrap_or_default(),
         "acceptance_criteria":row.try_get::<Value,_>("acceptance_criteria").unwrap_or(json!([])),
         "dependencies":row.try_get::<Value,_>("dependencies").unwrap_or(json!([])),
+        "metadata":row.try_get::<Value,_>("metadata").unwrap_or(json!({})),
+        "candidate_sha":row.try_get::<Option<String>,_>("candidate_sha").unwrap_or(None),
         "status":row.try_get::<String,_>("status").unwrap_or_default(),
         "queue":row.try_get::<String,_>("queue_name").unwrap_or_default(),
         "version":row.try_get::<i64,_>("version").unwrap_or(1),
