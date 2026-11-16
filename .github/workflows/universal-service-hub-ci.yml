@@ -119,6 +119,7 @@ jobs:
           USH_APP_DB_PASSWORD: ush-test-password
         run: |
           bash -n scripts/dev-up.sh scripts/dev-down.sh
+          sh -n scripts/init-app-db-role.sh
           docker compose --env-file .env.example -f compose.yml config -q
       - name: Local Compose runtime startup smoke
         run: |
