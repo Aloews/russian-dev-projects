@@ -35,16 +35,16 @@ Work autonomously within the permissions and safety boundaries below.
 - If a credential, permission, quota or external approval is missing, continue all independent work and record the exact blocker; do not ask the user to perform routine debugging.
 - Never claim a task, test, deployment, failover or provider connection succeeded without direct evidence.
 
-## Preferred coding-agent workflow
+## Temporary external bootstrap workflow (not Hub self-hosting)
 
-- For changes to the Universal Service Hub itself, use the dedicated GitHub Actions workflow Universal Hub — Codex + Claude Code.
+- Until the Hub API passes its self-hosting acceptance gate, the dedicated GitHub Actions workflow Universal Hub — Codex + Claude Code may be used only as a bounded bootstrap runner to implement missing API/worker capabilities. It is not the permanent engineering path.
 - Codex CLI through Starimg's OpenAI Responses API is the primary implementation writer.
 - Claude Code CLI through Starimg's Anthropic Messages API is the sequential independent reviewer and repair writer. Planning through Claude Code must also use an Anthropic Messages-compatible model; do not silently pass an OpenAI-only model to that client.
 - The workflow discovers exact model IDs from the live Starimg model catalogue and verifies forced tool calling on both protocols before starting either CLI.
 - Keep the two coding agents sequential; never let them write overlapping files concurrently.
 - Both agents may change only `universal-service-hub/`. They must not read or expose secrets, commit, push, create PRs, merge, deploy or mutate production data.
 - GitHub CI validates the exact PR head. A passing model probe is not proof that code is correct; a passing build is not proof of production readiness.
-- Do not use OpenRouter or local Qwen as the default writer for Hub development. They remain separate fallback/legacy routes until a deliberate, tested migration changes that policy.
+- Prefer the configured Starimg route only after a fresh live probe. Do not silently switch provider or model. Local Qwen is a separately labelled fallback and may run only after its sandbox, path, secret-isolation and task-quality gates pass.
 
 ## API and documentation contract
 
