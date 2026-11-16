@@ -1221,14 +1221,14 @@ async fn record_engineering_task_attempt(
     let Some(row)=row else{return Err(ApiError(StatusCode::CONFLICT,"task_lease_expired_or_invalid"));};
     let attempt_no:i32=row.try_get::<i32,_>("model_attempts").unwrap_or(0)+1;
     let attempt_id=Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO engineering_task_attempts (id,tenant_id,project_id,task_id,attempt_no,worker_id,worker_role,provider_id,model_id,strategy,outcome,error_code,error_summary,acceptance_progress,estimated_cost_minor,actual_cost_minor,metadata,finished_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,CASE WHEN $11='started' THEN NULL ELSE NOW() END)")
+    sqlx::query("INSERT INTO engineering_task_attempts (id,tenant_id,project_id,task_id,attempt_no,worker_id,worker_role,provider_id,model_id,strategy,outcome,error_code,error_summary,acceptance_progress,estimated_cost_minor,actual_cost_minor,metadata,finished_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,($14::double precision)::numeric,$15,$16,$17,CASE WHEN $11='started' THEN NULL ELSE NOW() END)")
         .bind(&attempt_id).bind(tenant_id).bind(project_id).bind(&task_id).bind(attempt_no)
         .bind(&body.worker_id).bind(principal.worker_role.as_deref().unwrap_or("implementer"))
         .bind(&body.provider_id).bind(&body.model_id).bind(&body.strategy).bind(&body.outcome)
         .bind(&body.error_code).bind(&body.error_summary).bind(body.acceptance_progress)
         .bind(body.estimated_cost_minor).bind(body.actual_cost_minor).bind(&body.metadata)
         .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_write_failed"))?;
-    sqlx::query("UPDATE engineering_tasks SET model_attempts=$1,last_model_id=COALESCE($2,last_model_id),last_strategy=$3,acceptance_progress=$4,blocked_reason=CASE WHEN $5='failed' THEN $6 ELSE NULL END,updated_at=NOW(),version=version+1 WHERE id=$7 AND tenant_id=$8 AND project_id=$9")
+    sqlx::query("UPDATE engineering_tasks SET model_attempts=$1,last_model_id=COALESCE($2,last_model_id),last_strategy=$3,acceptance_progress=($4::double precision)::numeric,blocked_reason=CASE WHEN $5='failed' THEN $6 ELSE NULL END,updated_at=NOW(),version=version+1 WHERE id=$7 AND tenant_id=$8 AND project_id=$9")
         .bind(attempt_no).bind(&body.model_id).bind(&body.strategy).bind(body.acceptance_progress)
         .bind(&body.outcome).bind(&body.error_summary).bind(&task_id).bind(tenant_id).bind(project_id)
         .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_attempt_update_failed"))?;
