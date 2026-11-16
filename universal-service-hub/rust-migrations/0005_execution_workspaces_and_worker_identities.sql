@@ -40,12 +40,14 @@ CREATE TABLE engineering_worker_tokens (
     revoked_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_used_at TIMESTAMPTZ,
-    UNIQUE (tenant_id, project_id, worker_id),
     CONSTRAINT fk_engineering_worker_tokens_tenant_project
         FOREIGN KEY (tenant_id, project_id) REFERENCES projects(tenant_id, id) ON DELETE CASCADE
 );
 CREATE INDEX ix_engineering_worker_tokens_active
     ON engineering_worker_tokens(tenant_id, project_id, worker_role)
+    WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX uq_engineering_worker_tokens_active_id
+    ON engineering_worker_tokens(tenant_id, project_id, worker_id)
     WHERE revoked_at IS NULL;
 
 CREATE TABLE engineering_workspaces (
