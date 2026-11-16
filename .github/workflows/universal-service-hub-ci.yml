@@ -239,6 +239,12 @@ jobs:
           tester_token=$(printf '%s' "$tester_response" | jq -r '.token')
           echo "::add-mask::$tester_token"
 
+          implementer_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workers \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"name":"implementer","worker_id":"implementer-smoke","worker_role":"implementer"}')
+          implementer_token=$(printf '%s' "$implementer_response" | jq -r '.token')
+          echo "::add-mask::$implementer_token"
+
           curl -fsS -H "Authorization: Bearer $owner_token" \
             http://127.0.0.1:8000/v1/projects/smoke-project/workers | jq -e 'length == 2' >/dev/null
 
@@ -252,6 +258,51 @@ jobs:
             -H "Authorization: Bearer $architect_token" -H "Content-Type: application/json" \
             -d '{"queue":"planning","worker_id":"architect-smoke"}')
           printf '%s' "$correct_worker_queue" | jq -e '.task == null' >/dev/null
+
+          curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"workspace_key":"workspace-a","runtime_provider":"railway","repository":"Aloews/russian-dev-projects","base_branch":"main","base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' >/dev/null
+          curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"workspace_key":"workspace-b","runtime_provider":"railway","repository":"Aloews/russian-dev-projects","base_branch":"main","base_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' >/dev/null
+          curl -fsS -H "Authorization: Bearer $owner_token" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/workspaces | jq -e 'length == 2' >/dev/null
+
+          implementer_workspace=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/lease-next \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d '{"worker_id":"implementer-smoke","lease_seconds":120}')
+          implementer_workspace_id=$(printf '%s' "$implementer_workspace" | jq -r '.workspace.id')
+          implementer_workspace_lease=$(printf '%s' "$implementer_workspace" | jq -r '.lease_token')
+          echo "::add-mask::$implementer_workspace_lease"
+
+          tester_workspace=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/lease-next \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d '{"worker_id":"tester-smoke","lease_seconds":120}')
+          tester_workspace_id=$(printf '%s' "$tester_workspace" | jq -r '.workspace.id')
+          tester_workspace_lease=$(printf '%s' "$tester_workspace" | jq -r '.lease_token')
+          echo "::add-mask::$tester_workspace_lease"
+          test "$implementer_workspace_id" != "$tester_workspace_id"
+
+          workspace_heartbeat=$(curl -fsS -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/heartbeat" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "{\\"worker_id\\":\\"implementer-smoke\\",\\"lease_token\\":\\"$implementer_workspace_lease\\"}")
+          printf '%s' "$workspace_heartbeat" | jq -e '.workspace_id != null' >/dev/null
+
+          wrong_workspace_owner=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/heartbeat" \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d "{\\"worker_id\\":\\"tester-smoke\\",\\"lease_token\\":\\"$implementer_workspace_lease\\"}")
+          test "$wrong_workspace_owner" = "403"
+
+          curl -fsS -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/release" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "{\\"worker_id\\":\\"implementer-smoke\\",\\"lease_token\\":\\"$implementer_workspace_lease\\"}" >/dev/null
+          curl -fsS -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$tester_workspace_id/release" \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d "{\\"worker_id\\":\\"tester-smoke\\",\\"lease_token\\":\\"$tester_workspace_lease\\"}" >/dev/null
 
           curl -fsS -H "Authorization: Bearer $owner_token" \
             http://127.0.0.1:8000/v1/projects/smoke-project/tokens | jq -e 'length == 3' >/dev/null
