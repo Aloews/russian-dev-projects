@@ -18,16 +18,16 @@ See [`docs/PROVIDER_API_MATRIX.md`](docs/PROVIDER_API_MATRIX.md) for the request
 
 ## Run locally
 
-The Rust runtime requires PostgreSQL.
+The production container runs the Rust Axum/SQLx runtime. PostgreSQL is required. With Docker Compose v2 installed:
 
-```bash
+~~~bash
 cd universal-service-hub
-export USH_DATABASE_URL="postgres://ush:password@localhost:5432/ush"
-export USH_API_TOKEN="$(openssl rand -hex 32)"
-cargo run --release
-```
+bash scripts/dev-up.sh
+~~~
 
-The Rust binary applies its SQLx migrations on startup. The production Docker image runs the Rust binary. Python/FastAPI files and tests are retained temporarily as a reference while route parity is verified; they are not the production container entrypoint.
+This creates local-only credentials in .env, starts PostgreSQL 17 and the Hub, applies SQLx migrations, and checks database readiness plus authenticated API access. The API is available at http://localhost:8000. See docs/OPERATIONS.md for shutdown, direct Rust development and deployment configuration.
+
+The Python/FastAPI files remain a compatibility/reference implementation; they are not the production container entrypoint.
 
 ## API
 
