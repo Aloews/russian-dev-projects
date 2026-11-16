@@ -261,7 +261,7 @@ jobs:
           echo "::add-mask::$implementer_token"
 
           curl -fsS -H "Authorization: Bearer $owner_token" \
-            http://127.0.0.1:8000/v1/projects/smoke-project/workers | jq -e 'length == 2' >/dev/null
+            http://127.0.0.1:8000/v1/projects/smoke-project/workers | jq -e 'length == 3' >/dev/null
 
           wrong_worker_queue=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
             http://127.0.0.1:8000/v1/tasks/claim \
@@ -450,7 +450,7 @@ jobs:
             -d "$(jq -nc --arg worker_id "implementer-smoke" --arg task_lease_token "$task_lease" \
               --arg workspace_id "$implementer_workspace_id" --arg workspace_lease_token "$implementer_workspace_lease" \
               --arg candidate_sha "$candidate_sha" \
-              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,next_status:"review",candidate_sha:$candidate_sha,evidence:{pr_number:64,checks:"smoke-passed",source_issue:63}}')" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,next_status:"review",candidate_sha:$candidate_sha,evidence:{commit_sha:$candidate_sha,changed_files:["universal-service-hub/src/main.rs"],validation:{rustfmt:"passed",clippy:"passed",tests:"passed"}}}')" \
             | jq -e '.status == "review" and .candidate_sha != null' >/dev/null
 
           curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$second_task_id/complete" \
@@ -480,7 +480,7 @@ jobs:
               --arg workspace_id "$reviewer_workspace_id" --arg workspace_lease_token "$reviewer_workspace_lease" \
               --arg candidate_sha "dddddddddddddddddddddddddddddddddddddddd" --arg base_sha "$candidate_sha" \
               '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"reviewer",writer_scope:[],base_sha:$base_sha,candidate_sha:$candidate_sha}')")
-          test "$wrong_candidate_assignment" = "409"
+          test "$wrong_candidate_assignment" = "422"
 
           curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/workspace-assignment" \
             -H "Authorization: Bearer $reviewer_token" -H "Content-Type: application/json" \
@@ -508,7 +508,7 @@ jobs:
             -d "$(jq -nc --arg worker_id "reviewer-smoke" --arg task_lease_token "$reviewer_task_lease" \
               --arg workspace_id "$reviewer_workspace_id" --arg workspace_lease_token "$reviewer_workspace_lease" \
               --arg candidate_sha "$candidate_sha" \
-              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,next_status:"verified",candidate_sha:$candidate_sha,evidence:{review:"passed",candidate_sha:$candidate_sha}}')" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,next_status:"verified",candidate_sha:$candidate_sha,evidence:{decision:"approved",reviewed_sha:$candidate_sha,findings:[]}}')" \
             | jq -e '.status == "verified" and .candidate_sha != null' >/dev/null
 
           final_tasks=$(curl -fsS -H "Authorization: Bearer $tenant_alpha_token" \
