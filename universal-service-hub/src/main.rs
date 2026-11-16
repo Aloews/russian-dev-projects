@@ -1246,6 +1246,25 @@ async fn assign_engineering_task_workspace(
                 ApiError(StatusCode::CONFLICT,"task_already_has_active_workspace")
             } else { ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_create_failed") }
         })?;
+    let existing_locks=sqlx::query("SELECT path_prefix FROM engineering_task_path_locks WHERE tenant_id=$1 AND project_id=$2 AND lease_expires_at>NOW()")
+        .bind(tenant_id).bind(project_id).fetch_all(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_check_failed"))?;
+    for row in existing_locks {
+        let existing_path:String=row.try_get("path_prefix").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_check_failed"))?;
+        if body.writer_scope.iter().any(|path|workspace_paths_overlap(path,&existing_path)) {
+            return Err(ApiError(StatusCode::CONFLICT,"workspace_writer_scope_conflict"));
+        }
+    }
+    for path_prefix in &body.writer_scope {
+        let normalized_path=path_prefix.trim_end_matches('/');
+        sqlx::query("INSERT INTO engineering_task_path_locks (id,project_id,task_id,workspace_id,path_prefix,lock_owner,lease_expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+            .bind(Uuid::new_v4().to_string()).bind(project_id).bind(&task_id).bind(&body.workspace_id)
+            .bind(normalized_path).bind(worker_id).bind(std::cmp::min(
+                task.try_get::<DateTime<Utc>,_>("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_task_check_failed"))?,
+                workspace.try_get::<DateTime<Utc>,_>("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_workspace_check_failed"))?
+            ))
+            .execute(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_path_lock_create_failed"))?;
+    }
     let task_expires:DateTime<Utc>=task.try_get("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_task_check_failed"))?;
     let workspace_expires:DateTime<Utc>=workspace.try_get("lease_expires_at").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_assignment_workspace_check_failed"))?;
     let assignment_expires=std::cmp::min(task_expires,workspace_expires);
