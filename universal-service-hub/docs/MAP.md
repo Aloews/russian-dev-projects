@@ -489,7 +489,7 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Tenant membership rows are not yet bound to a verified human OIDC identity. Tenant service tokens work, but user session identity, invitation/SCIM lifecycle and support elevation are outstanding.
 - Tenant resource limits, budget policies, usage ledger and provider-connection records are schema only; runtime enforcement and billing attribution remain outstanding.
 - Workspace records and path locks are implemented, but actual isolated Git worktree provisioning, persistent workspace storage, shell/network sandboxing, artifacts, caches and per-tenant logs are not yet connected to the Railway execution plane.
-- The GitHub/Starimg USH adapter is implemented behind an explicit one-repository and narrow-path feature flag, but Railway remains disabled until exact-head CI, runtime integration, provider-call and restart/recovery acceptance pass.
+- The existing GitHub/Starimg worker has a USH-only repository/path scope gate and validated model fallback/strategy rotation. It is **not yet connected to the USH PostgreSQL task API**: intake is still owner-authored GitHub `/ai` comments, execution remains bounded to one issue per invocation, and the Railway workers remain disabled. Do not describe this as an end-to-end USH adapter.
 - Independent queue roles and persisted attempts exist in the API. The existing Railway worker is not yet a durable API-backed multi-role scheduler; unrelated tasks are not yet proven to continue concurrently while another waits on CI/review.
 - Fair tenant scheduling, tenant export/deletion and cross-tenant penetration testing remain outstanding.
 - No public signup/onboarding, production deployment or self-hosting acceptance is enabled.
@@ -497,7 +497,7 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 ### Next implementation order
 
 1. Pass exact-head Rust/Clippy/migration/Compose/API/RLS tests; repair any failures without weakening gates.
-2. Connect the USH adapter to the durable task and workspace APIs, create persistent Git worktrees on the existing Railway runtime, and checkpoint each accepted unit.
+2. Convert the USH-only worker scope into a real project adapter: poll/claim PostgreSQL tasks with worker leases, lease/assign workspaces, use persistent Git worktrees, heartbeat and checkpoint accepted units, and publish evidence through the API.
 3. Split architect/implementer/builder/tester/reviewer/recovery into independent queue consumers; keep independent DAG branches moving while CI/review is pending.
 4. Route retries through validated Starimg model candidates and strategy changes, recording every attempt and cost; prove a real provider call in a bounded sandbox.
 5. Complete route-by-route tenant isolation for project/token/provider/usage/audit/artifact surfaces, then OIDC memberships, quotas/budgets, export/deletion and penetration tests.
