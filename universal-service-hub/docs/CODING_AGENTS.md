@@ -2,13 +2,13 @@
 
 ## Roles
 
-The Hub's own engineering workflow uses two coding CLIs through the existing Starimg account:
+The temporary external bootstrap workflow uses two coding CLIs through the existing Starimg account. It is not the Hub executing work through its own API:
 
 1. Codex CLI through Starimg's OpenAI Responses API is the primary implementation writer.
 2. Claude Code CLI through Starimg's Anthropic Messages API is the sequential independent reviewer and repair writer. It inspects the actual Codex diff, fixes blocking defects and reruns relevant checks.
 3. GitHub Actions verifies the exact PR head. Agents do not receive the GitHub write token; only the final publication step can push a candidate branch and open a PR.
 
-This workflow is specific to developing Universal Service Hub itself. The existing Product Factory workflow for target products remains separate until its own migration is reviewed and tested.
+This workflow is permitted only until the Hub API has durable engineering tasks, protocol-aware tool calling, an isolated worker, evidence gates and recovery. After the self-hosting gate passes, the Hub API becomes the only normal path for Hub source changes. The existing Product Factory workflow remains separate until its own migration is reviewed and tested.
 
 ## Provider configuration
 
@@ -38,7 +38,7 @@ Codex uses a named Starimg provider, wire_api = responses, and the STARIMG_API_K
 
 ## Execution and safety
 
-- Start the workflow manually from GitHub Actions: Universal Hub — Codex + Claude Code. After the workflow is merged to the default branch, the repository owner can also comment exactly /hub run on a PR to start the default objective.
+- During bootstrap only, start the workflow manually from GitHub Actions: Universal Hub — Codex + Claude Code. After the self-hosting gate passes, use the authenticated Hub engineering-task API instead; this external workflow must invoke the API rather than edit source files directly.
 - Choose a current base branch and a bounded engineering objective.
 - Codex writes first. Claude Code then inspects the real diff and can repair it.
 - The two agents run sequentially on one ephemeral GitHub-hosted runner to avoid concurrent edits.
@@ -51,7 +51,7 @@ The Starimg key is scoped to the model-probe and CLI steps. Codex is configured 
 
 ## Current limitations
 
-- The workflow has not yet been executed against the live Starimg account. The first run must prove both Responses function calling and Anthropic Messages tool use with the actual key and selected models.
+- The historical live run #43838020363 failed before PR #56 on the old cross-protocol model-selection bug. PR #56 corrected the external workflow. A fresh post-fix live Starimg probe has not yet been verified.
 - Codex and Claude Code model IDs, quotas and billing multipliers are account-dependent. The workflow discovers IDs but does not assume the account's remaining balance or spending limit.
 - A green provider probe proves only the minimal protocol/tool-call contract. It does not prove long-context reliability, full coding quality, provider uptime or successful completion of a product task.
 - GitHub Actions CI and independent review remain mandatory. No workflow run or generated patch is considered a finished Hub release by itself.
