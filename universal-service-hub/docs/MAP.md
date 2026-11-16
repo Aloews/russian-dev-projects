@@ -497,3 +497,14 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - **Next implementation increment: tenant identity and authorization.** Extend the authenticated principal with a verified tenant scope; authenticate tenant service tokens and project tokens through stored ownership; implement membership/token lifecycle and tenant/workspace/project administration with least-privilege policy checks. Add deny-by-default cross-tenant API tests before introducing RLS. RLS must use transaction-local context and a non-owner runtime DB role, with pooled-connection leakage tests.
 - Current source inspection confirms `Principal` still has no `tenant_id`; authentication still accepts only the platform admin token and project tokens. Existing task routes enforce project ID but not a first-class tenant principal. This is an explicit security gap, not a completed feature.
 - PR #64 remains open and unmerged. Production deployment and external tenant onboarding remain disabled.
+
+
+## Reproducible cloud development environment
+
+- **Status:** devcontainer configuration added on branch `feat/ush-codespaces-development-environment`; GitHub Codespaces launch and live startup are pending owner-side verification.
+- Root `.devcontainer/devcontainer.json` defines a Linux Rust development container with Docker Engine/Compose v2, GitHub CLI, editor tooling and port forwarding for the Hub API.
+- The post-create script installs Rust formatting/lint components and fetches dependencies. It does not build, test, deploy or access production.
+- `universal-service-hub/docs/DEVELOPMENT_ENVIRONMENT.md` documents Codespaces and local VS Code startup, local app lifecycle, Git worktrees and security limits.
+- A dedicated GitHub Actions workflow validates devcontainer JSON, bootstrap shell syntax, Rust formatting and Cargo manifest metadata.
+- This is a developer workspace for trusted contributors, not the future multi-tenant untrusted-agent sandbox. Tenant-isolated compute, network egress policy, ephemeral credentials, per-tenant budgets and evidence-backed job orchestration remain separate USH implementation gates.
+- No Codespace was provisioned by this change and no paid compute was started. A live Codespace launch plus `bash universal-service-hub/scripts/dev-up.sh` remains required before marking the environment operational.
