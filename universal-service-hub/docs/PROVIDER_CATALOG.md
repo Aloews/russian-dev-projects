@@ -64,31 +64,30 @@ This catalog defines categories to evaluate. Listing a vendor is not evidence of
 - Cerebras
 - Self-hosted inference (vLLM / Ollama) when economically and operationally justified
 
-## Provider execution and recovery order
+## Model and agent execution policy
 
-1. **Starimg / Fable 5.2** — primary senior implementation and repair agent. Before launch, the workflow sends a real Anthropic Messages tool-call probe; a present key is not considered valid until a funded tool call succeeds.
-2. **Starimg / Claude Opus 5.5** — bounded senior-engineer fallback if Fable is unavailable or fails.
-3. **OpenRouter / Claude Sonnet 4.5** — optional provider fallback through the Anthropic Messages-compatible endpoint `https://openrouter.ai/api`, using `ANTHROPIC_AUTH_TOKEN` (Bearer) and `OPENROUTER_API_KEY`. It is attempted only when the OpenRouter tool-call probe succeeds. Budget ceiling: USD 10.
-4. **Local Ollama / Qwen2.5-Coder 3B** — provider-independent implementation/recovery path. It runs a bounded multi-role engineering pass, requires real source/test changes, validates exact old-text edits, and fails closed on timeouts or documentation-only candidates.
+A model, provider and CLI are separate registry entities. Model availability in a catalogue does not establish protocol compatibility, task quality, price, account balance or a working integration.
 
-Starimg senior-agent budgets are capped at USD 15 for Fable and USD 10 for Opus; OpenRouter is capped at USD 10. The combined external-agent ceiling is USD 35 per run, excluding the small compatibility probes. A 402 insufficient-balance response is recorded as exhausted provider quota, not misclassified as a tool-protocol defect. The workflow preserves redacted diagnostics as an artifact.
+- **Codex CLI (OpenAI tool):** use only with a model that passed the OpenAI Responses/function-call probe. Fable/Claude models must never be assigned to this slot.
+- **Claude Code CLI (Anthropic tool):** use only with a model that passed the Anthropic Messages/tool-use probe. Fable 5.2 is a Claude-family model and belongs here.
+- **Astra:** treat as an OpenAI-family model only after its exact live ID is discovered and it passes the Responses probe. Use it for high-compute planning/escalation when budget policy authorizes it.
+- **Fable 5.2:** use through Claude Code only after its exact live ID passes the Anthropic Messages probe and premium escalation is authorized.
+- Ordinary tasks use a verified baseline model. Premium models are not mandatory defaults; select them when objective quality gates fail, the task is high-risk/ambiguous, or an approved budget/balance policy allows the higher-cost route.
+- Both CLIs participate before source changes: Codex CLI drafts the plan; Claude Code independently challenges it. Then Codex implements and Claude Code reviews the implementation.
+- The current workflow's premium approval flag is an administrative gate, not evidence of a provider/user balance. Balance-based automatic routing remains unimplemented until an authoritative balance API or trusted ledger is integrated.
 
-## Multi-agent engineering roles
+## Model discovery and modular routing roadmap
 
-| Role | Default executor | Responsibility | Permission boundary |
-|---|---|---|---|
-| Architecture analyst | Qwen2.5-Coder 3B local | Inspect current architecture, dependencies and failure modes | Read-only |
-| Product analyst | Qwen2.5-Coder 3B local | Define user journeys and measurable acceptance criteria | Read-only |
-| Security analyst | Qwen2.5-Coder 3B local | Challenge auth, tenancy, PII, secrets, SSRF and abuse controls | Read-only |
-| QA analyst | Qwen2.5-Coder 3B local | Identify regression and test gaps | Read-only |
-| Implementer | Qwen2.5-Coder 3B local | Make bounded structured source edits | Single writer, source-path allowlist |
-| Independent QA | Qwen2.5-Coder 3B local | Review the actual candidate diff | Read-only |
-| Senior engineer / fixer | Fable 5.2 via Starimg | Reconcile role findings, fix hard problems and own the final candidate | Single final writer |
-| Independent architecture reviewer | Opus 5.5 | Challenge design and review final diff | Read-only |
-| Independent security reviewer | Sonnet 5.5 | Security/privacy review | Read-only |
-| Product/user-journey reviewer | Haiku 5.5 | Challenge product scope and usability | Read-only |
+1. Discover exact IDs from the authenticated live catalogue; never rely on a permanent hardcoded list.
+2. Classify each model by family, modality, context, protocol, tool use, structured output, reasoning controls, price/coefficient and deprecation status.
+3. Verify each protocol with a real tool-call probe before making a model eligible.
+4. Quarantine new/unknown models until metadata, privacy policy, safety and capability probes pass.
+5. Route by task requirements, objective quality floor, context, protocol, privacy, health and project allowlists.
+6. Use verified price and separate provider/user balance reservations; stop on stale balance, insufficient funds or exceeded task ceiling.
+7. Keep per-attempt routing evidence and fallback lineage; never expose credentials or sensitive prompts.
+8. Treat text/code, image, video, audio, music and embeddings as separate modalities requiring documented endpoints and contract tests.
 
-Qwen roles are a bounded, role-separated local engineering pass using one Qwen2.5-Coder 3B inference session, not six independent model instances or separate vendors. Fable is the escalation/fixer and must independently inspect the source and test evidence. These are configured roles; each provider/model combination remains unverified until its run produces attributable evidence.
+See [docs/MAP.md](./MAP.md), section **Modular model and agent routing**, for the implementation DAG and release gates.
 
 ## Source control and delivery
 
