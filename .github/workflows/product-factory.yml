@@ -128,7 +128,7 @@ jobs:
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-qwen-agent
         with:
-          artifact_name: qwen-team-seed
+          artifact_name: candidate-0
           objective: |
             Deliver one bounded, testable increment for this product objective: ${{ env.OBJECTIVE }}
             Run the architecture, product, security and QA specialist roles before the implementation role. Inspect the actual project map and stack. Do not assume AUREL, Rust or PostgreSQL. Preserve existing architecture and security boundaries. Add regression tests where relevant. Record evidence-backed findings in docs/PRODUCT_FACTORY_QWEN_REVIEW.md for the senior engineer to review. Never fabricate live facts, users, revenue, partners, inventory, approvals or test results.
@@ -251,7 +251,7 @@ jobs:
             Finish with all intended source, test and documentation changes saved in the working tree. Do not commit, push, open a PR, merge or deploy; the workflow owns publication after verification.
 
       - name: Local Qwen2.5-Coder 3B fallback
-        if: steps.openrouter_primary.outcome != 'success'
+        if: steps.openrouter_primary.outcome != 'success' && steps.qwen_team.outcome != 'success'
         timeout-minutes: 25
         uses: ./factory/.github/actions/product-factory-qwen-agent
         with:
