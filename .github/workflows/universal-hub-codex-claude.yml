@@ -1,5 +1,7 @@
 name: Universal Hub — Codex + Claude Code
-run-name: Universal Hub coding run ${{ github.run_number }}
+# TEMPORARY BOOTSTRAP ONLY: once the Hub engineering-task API passes its dogfooding gate,
+# this workflow must call that API instead of editing the Hub source directly.
+run-name: Universal Hub bootstrap (external CLI) ${{ github.run_number }}
 
 "on":
   workflow_dispatch:
@@ -72,15 +74,6 @@ jobs:
           test -s universal-service-hub/AGENTS.md
           test -s universal-service-hub/docs/MAP.md
           echo "BASE_SHA=$(cat "$RUNNER_TEMP/universal-hub-base.sha")" >> "$GITHUB_ENV"
-
-      - name: Verify fal.ai credential is configured without exposing its value
-        env:
-          FAL_AI_API: ${{ secrets.FAL_AI_API }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test -n "$FAL_AI_API" || { echo "Missing repository secret FAL_AI_API." >&2; exit 2; }
-          echo "fal.ai credential is configured; its value is not displayed."
 
       - name: Install Codex CLI and Claude Code CLI
         shell: bash
