@@ -481,3 +481,16 @@ Initial implementation sequence:
 - **Current scope limitation:** this first increment monitors public GitHub release feeds only. It does not yet ingest vendor RSS/changelogs, CVE/security advisories, research papers, pricing changes or API deprecations; it does not yet benchmark latency/quality/cost or rank candidates for adoption.
 - **Acceptance still required:** CI must pass on the exact latest PR head; the workflow must execute once successfully against GitHub's API; the artifact must contain a valid snapshot; a subsequent run must prove comparison against the prior baseline. Until then, the scheduled radar is configured but not operationally verified.
 
+
+
+## Local model control and development failover — first runtime increment
+
+- **Status:** IN PROGRESS; source changes are in branch `feat/ush-local-agent-failover`. Exact-head CI and live Ollama execution are pending.
+- The Rust provider registry now recognizes an `ollama` AI adapter for chat inference and model discovery through Ollama's documented local `/api/chat` and `/api/tags` endpoints.
+- Local endpoints are intentionally separate from public cloud endpoints. They must use loopback or a hostname explicitly listed in `USH_OLLAMA_ALLOWED_HOSTS`; DNS resolution is checked and every resolved address must remain private or loopback. No API key or Infisical secret is required for the local adapter.
+- The health-check path probes Ollama's local model-tags endpoint. The provider model catalogue normalizes Ollama model names and sizes.
+- Project capability and provider allowlists continue to apply. Local inference is not automatically enabled for every project; an administrator must register and enable the local provider and explicitly include its ID in project allowlists where those are configured.
+- Regression tests cover adapter recognition and rejection of unapproved/public/metadata endpoints. These are source-level tests; they do not prove that an Ollama server or model is installed or reachable.
+- **Not yet implemented in this increment:** automatic failover of the Hub's GitHub Actions coding workflow to local Qwen when Codex/Claude cloud execution is unavailable; durable task handoff/checkpoint restoration across executor changes; independent local reviewer process; runtime local Ollama smoke test; GPU/resource-aware model selection.
+- **Acceptance required:** exact-head CI; local Ollama integration test with a real isolated model server; health/model-discovery/chat smoke tests; failover simulation with cloud endpoints deliberately unavailable; proof that the task resumes from a persisted checkpoint and that the independent QA gate still blocks defective output.
+- No production deployment, provider credential change, paid resource creation or production data mutation is included.
