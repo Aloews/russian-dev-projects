@@ -407,6 +407,19 @@ async fn create_engineering_task(
     {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task"));
     }
+    let mut unique_dependencies = std::collections::HashSet::new();
+    if body.dependencies.iter().any(|dependency| !unique_dependencies.insert(dependency)) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "duplicate_task_dependency"));
+    }
+    if !body.dependencies.is_empty() {
+        let row = sqlx::query("SELECT COUNT(*) AS count FROM engineering_tasks WHERE id=ANY($1::varchar[]) AND project_id=$2")
+            .bind(&body.dependencies).bind(&project_id).fetch_one(&state.db).await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_dependency_check_failed"))?;
+        let count: i64 = row.try_get("count").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_dependency_check_failed"))?;
+        if count != body.dependencies.len() as i64 {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "task_dependencies_must_be_in_same_project"));
+        }
+    }
     let id = Uuid::new_v4().to_string();
     let inserted = sqlx::query(
         "INSERT INTO engineering_tasks (id,project_id,idempotency_key,title,objective,acceptance_criteria,dependencies,priority,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (project_id,idempotency_key) DO NOTHING"
@@ -414,10 +427,19 @@ async fn create_engineering_task(
      .bind(&body.objective).bind(json!(body.acceptance_criteria)).bind(json!(body.dependencies))
      .bind(body.priority).bind(&principal.actor).execute(&state.db).await
      .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_create_failed"))?;
-    let row = sqlx::query("SELECT id,title,objective,status,queue_name,priority,version,created_at FROM engineering_tasks WHERE project_id=$1 AND idempotency_key=$2")
+    let row = sqlx::query("SELECT id,title,objective,dependencies,status,queue_name,priority,version,created_at FROM engineering_tasks WHERE project_id=$1 AND idempotency_key=$2")
         .bind(&project_id).bind(&body.idempotency_key).fetch_one(&state.db).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_after_create_failed"))?;
     let task_id: String = row.try_get("id").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
+    let stored_dependencies: Value = row.try_get("dependencies").map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_read_failed"))?;
+    if stored_dependencies != json!(body.dependencies) {
+        return Err(ApiError(StatusCode::CONFLICT, "idempotency_key_payload_mismatch"));
+    }
+    for dependency_id in &body.dependencies {
+        sqlx::query("INSERT INTO engineering_task_dependencies (tenant_id,project_id,parent_task_id,child_task_id) SELECT tenant_id,project_id,$1,$2 FROM engineering_tasks WHERE id=$1 AND project_id=$3 ON CONFLICT DO NOTHING")
+            .bind(dependency_id).bind(&task_id).bind(&project_id).execute(&state.db).await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_dependency_write_failed"))?;
+    }
     if inserted.rows_affected() == 1 {
         sqlx::query("INSERT INTO engineering_task_events (id,task_id,project_id,actor,event_type,payload) VALUES ($1,$2,$3,$4,'task.received',$5)")
             .bind(Uuid::new_v4().to_string()).bind(&task_id).bind(&project_id).bind(&principal.actor)
