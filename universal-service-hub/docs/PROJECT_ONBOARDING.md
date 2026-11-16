@@ -22,3 +22,12 @@ Produce a machine-readable project manifest containing service dependencies, pro
 ## Activation
 
 A project becomes managed only after its manifest validates, adapters pass contract tests, staging smoke tests pass, monitoring is live and rollback is demonstrated. Until then, Hub remains advisory and cannot change production traffic.
+
+
+## Agent instruction onboarding
+
+- Inspect the target repository's root and nested `AGENTS.md` files.
+- If the root contract is missing or materially stale, create/update it from `.github/product-factory/templates/AGENTS.md` using verified project facts only.
+- Preserve valid owner-specific rules and nested instructions. Never copy unresolved placeholders into a target repository.
+- Link the local agent contract from the project's authoritative map.
+- Do not treat an `AGENTS.md` instruction as a security boundary; enforce permissions, sandboxing and CI controls technically.
