@@ -454,7 +454,26 @@ fn default_adapter() -> String { "none".into() }
 fn default_timeout() -> f64 { 60.0 }
 
 fn is_ai_adapter(adapter: &str) -> bool {
-    ["openai_compatible", "anthropic", "gemini"].contains(&adapter)
+    ["openai_compatible", "anthropic", "gemini", "ollama"].contains(&adapter)
+}
+
+fn validate_ollama_url(raw: &str) -> Result<url::Url, ApiError> {
+    let parsed = url::Url::parse(raw).map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_ollama_url"))?;
+    if !["http", "https"].contains(&parsed.scheme()) || parsed.host_str().is_none()
+        || !parsed.username().is_empty() || parsed.password().is_some()
+        || parsed.query().is_some() || parsed.fragment().is_some()
+        || !["", "/"].contains(&parsed.path())
+    {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsafe_ollama_url"));
+    }
+    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
+    let loopback = host == "localhost" || host == "127.0.0.1" || host == "::1";
+    let allowed = env::var("USH_OLLAMA_ALLOWED_HOSTS").unwrap_or_default()
+        .split(',').map(str::trim).any(|entry| !entry.is_empty() && entry.eq_ignore_ascii_case(&host));
+    if !loopback && !allowed {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_host_not_allowlisted"));
+    }
+    Ok(parsed)
 }
 
 fn is_control_api_adapter(adapter: &str) -> bool {
@@ -551,6 +570,20 @@ fn is_public_ip(ip: IpAddr) -> bool {
     }
 }
 
+async fn ensure_private_destination(url: &url::Url) -> ApiResult<()> {
+    let host = url.host_str().ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_ollama_host"))?;
+    let port = url.port_or_known_default().unwrap_or(11434);
+    let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host, port)).await
+        .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_dns_failed"))?.collect();
+    if resolved.is_empty() || resolved.iter().any(|addr| {
+        let ip = addr.ip();
+        !(ip.is_loopback() || is_private_network_ip(ip))
+    }) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_destination_not_private"));
+    }
+    Ok(())
+}
+
 async fn ensure_public_destination(url: &url::Url) -> ApiResult<()> {
     let host = url.host_str().ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_provider_host"))?;
     let port = url.port_or_known_default().unwrap_or(443);
@@ -579,9 +612,17 @@ async fn upsert_provider(State(state): State<AppState>, headers: HeaderMap, Path
     if body.adapter_type != "none" && !is_ai_adapter(&body.adapter_type) && !is_control_api_adapter(&body.adapter_type) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_adapter_type"));
     }
-    if let Some(url) = body.base_url.as_deref() { validate_https_url(url)?; }
-    if let Some(url) = body.health_url.as_deref() { validate_https_url(url)?; }
-    if is_ai_adapter(&body.adapter_type) {
+    if body.adapter_type == "ollama" {
+        let url = body.base_url.as_deref().ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "ollama_base_url_required"))?;
+        validate_ollama_url(url)?;
+        if body.model.as_deref().is_none_or(str::is_empty) || body.api_key_env.is_some() || body.health_url.is_some() || body.supports_idempotency {
+            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_ollama_provider"));
+        }
+    } else {
+        if let Some(url) = body.base_url.as_deref() { validate_https_url(url)?; }
+        if let Some(url) = body.health_url.as_deref() { validate_https_url(url)?; }
+    }
+    if is_ai_adapter(&body.adapter_type) && body.adapter_type != "ollama" {
         if body.model.as_deref().is_none_or(str::is_empty) || body.base_url.is_none() || body.api_key_env.as_deref().is_none_or(|v| !(2..=120).contains(&v.len()) || !v.chars().next().is_some_and(|c| c.is_ascii_uppercase()) || !v.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')) {
             return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "incomplete_ai_provider"));
         }
@@ -877,17 +918,34 @@ async fn health_check(State(state): State<AppState>, headers: HeaderMap, Json(bo
     require_admin(&state, &headers).await?;
     let limit = body.limit.clamp(1,100);
     let rows = if let Some(id) = body.provider_id {
-        sqlx::query("SELECT id,health_url,timeout_seconds FROM providers WHERE id=$1 AND enabled=TRUE").bind(id).fetch_all(&state.db).await
+        sqlx::query("SELECT id,adapter_type,base_url,health_url,timeout_seconds FROM providers WHERE id=$1 AND enabled=TRUE").bind(id).fetch_all(&state.db).await
     } else {
-        sqlx::query("SELECT id,health_url,timeout_seconds FROM providers WHERE enabled=TRUE ORDER BY priority DESC LIMIT $1").bind(limit).fetch_all(&state.db).await
+        sqlx::query("SELECT id,adapter_type,base_url,health_url,timeout_seconds FROM providers WHERE enabled=TRUE ORDER BY priority DESC LIMIT $1").bind(limit).fetch_all(&state.db).await
     }.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "provider_health_query_failed"))?;
     let mut results = Vec::new();
     for row in rows {
         let id: String = row.get("id");
+        let adapter: String = row.get("adapter_type");
+        let base_url: Option<String> = row.get("base_url");
         let health_url: Option<String> = row.get("health_url");
         let timeout: f64 = row.get("timeout_seconds");
         let started = Instant::now();
-        let (status, detail) = if let Some(raw_url) = health_url {
+        let (status, detail) = if adapter == "ollama" {
+            if let Some(raw_url) = base_url {
+                match validate_ollama_url(&raw_url) {
+                    Ok(url) => match ensure_private_destination(&url).await {
+                        Ok(()) => match state.http.get(format!("{}/api/tags", raw_url.trim_end_matches('/')))
+                            .timeout(Duration::from_secs_f64(timeout.clamp(0.1, 5.0))).send().await {
+                                Ok(response) if response.status().is_success() => ("healthy","ollama_tags_ok"),
+                                Ok(_) => ("unhealthy","ollama_http_non_success"),
+                                Err(_) => ("unhealthy","ollama_connection_failed"),
+                            },
+                        Err(_) => ("unhealthy","ollama_destination_not_private"),
+                    },
+                    Err(_) => ("unhealthy","ollama_url_not_allowed"),
+                }
+            } else { ("unhealthy","ollama_base_url_missing") }
+        } else if let Some(raw_url) = health_url {
             match validate_https_url(&raw_url) {
                 Ok(url) => match ensure_public_destination(&url).await {
                     Ok(()) => match state.http.get(url).timeout(Duration::from_secs_f64(timeout.clamp(0.1, 5.0))).send().await {
@@ -958,20 +1016,27 @@ async fn provider_models(State(state): State<AppState>, headers: HeaderMap, Path
     let adapter: String = row.get("adapter_type");
     let base_url: Option<String> = row.get("base_url");
     let key_name: Option<String> = row.get("api_key_env");
-    let (Some(base_url),Some(key_name)) = (base_url,key_name) else {
+    let Some(base_url) = base_url else {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "provider_model_discovery_not_supported"));
     };
-    let api_key = resolve_provider_secret(&state,&key_name,None).await?
-        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "provider_credential_unavailable"))?;
-    let base = validate_https_url(&base_url)?;
-    ensure_public_destination(&base).await?;
-    let request = match adapter.as_str() {
+    let request = if adapter == "ollama" {
+        let base = validate_ollama_url(&base_url)?;
+        ensure_private_destination(&base).await?;
+        state.http.get(format!("{}/api/tags", base_url.trim_end_matches('/')))
+    } else {
+        let key_name = key_name.ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "provider_credential_reference_required"))?;
+        let api_key = resolve_provider_secret(&state,&key_name,None).await?
+            .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "provider_credential_unavailable"))?;
+        let base = validate_https_url(&base_url)?;
+        ensure_public_destination(&base).await?;
+        match adapter.as_str() {
         "openai_compatible" => state.http.get(format!("{}/models",base_url.trim_end_matches('/'))).bearer_auth(&api_key),
         "anthropic" => state.http.get(format!("{}/v1/models",base_url.trim_end_matches('/')))
             .header("x-api-key",&api_key).header("anthropic-version","2023-06-01"),
         "gemini" => state.http.get(format!("{}/v1beta/models",base_url.trim_end_matches('/')))
             .header("x-goog-api-key",&api_key),
         _ => return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "provider_model_discovery_not_supported")),
+        }
     };
     let response = request.send().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "provider_model_list_failed"))?;
     if !response.status().is_success() {
@@ -984,6 +1049,11 @@ async fn provider_models(State(state): State<AppState>, headers: HeaderMap, Path
         })).collect::<Vec<_>>()),
         "gemini" => data["models"].as_array().map_or_else(Vec::new, |items| items.iter().map(|item| json!({
             "id":item["name"],"name":item["displayName"],"supported_methods":item["supportedGenerationMethods"]
+        })).collect::<Vec<_>>()),
+        "ollama" => data["models"].as_array().map_or_else(Vec::new, |items| items.iter().map(|item| json!({
+            "id":item.get("model").or_else(||item.get("name")).cloned().unwrap_or(Value::Null),
+            "name":item.get("name").cloned().unwrap_or(Value::Null),
+            "size":item.get("size").cloned().unwrap_or(Value::Null)
         })).collect::<Vec<_>>()),
         _ => Vec::new(),
     };
@@ -1051,24 +1121,44 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
         let timeout: f64 = row.get("timeout_seconds");
         let idempotent: bool = row.get("supports_idempotency");
         if adapter == "none" { continue; }
-        let (Some(model), Some(base_url), Some(key_env)) = (model, base_url, key_env) else { continue; };
-        let api_key_result = resolve_provider_secret(&state, &key_env, principal.project_id.as_deref()).await;
-        let api_key = match api_key_result {
-            Ok(Some(value)) => value,
-            _ => {
-                audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":"credential_unavailable"})).await;
-                continue;
+        let (Some(model), Some(base_url)) = (model, base_url) else { continue; };
+        let api_key = if adapter == "ollama" {
+            None
+        } else {
+            let Some(key_env) = key_env else { continue; };
+            match resolve_provider_secret(&state, &key_env, principal.project_id.as_deref()).await {
+                Ok(Some(value)) => Some(value),
+                _ => {
+                    audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":"credential_unavailable"})).await;
+                    continue;
+                }
             }
         };
-        let base = match validate_https_url(&base_url) {
-            Ok(url) => url,
-            Err(_) => continue,
+        let base = if adapter == "ollama" {
+            match validate_ollama_url(&base_url) {
+                Ok(url) if ensure_private_destination(&url).await.is_ok() => url,
+                _ => {
+                    audit(&state, &principal.actor, "ai.chat.failure", "provider", &provider_id, json!({"reason":"local_endpoint_not_allowed"})).await;
+                    continue;
+                }
+            }
+        } else {
+            match validate_https_url(&base_url) {
+                Ok(url) if ensure_public_destination(&url).await.is_ok() => url,
+                _ => continue,
+            }
         };
-        if ensure_public_destination(&base).await.is_err() { continue; }
         let request = match adapter.as_str() {
+            "ollama" => state.http.post(format!("{}/api/chat", base_url.trim_end_matches('/')))
+                .json(&json!({
+                    "model":model,
+                    "messages":body.messages.iter().map(|m| json!({"role":m.role,"content":m.content})).collect::<Vec<_>>(),
+                    "stream":false,
+                    "options":{"temperature":body.temperature,"num_predict":body.max_tokens}
+                })),
             "openai_compatible" => {
                 let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-                let mut req = state.http.post(url).bearer_auth(&api_key).json(&json!({
+                let mut req = state.http.post(url).bearer_auth(api_key.as_deref().unwrap_or_default()).json(&json!({
                     "model":model,"messages":body.messages.iter().map(|m| json!({"role":m.role,"content":m.content})).collect::<Vec<_>>(),
                     "temperature":body.temperature,"max_tokens":body.max_tokens
                 }));
@@ -1082,7 +1172,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
                 let mut payload = json!({"model":model,"messages":turns,"temperature":body.temperature,"max_tokens":body.max_tokens});
                 if !system.is_empty() { payload["system"] = json!(system); }
                 let mut req = state.http.post(format!("{}/v1/messages",base_url.trim_end_matches('/')))
-                    .header("x-api-key",&api_key).header("anthropic-version","2023-06-01").json(&payload);
+                    .header("x-api-key",api_key.as_deref().unwrap_or_default()).header("anthropic-version","2023-06-01").json(&payload);
                 if idempotent && let Some(key) = body.idempotency_key.as_deref() { req=req.header("Idempotency-Key",key); }
                 req
             }
@@ -1096,7 +1186,7 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
                 if !system.is_empty() { payload["systemInstruction"] = json!({"parts":[{"text":system}]}); }
                 let encoded = url::form_urlencoded::byte_serialize(model.as_bytes()).collect::<String>();
                 state.http.post(format!("{}/v1beta/models/{}:generateContent",base_url.trim_end_matches('/'),encoded))
-                    .header("x-goog-api-key",&api_key).json(&payload)
+                    .header("x-goog-api-key",api_key.as_deref().unwrap_or_default()).json(&payload)
             }
             _ => continue,
         }.timeout(Duration::from_secs_f64(timeout.clamp(1.0,120.0)));
@@ -1122,6 +1212,11 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
         }
         let data: Value = response.json().await.map_err(|_| ApiError(StatusCode::BAD_GATEWAY, "provider_invalid_response"))?;
         let (content, usage) = match adapter.as_str() {
+            "ollama" => {
+                let text = data["message"]["content"].as_str().map(str::to_owned)
+                    .ok_or(ApiError(StatusCode::BAD_GATEWAY, "provider_invalid_response"))?;
+                (text, json!({"prompt_eval_count":data["prompt_eval_count"],"eval_count":data["eval_count"]}))
+            }
             "openai_compatible" => {
                 let text = data["choices"][0]["message"]["content"].as_str().map(str::to_owned)
                     .or_else(|| data["choices"][0]["message"]["content"].as_array().map(|parts| parts.iter().filter_map(|p| p["text"].as_str()).collect::<String>()))
@@ -1165,6 +1260,16 @@ async fn list_audit(State(state): State<AppState>, headers: HeaderMap, Query(que
     })).collect();
     Ok(Json(json!(values)))
 }
+
+    #[test]
+    fn ollama_adapter_requires_private_allowlisted_endpoint() {
+        assert!(is_ai_adapter("ollama"));
+        assert!(validate_ollama_url("http://localhost:11434").is_ok());
+        assert!(validate_ollama_url("http://127.0.0.1:11434").is_ok());
+        assert!(validate_ollama_url("https://api.example.com").is_err());
+        assert!(validate_ollama_url("http://169.254.169.254").is_err());
+        assert!(validate_ollama_url("http://ollama:11434").is_err());
+    }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
