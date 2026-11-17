@@ -1,11 +1,11 @@
 #[path = "../execution_queue.rs"]
 mod execution_queue;
 
-use std::{env, time::Duration};
+use std::{env, str::FromStr, time::Duration};
 
 use anyhow::{Context, bail};
 use serde_json::json;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use tokio::{task::JoinSet, time::sleep, signal, sync::watch};
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -117,10 +117,14 @@ async fn main() -> anyhow::Result<()> {
         bail!("USH_WORKER_ID must be a bounded identifier");
     }
 
+    let production = env::var("USH_ENVIRONMENT").unwrap_or_else(|_| "development".into()) == "production";
+    let mut connect_options = PgConnectOptions::from_str(&database_url)
+        .context("invalid worker database URL")?;
+    connect_options = connect_options.ssl_mode(if production { PgSslMode::VerifyFull } else { PgSslMode::Prefer });
     let pool = PgPoolOptions::new()
         .max_connections((concurrency + 2) as u32)
         .acquire_timeout(Duration::from_secs(10))
-        .connect(&database_url).await
+        .connect_with(connect_options).await
         .context("worker database connection failed")?;
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
