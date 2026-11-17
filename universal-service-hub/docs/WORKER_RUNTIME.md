@@ -27,7 +27,7 @@ GRANT SELECT (id, project_id, task_id, job_type, status, priority, attempt_count
   ON execution_jobs TO ush_worker;
 GRANT UPDATE (
   status, lease_owner, lease_token, lease_expires_at, heartbeat_at,
-  attempt_count, available_at, last_error_code, finished_at, updated_at, checkpoint
+  attempt_count, available_at, last_error_code, finished_at, updated_at
 ) ON execution_jobs TO ush_worker;
 GRANT SELECT (project_id, job_id, attempt_number, lease_token, status, started_at)
   ON execution_attempts TO ush_worker;
@@ -46,6 +46,8 @@ Use a unique strong password, TLS and a connection string stored in the deployme
 - `USH_WORKER_POLL_MS`: 100–30000, default 1000.
 - `USH_WORKER_JOB_TYPES`: currently only `system_noop`; default `system_noop`.
 - `USH_ENVIRONMENT=production`: enforces PostgreSQL TLS certificate and hostname verification.
+
+A non-billable smoke job can be enqueued through the existing project-scoped API with `job_type: "system_noop"`, `agent_role: "integrator"` and a unique `idempotency_key`. The worker's allowlist matches the API's lowercase/underscore job-type validation; it does not accept dotted job types.
 
 Run the image with `/app/ush-worker` as its command/entrypoint in a separate worker service. Keep the API and worker as separate processes so their restart policies, resource limits and scaling can be controlled independently. Do not start the worker until the dedicated role and secret are provisioned.
 
