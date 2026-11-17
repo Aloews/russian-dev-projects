@@ -2086,3 +2086,44 @@ mod integration_security_tests {
         assert!(!valid_s3_bucket_name("192.168.1.1"));
     }
 }
+
+#[cfg(test)]
+mod worker_contract_tests {
+    use super::*;
+
+    #[test]
+    fn specialist_roles_are_an_explicit_allowlist() {
+        for role in ["planner", "architect", "implementation", "qa", "security_reviewer", "independent_reviewer", "researcher", "integrator"] {
+            assert!(valid_agent_role(role));
+        }
+        for role in ["admin", "shell", "../implementation", "unknown"] {
+            assert!(!valid_agent_role(role));
+        }
+    }
+
+    #[test]
+    fn worker_identity_is_bounded_and_rejects_path_or_whitespace_characters() {
+        assert!(valid_worker_id("worker-eu-01"));
+        assert!(valid_worker_id("runner:job_123"));
+        assert!(!valid_worker_id(""));
+        assert!(!valid_worker_id("../worker"));
+        assert!(!valid_worker_id("worker id"));
+        assert!(!valid_worker_id(&"w".repeat(161)));
+    }
+
+    #[test]
+    fn checkpoints_accept_only_small_non_sensitive_metadata_contract() {
+        assert!(valid_execution_checkpoint(&json!({
+            "phase":"implementation",
+            "progress":42.5,
+            "completed_steps":["inspect","patch"],
+            "artifact_ids":[Uuid::new_v4().to_string()]
+        })));
+        assert!(valid_execution_checkpoint(&json!({"cursor":"page:3"})));
+        assert!(!valid_execution_checkpoint(&json!({"prompt":"write a feature"})));
+        assert!(!valid_execution_checkpoint(&json!({"phase":"bad phase"})));
+        assert!(!valid_execution_checkpoint(&json!({"progress":101.0})));
+        assert!(!valid_execution_checkpoint(&json!({"cursor":"line\nsecret"})));
+        assert!(!valid_execution_checkpoint(&json!({"unknown":true})));
+    }
+}
