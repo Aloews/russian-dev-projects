@@ -108,8 +108,6 @@ pub async fn enqueue(pool: &PgPool, project_id: &str, request: &EnqueueRequest) 
     Ok((job, created))
 }
 
-/// Atomically leases one due job and records its attempt. The lease token fences stale workers.
-
 /// Reconciles expired leases transactionally before new work is claimed.
 pub async fn recover_expired_leases(pool: &PgPool) -> Result<u64, QueueError> {
     let mut tx = pool.begin().await.map_err(|_| QueueError::Database)?;
@@ -148,7 +146,9 @@ pub async fn recover_expired_leases(pool: &PgPool) -> Result<u64, QueueError> {
     }
     tx.commit().await.map_err(|_| QueueError::Database)?;
     Ok(rows.len() as u64)
+}
 
+/// Atomically leases one due job and records its attempt. The lease token fences stale workers.
 pub async fn claim(pool: &PgPool, worker_id: &str, lease_seconds: i64) -> Result<Option<Lease>, QueueError> {
     claim_for_types(pool, worker_id, lease_seconds, &[]).await
 }
