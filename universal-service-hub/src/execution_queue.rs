@@ -230,12 +230,13 @@ pub async fn complete(pool: &PgPool, job_id: Uuid, token: Uuid, result_metadata:
      .ok_or(QueueError::NotFoundOrLeaseLost)?;
     let project_id: String = row.try_get("project_id").map_err(|_| QueueError::Database)?;
     let attempt: i32 = row.try_get("attempt_count").map_err(|_| QueueError::Database)?;
-    sqlx::query(
-        "UPDATE execution_attempts SET status='succeeded', finished_at=NOW(), \
-         duration_ms=(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint, result_metadata=$4 \
+    let attempt_update = sqlx::query(
+        "UPDATE execution_attempts SET status='succeeded', finished_at=NOW(), \\
+         duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint), result_metadata=$4 \\
          WHERE project_id=$1 AND job_id=$2 AND attempt_number=$3 AND lease_token=$5 AND status='running'"
     ).bind(&project_id).bind(job_id).bind(attempt).bind(result_metadata).bind(token)
      .execute(&mut *tx).await.map_err(|_| QueueError::Database)?;
+    if attempt_update.rows_affected() != 1 { return Err(QueueError::Database); }
     tx.commit().await.map_err(|_| QueueError::Database)?;
     Ok(())
 }
@@ -264,12 +265,13 @@ pub async fn fail(pool: &PgPool, job_id: Uuid, token: Uuid, error_code: &str, re
     let attempt: i32 = row.try_get("attempt_count").map_err(|_| QueueError::Database)?;
     let status: String = row.try_get("status").map_err(|_| QueueError::Database)?;
     let attempt_status = if status == "retry_wait" { "retryable_failure" } else { "permanent_failure" };
-    sqlx::query(
-        "UPDATE execution_attempts SET status=$4, finished_at=NOW(), \
-         duration_ms=(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint, error_code=$5 \
+    let attempt_update = sqlx::query(
+        "UPDATE execution_attempts SET status=$4, finished_at=NOW(), \\
+         duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint), error_code=$5 \\
          WHERE project_id=$1 AND job_id=$2 AND attempt_number=$3 AND lease_token=$6 AND status='running'"
     ).bind(&project_id).bind(job_id).bind(attempt).bind(attempt_status).bind(error_code).bind(token)
      .execute(&mut *tx).await.map_err(|_| QueueError::Database)?;
+    if attempt_update.rows_affected() != 1 { return Err(QueueError::Database); }
     tx.commit().await.map_err(|_| QueueError::Database)?;
     Ok(())
 }
