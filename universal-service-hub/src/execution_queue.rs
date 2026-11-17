@@ -73,8 +73,6 @@ pub enum QueueError {
     Database,
 }
 
-fn db_error<T>(_: sqlx::Error) -> Result<T, QueueError> { Err(QueueError::Database) }
-
 fn row_to_job(row: &sqlx::postgres::PgRow) -> Result<Job, QueueError> {
     Ok(Job {
         id: row.try_get("id").map_err(|_| QueueError::Database)?,
