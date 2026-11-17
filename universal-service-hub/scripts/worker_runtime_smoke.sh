@@ -49,6 +49,7 @@ for _ in $(seq 1 30); do
 done
 if [[ "$job_status" != "leased" ]]; then docker logs "$crash_container" >&2 || true; echo "worker did not claim the smoke job" >&2; exit 1; fi
 
+docker update --restart=no "$crash_container" >/dev/null
 docker kill --signal=SIGKILL "$crash_container" >/dev/null
 crash_exit=$(docker wait "$crash_container" || true)
 if [[ "$crash_exit" != "137" ]]; then echo "expected SIGKILL exit 137, got $crash_exit" >&2; exit 1; fi
