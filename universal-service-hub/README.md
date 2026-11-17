@@ -162,3 +162,6 @@ The separate Autonomous Product Factory workflow orchestrates work in target pro
 The Rust runtime enforces a PostgreSQL-backed fixed-window rate limit per authenticated bearer token. Default: 120 requests per minute. Configure `USH_RATE_LIMIT_PER_MINUTE` between 1 and 10000. Exceeded limits return HTTP 429 and `Retry-After: 60`. This does not replace unauthenticated IP-level throttling at the edge.
 
 Rate-limit fingerprint rows idle for 24 hours are pruned at startup and hourly. This keeps the limiter's metadata table from retaining inactive token fingerprints indefinitely.
+## Worker supervisor (initial, non-billable scope)
+
+The image also contains a separately runnable `/app/ush-worker` binary. It uses a dedicated `USH_WORKER_DATABASE_URL` with queue-table-only grants, bounded concurrency, allowlisted job claims, lease recovery and graceful SIGINT shutdown. Production connections require TLS certificate and hostname verification. The current capability allowlist intentionally permits only `system.noop`; the worker makes no model-provider calls and does not yet dispatch specialist agents. See [docs/WORKER_RUNTIME.md](docs/WORKER_RUNTIME.md) for grants, configuration and acceptance gates.
