@@ -536,3 +536,11 @@ This refresh replaces the stale-evidence assumptions above where the following e
 2. Reconcile the latest exact heads and stacked dependencies for PRs #31, #49, #50, #67 and #64 before integrating them. A passing PR #67 CI run does not remove PR #31's provider-routing dependency or prove Factory success.
 3. After control-plane integration, run a bounded Factory acceptance task and retain its candidate, independent verification, repair history and target PR as immutable evidence.
 4. Only then execute the remaining C4/C5 acceptance matrix and consider archiving. The archive remains **NOT READY**; the next plan remains **NOT STARTED**.
+
+
+### CI confirmation for refreshed map
+
+- Candidate commit: `870de739da3c364b96426441c95dbff3646fa889`.
+- Exact-commit GitHub Actions run [#44097803719](https://github.com/Aloews/russian-dev-projects/actions/runs/44097803719) completed with `success`.
+- All steps passed, including Product Factory shell/Python syntax, Qwen safety tests, workflow and action metadata validation, Rust format/lint/tests, Ruff/Python tests, migration smoke, Docker build, local Compose runtime startup smoke and container smoke.
+- This is CI evidence for the map branch's current commit. It is not evidence that the Product Factory has successfully completed a real product-generation run, nor does it clear PR #64's separate failing exact-head container smoke.
