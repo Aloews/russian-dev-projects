@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 const MAX_TASKS: usize = 250;
 const MAX_DEPENDENCIES_PER_TASK: usize = 250;
+const MAX_ESTIMATE_HOURS: f64 = 1_000_000.0;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecoveryRequest {
@@ -43,6 +44,7 @@ pub enum RecoveryError {
     TooManyTasks,
     InvalidPlannedHours,
     InvalidTaskId,
+    InvalidDependencyId,
     DuplicateTaskId,
     DuplicateDependency,
     InvalidRemainingHours,
@@ -60,7 +62,10 @@ pub fn assess(request: RecoveryRequest) -> Result<RecoveryPlan, RecoveryError> {
     if request.tasks.len() > MAX_TASKS {
         return Err(RecoveryError::TooManyTasks);
     }
-    if !request.planned_remaining_hours.is_finite() || request.planned_remaining_hours <= 0.0 {
+    if !request.planned_remaining_hours.is_finite()
+        || request.planned_remaining_hours <= 0.0
+        || request.planned_remaining_hours > MAX_ESTIMATE_HOURS
+    {
         return Err(RecoveryError::InvalidPlannedHours);
     }
 
@@ -72,7 +77,10 @@ pub fn assess(request: RecoveryRequest) -> Result<RecoveryPlan, RecoveryError> {
         {
             return Err(RecoveryError::InvalidTaskId);
         }
-        if !task.remaining_hours.is_finite() || task.remaining_hours < 0.0 {
+        if !task.remaining_hours.is_finite()
+            || task.remaining_hours < 0.0
+            || task.remaining_hours > MAX_ESTIMATE_HOURS
+        {
             return Err(RecoveryError::InvalidRemainingHours);
         }
         if task.completed && task.remaining_hours > 0.0 {
@@ -89,6 +97,12 @@ pub fn assess(request: RecoveryRequest) -> Result<RecoveryPlan, RecoveryError> {
     for task in tasks.values() {
         let mut unique_dependencies = BTreeSet::new();
         for dependency in &task.depends_on {
+            if dependency.is_empty()
+                || dependency.len() > 80
+                || !dependency.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+            {
+                return Err(RecoveryError::InvalidDependencyId);
+            }
             if dependency == &task.id {
                 return Err(RecoveryError::SelfDependency);
             }
@@ -373,6 +387,20 @@ mod tests {
         );
         assert_eq!(
             assess(request(4.0, vec![task("../unsafe", 1.0, &[])])).unwrap_err(),
+            RecoveryError::InvalidTaskId
+        );
+    }
+
+    #[test]
+    fn rejects_unbounded_estimates_and_invalid_dependency_identifiers() {
+        assert_eq!(
+            assess(request(MAX_ESTIMATE_HOURS + 1.0, vec![task("a", 1.0, &[])]))
+                .unwrap_err(),
+            RecoveryError::InvalidPlannedHours
+        );
+        assert_eq!(
+            assess(request(4.0, vec![task("a", 1.0, &["../bad"]), task("../bad", 1.0, &[])]))
+                .unwrap_err(),
             RecoveryError::InvalidTaskId
         );
     }
