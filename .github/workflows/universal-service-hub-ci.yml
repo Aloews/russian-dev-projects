@@ -143,24 +143,46 @@ jobs:
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
         run: |
-          set -eu
-          trap 'status=$?; echo "Container smoke failed at: $BASH_COMMAND (exit $status)"; docker logs ush-smoke 2>&1 || true; exit "$status"' ERR
+          set -Eeuo pipefail
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "Container smoke failed at: ${BASH_COMMAND} (exit ${status})"
+              echo "Listener state for port 8000:"
+              (ss -ltnp '( sport = :8000 )' || true)
+              echo "Container state:"
+              docker inspect ush-smoke --format '{{json .State}}' 2>&1 || true
+              echo "Container logs:"
+              docker logs ush-smoke 2>&1 || true
+            fi
+            docker stop ush-smoke >/dev/null 2>&1 || true
+            exit "$status"
+          }
+          trap cleanup EXIT
           docker run -d --rm --name ush-smoke --network host \
             -e USH_API_TOKEN="$USH_API_TOKEN" \
             -e USH_DATABASE_URL="postgres://ush_app:ush-test-password@127.0.0.1:5432/ush_test" \
             -e USH_RATE_LIMIT_PER_MINUTE=100 \
+            -e HOST=0.0.0.0 \
+            -e PORT=8000 \
             universal-service-hub:test
-          trap 'docker stop ush-smoke >/dev/null 2>&1 || true' EXIT
           ready=0
           for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/readyz >/dev/null; then
+            http_status=$(curl -sS -o /tmp/ush-readyz-body -w "%{http_code}" \
+              http://127.0.0.1:8000/readyz || true)
+            if [ "$http_status" = "200" ]; then
               ready=1
+              break
+            fi
+            if [ "$http_status" != "000" ]; then
+              echo "Readiness endpoint returned HTTP $http_status:"
+              cat /tmp/ush-readyz-body || true
               break
             fi
             sleep 2
           done
           if [ "$ready" -ne 1 ]; then
-            docker logs ush-smoke
+            echo "Container did not reach HTTP 200 on /readyz."
             exit 1
           fi
           curl -fsS http://127.0.0.1:8000/healthz >/dev/null
