@@ -58,10 +58,10 @@ The thresholds are initial policy defaults, not universal productivity benchmark
 
 - Maximum 250 tasks per request.
 - Task IDs are 1–80 ASCII characters from letters, digits, dot, underscore and hyphen.
-- Planned remaining hours must be finite and greater than zero.
-- Remaining effort must be finite and non-negative.
+- Planned remaining hours must be finite, greater than zero and no more than 1,000,000.
+- Remaining effort must be finite, non-negative and no more than 1,000,000 hours per task.
 - Completed tasks cannot retain remaining effort.
-- Dependencies must refer to known, distinct task IDs; self-dependencies and cycles are rejected.
+- Dependencies must use valid task IDs and refer to known, distinct tasks; self-dependencies and cycles are rejected.
 - Maximum 250 dependencies per task.
 - No prompt, task description, secret, source diff or generated content is accepted or written to the audit log.
 - Audit records contain only project ID, task count, status, delay metrics and critical-path length.
