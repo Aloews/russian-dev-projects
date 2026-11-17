@@ -77,3 +77,8 @@ Work autonomously within the permissions and safety boundaries below.
 - A checkpoint step captures the candidate patch and status after the Codex phase, including when that phase fails or times out. The checkpoint is uploaded as a short-lived Actions artifact only after a basic secret-pattern scan. It is recovery evidence, not a validated deliverable.
 
 - **Isolation limitation:** the read-only boundary for Codex subagents is currently an instruction, not a separately enforced filesystem permission. Subagents inherit the parent session's sandbox. The primary must inspect the complete diff and reject unintended edits; never describe these roles as technically sandbox-isolated until a tested enforcement mechanism is added.
+
+
+## Verified autonomous continuation skill
+
+For PR status monitoring, CI completion, verification gates, and continuing planned engineering work without routine user confirmation, load and follow `.agents/skills/verified-autonomous-continuation/SKILL.md`. This skill authorizes continuation only within the existing repository/task scope after all required checks pass on the exact current head SHA. It does not authorize merge, deployment, production mutation, paid provider/resource use, credential changes, or other approval-gated actions.
