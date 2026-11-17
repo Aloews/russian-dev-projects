@@ -1,4 +1,5 @@
 #[path = "../execution_queue.rs"]
+#[allow(dead_code)]
 mod execution_queue;
 
 use std::{env, str::FromStr, time::Duration};
