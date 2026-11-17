@@ -40,7 +40,7 @@ The endpoint returns:
 
 ## Calculation and thresholds
 
-The forecast is the longest remaining dependency path, not the sum of all task effort. Completed tasks contribute zero remaining effort. Independent tasks can therefore run in parallel in the forecast; the engine does not assume unlimited agent capacity or guarantee that the forecast will be achieved.
+The calculated critical path is the longest remaining dependency path, not the sum of all task effort. Completed tasks contribute zero remaining effort. This is a lower-bound estimate that assumes independent branches can proceed concurrently. The first slice does not model finite agent/workspace capacity, review or CI queues, holidays, provider quotas or external blockers, so it is not yet a calibrated finish-date forecast and must not be used to promise a delivery date.
 
 `delay_percent = max(forecast_remaining_hours - planned_remaining_hours, 0) / planned_remaining_hours * 100`
 
