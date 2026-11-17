@@ -672,5 +672,5 @@ The cloud coding workflow was not triggered for these checks because it can call
 - Adds job-type-filtered claims and transactional expired-lease/attempt reconciliation.
 - Worker concurrency and polling are bounded; SIGINT stops the supervisor gracefully.
 - Worker uses a dedicated `USH_WORKER_DATABASE_URL`; production requires TLS `verify-full`; worker does not run migrations or receive the Hub API/admin token.
-- Capability is intentionally limited to non-billable `system.noop`. No provider invocation, specialist dispatch, artifact bytes or production service is claimed.
+- Capability is intentionally limited to non-billable `system_noop`. No provider invocation, specialist dispatch, artifact bytes or production service is claimed.
 - Required next evidence: exact-head Rust CI, PostgreSQL concurrency/recovery tests, container smoke, and a process-kill/restart test.
