@@ -1323,6 +1323,7 @@ async fn delivery_recovery_plan(
             schedule_recovery::RecoveryError::DependencyCycle => "recovery_dependency_cycle",
             schedule_recovery::RecoveryError::UnknownDependency => "recovery_unknown_dependency",
             schedule_recovery::RecoveryError::DuplicateTaskId => "recovery_duplicate_task",
+            schedule_recovery::RecoveryError::DuplicateDependency => "recovery_duplicate_dependency",
             _ => "invalid_recovery_plan",
         };
         ApiError(StatusCode::UNPROCESSABLE_ENTITY, code)
