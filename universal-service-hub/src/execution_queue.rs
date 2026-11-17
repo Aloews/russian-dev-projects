@@ -118,7 +118,7 @@ pub async fn claim(pool: &PgPool, project_id: &str, worker_id: &str, lease_secon
     let row = sqlx::query(
         "WITH candidate AS ( \
             SELECT id FROM execution_jobs \
-            WHERE status IN ('queued','retry_wait') AND available_at <= NOW() AND attempt_count < max_attempts \
+            WHERE project_id=$1 AND status IN ('queued','retry_wait') AND available_at <= NOW() AND attempt_count < max_attempts \
             ORDER BY priority DESC, available_at, created_at \
             FOR UPDATE SKIP LOCKED LIMIT 1 \
          ) \
