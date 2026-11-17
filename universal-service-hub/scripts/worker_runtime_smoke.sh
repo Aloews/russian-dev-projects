@@ -27,6 +27,15 @@ GRANT INSERT ON execution_attempts TO ush_worker;
 GRANT UPDATE (status, finished_at, duration_ms, error_code, result_metadata) ON execution_attempts TO ush_worker;
 SQL
 
+if compose exec -T postgres env PGPASSWORD="$worker_password" psql -h postgres -U ush_worker -d ush -c "SELECT payload FROM execution_jobs LIMIT 1" >/dev/null 2>&1; then
+  echo "worker role unexpectedly has access to job payloads" >&2
+  exit 1
+fi
+if compose exec -T postgres env PGPASSWORD="$worker_password" psql -h postgres -U ush_worker -d ush -c "SELECT id FROM projects LIMIT 1" >/dev/null 2>&1; then
+  echo "worker role unexpectedly has access to the projects table" >&2
+  exit 1
+fi
+
 curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects" -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" -d "{\"id\":\"$project_id\",\"name\":\"Worker runtime smoke $suffix\",\"allowed_capabilities\":[\"ai.chat\"],\"allowed_provider_ids\":[]}" >/dev/null
 curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects/$project_id/jobs" -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" -d "{\"idempotency_key\":\"$idempotency_key\",\"job_type\":\"system_noop\",\"agent_role\":\"integrator\"}" >/dev/null
 
