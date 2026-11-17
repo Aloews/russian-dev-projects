@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS execution_jobs (
     finished_at TIMESTAMPTZ,
     UNIQUE (project_id, id),
     UNIQUE (project_id, idempotency_key),
-    FOREIGN KEY (project_id, task_id) REFERENCES project_tasks(project_id, id) ON DELETE SET NULL,
+    FOREIGN KEY (project_id, task_id) REFERENCES project_tasks(project_id, id) ON DELETE SET NULL (task_id),
     CHECK (attempt_count <= max_attempts),
     CHECK (
         (status = 'leased' AND lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)
