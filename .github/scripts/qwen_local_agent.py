@@ -164,7 +164,8 @@ def rejected_existing_file_context(answer):
     return "\n".join(sections)
 
 
-def apply_edits(edits, tracked):
+def prepare_edits(edits, tracked):
+    """Validate and stage every edit in memory without mutating the workspace."""
     if not isinstance(edits, list) or not edits or len(edits) > MAX_FILES:
         raise ValueError("model returned no edits or exceeded the edit limit")
     staged = {}
@@ -203,10 +204,26 @@ def apply_edits(edits, tracked):
         if len(current) > 100000 or "\0" in current:
             raise ValueError("edited file exceeds safe text limits")
         staged[path] = current
+    return staged
+
+
+def write_staged_edits(staged):
+    """Apply a fully validated in-memory edit set after all response gates pass."""
+    for path in staged:
+        target = ROOT / path
+        if target.is_symlink() or not target.resolve().is_relative_to(ROOT.resolve()):
+            raise ValueError("edit destination changed or escaped before write")
+        if target.exists() and not target.is_file():
+            raise ValueError("edit destination is no longer a regular file")
     for path, content in staged.items():
         target = ROOT / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
+
+
+def apply_edits(edits, tracked):
+    staged = prepare_edits(edits, tracked)
+    write_staged_edits(staged)
     return sorted(staged)
 
 
@@ -325,7 +342,8 @@ def main():
                 timeout_seconds=480 if attempt == 0 else 180,
             )
             response_json = json.loads(answer)
-            changed_paths = apply_edits(response_json.get("edits"), tracked_set)
+            staged_edits = prepare_edits(response_json.get("edits"), tracked_set)
+            changed_paths = sorted(staged_edits)
             if not changed_paths:
                 raise ValueError("Qwen returned no source or test edits")
             source_changes = [path for path in changed_paths if Path(path).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}]
@@ -361,8 +379,13 @@ def main():
         print("::error::Qwen review path is outside the configured allowlist.")
         return 5
     report_path = ROOT / review_relative
-    if not report_path.resolve().is_relative_to(ROOT.resolve()):
+    if not report_path.resolve().is_relative_to(ROOT.resolve()) or report_path.is_symlink():
         print("::error::Qwen review path escapes the target repository.")
+        return 5
+    try:
+        write_staged_edits(staged_edits)
+    except (OSError, ValueError) as exc:
+        print("::error::Qwen staged edits could not be safely applied: " + str(exc)[:500])
         return 5
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
