@@ -2,7 +2,7 @@
 
 ## Delivered boundary
 
-This increment adds a separately runnable Tokio worker supervisor to the Rust container image. It is deliberately limited to the non-billable `system.noop` job type while provider authorization, project budgets, artifact transfer and specialist dispatch are implemented and reviewed.
+This increment adds a separately runnable Tokio worker supervisor to the Rust container image. It is deliberately limited to the non-billable `system_noop` job type while provider authorization, project budgets, artifact transfer and specialist dispatch are implemented and reviewed.
 
 The worker process:
 - runs a bounded number of independent polling loops;
@@ -44,7 +44,7 @@ Use a unique strong password, TLS and a connection string stored in the deployme
 - `USH_WORKER_ID`: optional bounded worker identity prefix.
 - `USH_WORKER_CONCURRENCY`: 1–32, default 2.
 - `USH_WORKER_POLL_MS`: 100–30000, default 1000.
-- `USH_WORKER_JOB_TYPES`: currently only `system.noop`; default `system.noop`.
+- `USH_WORKER_JOB_TYPES`: currently only `system_noop`; default `system_noop`.
 - `USH_ENVIRONMENT=production`: enforces PostgreSQL TLS certificate and hostname verification.
 
 Run the image with `/app/ush-worker` as its command/entrypoint in a separate worker service. Keep the API and worker as separate processes so their restart policies, resource limits and scaling can be controlled independently. Do not start the worker until the dedicated role and secret are provisioned.
