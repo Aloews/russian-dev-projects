@@ -10,14 +10,14 @@ This increment adds the PostgreSQL persistence contract for project plans and ta
 |---|---|
 | `project_plans` | Versioned plan records and one active plan per project |
 | `project_tasks` | Tenant-scoped tasks, status, priority, role and three-point estimates |
-| `task_dependencies` | Tenant-safe finish-to-start task edges |
+| `task_dependencies` | Tenant-safe finish-to-start edges constrained to one plan version |
 | `project_events` | Append-oriented project/task lifecycle metadata |
 | `execution_jobs` | Durable queue state, idempotency key, bounded payload/checkpoint, retry budget and lease |
 | `execution_attempts` | Per-attempt worker, fencing token, outcome and duration |
 | `execution_artifacts` | Object-store references and content hashes; no file bytes |
 | `execution_approvals` | Explicit approval records for gated actions |
 
-Every project-owned row carries `project_id`. Composite foreign keys include that tenant key so a task, plan, job, attempt or artifact cannot be attached across projects. Project deletion cascades through project-owned data. References from events/artifacts to optional task/plan/job rows null only the nullable reference column, preserving the tenant key.
+Every project-owned row carries `project_id`. Composite foreign keys include that tenant key so a task, plan, job, attempt or artifact cannot be attached across projects. Dependency edges also carry the plan ID, preventing accidental links between tasks in different plan versions. Project deletion cascades through project-owned data. References from events/artifacts to optional task/plan/job rows null only the nullable reference column, preserving the tenant key.
 
 ## Queue contract for the worker increment
 
