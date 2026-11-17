@@ -1,3 +1,5 @@
+mod schedule_recovery;
+
 use std::{env, net::{IpAddr, SocketAddr}, str::FromStr, sync::Arc, time::{Duration, Instant}};
 
 use axum::{
@@ -1289,6 +1291,55 @@ async fn ai_chat(State(state): State<AppState>, headers: HeaderMap, Json(body): 
 }
 
 
+
+async fn delivery_recovery_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(request): Json<schedule_recovery::RecoveryRequest>,
+) -> ApiResult<Json<Value>> {
+    let principal = require_operator(&state, &headers).await?;
+    if !principal.admin && principal.project_id.as_deref() != Some(project_id.as_str()) {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch"));
+    }
+    let exists = sqlx::query("SELECT id FROM projects WHERE id=$1")
+        .bind(&project_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "project_lookup_failed"))?;
+    if exists.is_none() {
+        return Err(ApiError(StatusCode::NOT_FOUND, "project_not_found"));
+    }
+
+    let task_count = request.tasks.len();
+    let plan = schedule_recovery::assess(request).map_err(|error| {
+        let code = match error {
+            schedule_recovery::RecoveryError::DependencyCycle => "recovery_dependency_cycle",
+            schedule_recovery::RecoveryError::UnknownDependency => "recovery_unknown_dependency",
+            schedule_recovery::RecoveryError::DuplicateTaskId => "recovery_duplicate_task",
+            _ => "invalid_recovery_plan",
+        };
+        ApiError(StatusCode::UNPROCESSABLE_ENTITY, code)
+    })?;
+    audit(
+        &state,
+        &principal.actor,
+        "delivery.recovery_plan.preview",
+        "project",
+        &project_id,
+        json!({
+            "task_count": task_count,
+            "status": plan.status,
+            "delay_hours": plan.delay_hours,
+            "delay_percent": plan.delay_percent,
+            "critical_path_length": plan.critical_path_task_ids.len()
+        }),
+    )
+    .await;
+    Ok(Json(json!(plan)))
+}
+
+
 #[derive(Deserialize)]
 struct AuditQuery { #[serde(default = "default_limit")] limit: i64 }
 fn default_limit() -> i64 { 50 }
@@ -1412,6 +1463,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/integrations/{provider_id}/verify", post(verify_integration))
         .route("/v1/providers/health-check", post(health_check))
         .route("/v1/ai/chat", post(ai_chat))
+        .route("/v1/projects/{project_id}/delivery/recovery-plan", post(delivery_recovery_plan))
         .route("/v1/providers/select", post(select_provider))
         .route("/v1/audit", get(list_audit))
         .with_state(state)
