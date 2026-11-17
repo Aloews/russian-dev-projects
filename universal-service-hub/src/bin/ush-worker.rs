@@ -1,0 +1,161 @@
+#[path = "../execution_queue.rs"]
+mod execution_queue;
+
+use std::{env, time::Duration};
+
+use anyhow::{Context, bail};
+use serde_json::json;
+use sqlx::postgres::PgPoolOptions;
+use tokio::{task::JoinSet, time::sleep, signal, sync::watch};
+use tracing::{error, info, warn};
+use uuid::Uuid;
+
+const WORKER_VERSION: &str = "0.1.0";
+const LEASE_SECONDS: i64 = 60;
+
+fn parse_job_types(raw: &str) -> anyhow::Result<Vec<String>> {
+    let mut types = raw.split(',').map(str::trim).filter(|v| !v.is_empty())
+        .map(str::to_owned).collect::<Vec<_>>();
+    types.sort();
+    types.dedup();
+    if types.is_empty() || types.iter().any(|value| value != "system.noop") {
+        bail!("USH_WORKER_JOB_TYPES currently permits only system.noop");
+    }
+    Ok(types)
+}
+
+fn bounded_usize(name: &str, default: usize, min: usize, max: usize) -> anyhow::Result<usize> {
+    let value = env::var(name).ok().map(|raw| raw.parse::<usize>()).transpose()?.unwrap_or(default);
+    if !(min..=max).contains(&value) {
+        bail!("{name} must be between {min} and {max}");
+    }
+    Ok(value)
+}
+
+async fn worker_loop(
+    pool: sqlx::PgPool,
+    worker_id: String,
+    job_types: Vec<String>,
+    poll_interval: Duration,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    loop {
+        if *shutdown.borrow() { break; }
+
+        match execution_queue::recover_expired_leases(&pool).await {
+            Ok(recovered) if recovered > 0 => info!(worker_id, recovered, "expired execution leases recovered"),
+            Ok(_) => {}
+            Err(error) => {
+                error!(worker_id, error = ?error, "lease recovery failed");
+                tokio::select! {
+                    _ = shutdown.changed() => break,
+                    _ = sleep(poll_interval) => continue,
+                }
+            }
+        }
+
+        match execution_queue::claim_for_types(&pool, &worker_id, LEASE_SECONDS, &job_types).await {
+            Ok(Some(lease)) => {
+                let job_id = lease.job.id;
+                match lease.job.job_type.as_str() {
+                    "system.noop" => {
+                        let result = json!({
+                            "executor": "system.noop",
+                            "worker_version": WORKER_VERSION,
+                            "attempt": lease.job.attempt_count
+                        });
+                        match execution_queue::complete(&pool, job_id, lease.lease_token, &result).await {
+                            Ok(()) => info!(worker_id, job_id = %job_id, "non-billable worker job completed"),
+                            Err(error) => warn!(worker_id, job_id = %job_id, error = ?error, "job completion rejected; lease recovery will reconcile"),
+                        }
+                    }
+                    _ => {
+                        // The SQL claim filter must make this branch unreachable.
+                        let _ = execution_queue::fail(&pool, job_id, lease.lease_token, "unsupported_job_type", false).await;
+                        error!(worker_id, job_id = %job_id, "worker claimed a job outside its capability allowlist");
+                    }
+                }
+            }
+            Ok(None) => {
+                tokio::select! {
+                    _ = shutdown.changed() => break,
+                    _ = sleep(poll_interval) => {}
+                }
+            }
+            Err(error) => {
+                error!(worker_id, error = ?error, "job claim failed");
+                tokio::select! {
+                    _ = shutdown.changed() => break,
+                    _ = sleep(poll_interval) => {}
+                }
+            }
+        }
+    }
+    info!(worker_id, "worker stopped gracefully");
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let _ = dotenvy::dotenv();
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .init();
+
+    let database_url = env::var("USH_WORKER_DATABASE_URL")
+        .context("USH_WORKER_DATABASE_URL must be a dedicated, least-privilege worker database role")?;
+    if !database_url.starts_with("postgres://") && !database_url.starts_with("postgresql://") {
+        bail!("USH_WORKER_DATABASE_URL must use PostgreSQL");
+    }
+
+    let concurrency = bounded_usize("USH_WORKER_CONCURRENCY", 2, 1, 32)?;
+    let poll_ms = bounded_usize("USH_WORKER_POLL_MS", 1000, 100, 30_000)?;
+    let job_types = parse_job_types(&env::var("USH_WORKER_JOB_TYPES").unwrap_or_else(|_| "system.noop".into()))?;
+    let worker_prefix = env::var("USH_WORKER_ID").unwrap_or_else(|_| "ush-worker".into());
+    if worker_prefix.is_empty() || worker_prefix.len() > 100
+        || !worker_prefix.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) {
+        bail!("USH_WORKER_ID must be a bounded identifier");
+    }
+
+    let pool = PgPoolOptions::new()
+        .max_connections((concurrency + 2) as u32)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect(&database_url).await
+        .context("worker database connection failed")?;
+
+    sqlx::migrate!("./rust-migrations").run(&pool).await
+        .context("worker schema verification failed")?;
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let mut workers = JoinSet::new();
+    let poll_interval = Duration::from_millis(poll_ms as u64);
+    for index in 0..concurrency {
+        let pool = pool.clone();
+        let worker_id = format!("{worker_prefix}-{}-{index}", Uuid::new_v4());
+        let job_types = job_types.clone();
+        let shutdown = shutdown_rx.clone();
+        workers.spawn(worker_loop(pool, worker_id, job_types, poll_interval, shutdown));
+    }
+
+    info!(concurrency, poll_ms, job_types = ?job_types, "USH worker supervisor started; provider execution is disabled");
+    signal::ctrl_c().await.context("failed to listen for shutdown signal")?;
+    let _ = shutdown_tx.send(true);
+    while workers.join_next().await.is_some() {}
+    pool.close().await;
+    info!("USH worker supervisor shutdown complete");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_capability_allowlist_is_nonempty_and_non_billable() {
+        assert_eq!(parse_job_types("system.noop").unwrap(), vec!["system.noop"]);
+        assert_eq!(parse_job_types(" system.noop,system.noop ").unwrap(), vec!["system.noop"]);
+        assert!(parse_job_types("").is_err());
+        assert!(parse_job_types("agent.develop").is_err());
+        assert!(parse_job_types("system.noop,agent.architect").is_err());
+    }
+}
