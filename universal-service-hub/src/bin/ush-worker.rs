@@ -42,7 +42,7 @@ async fn worker_loop(
     loop {
         if *shutdown.borrow() { break; }
 
-        match execution_queue::recover_expired_leases(&pool).await {
+        match execution_queue::recover_expired_leases(&pool, &job_types).await {
             Ok(recovered) if recovered > 0 => info!(worker_id, recovered, "expired execution leases recovered"),
             Ok(_) => {}
             Err(error) => {
