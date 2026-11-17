@@ -446,3 +446,115 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - **API-only:** the current product has no browser management UI; only health/readiness endpoints are directly viewable in a browser, and administrative workflows use the authenticated HTTP API.
 - **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
 - Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
+
+
+## Delivery plan — 2026-11-17
+
+**Status: PLANNED / IN PROGRESS.** This section is the active execution schedule for closing the current Universal Service Hub / Product Factory acceptance cycle. Dates are planning estimates, not completion claims. The Hub remains P0 and takes priority over AUREL and Football Dynasty. No production deployment, production data mutation, paid resource provisioning, secret rotation or modification of existing product services is authorized by this plan.
+
+### Outcome and scope
+
+Deliver a verified MVP engineering loop in which the Hub/Factory receives a product task, decomposes it, assigns bounded specialist work, executes in isolated workspaces, runs independent verification, repairs failures, and publishes a reviewable candidate with durable evidence. This milestone does **not** mean the complete commercial, security-certified, cross-platform Universal Service Hub is finished.
+
+### Three schedule scenarios
+
+| Scenario | Planning window from 2026-11-17 | Assumptions | Target outcome |
+|---|---|---|---|
+| Optimistic | 2–3 calendar days (2026-11-18 to 2026-11-19) | Current PRs pass with limited repair; provider probes and runner access work | One end-to-end Product Factory candidate, verification report and target-product PR |
+| Base / recommended | 5–7 calendar days (2026-11-22 to 2026-11-24) | Several integration and workflow defects require bounded repair cycles | Repeatable MVP loop with persistence, provider fallback, isolated execution and independent QA evidence |
+| Pessimistic | 10–15 calendar days (2026-11-27 to 2026-12-02) | Architectural, provider, permissions, migration or concurrency issues require rework | Stabilized MVP with failure/recovery scenarios exercised and documented |
+
+Re-estimate when new evidence changes scope, dependencies or critical path. Do not silently convert estimates into deadlines or mark work verified because a date has passed.
+
+### Active workstreams
+
+| ID | Workstream | Parallelization rule | Exit evidence |
+|---|---|---|---|
+| W-A | Hub control plane: PR integration, task lifecycle, PostgreSQL queue, leases, checkpoints, workspace/worktree isolation | One writer per branch; integrate only after exact-head checks | Exact-SHA CI, migration/API integration tests, lease-expiry and recovery tests |
+| W-B | AI provider runtime: Starimg protocol probes, Claude Code tool access, Qwen/Ollama fallback and malformed/truncated output handling | Provider probes and isolated adapter tests may run in parallel; no silent provider or paid-work switch | Redacted live protocol probe, actual selected model/provider IDs, bounded failover test and usage/cost boundary |
+| W-C | Product Factory delivery: task intake → plan → candidate → verification → repair → PR | Separate candidate workspace from verifier; verifier receives no provider secrets or write token | Candidate artifact/SHA, independent verification report, repair evidence and target-product PR |
+| W-D | Independent QA/security: authorization, tenant isolation, path boundaries, idempotency, concurrency, audit redaction and regression | Read-only reviewer on immutable candidate SHA | Test matrix, findings disposition, exact-SHA CI and security evidence |
+| W-E | AUREL / Football Dynasty readiness | May progress on independent branches; must not consume Hub's P0 critical-path capacity or wait on Hub build unnecessarily | Separate product maps and exact acceptance evidence; no production release implied |
+
+### Execution sequence and checkpoints
+
+1. **Checkpoint C0 — reconcile repository state.** Inspect current `main`, open PRs, exact head SHAs, required checks, branch dependencies and current MAP before each cycle. Specifically revalidate PRs #49, #50, #67 and #31; do not assume the prior chat snapshot is still current. Resolve stacked-PR dependencies and conflicts without merging failing, stale or unreviewed changes.
+2. **Checkpoint C1 — stabilize provider execution.** Verify Starimg Responses and Anthropic Messages tool calls against the live catalogue and exact selected model IDs. Verify Claude Code can read/write only the intended target workspace. Verify Ollama `/api/tags` and `/api/chat` where a real local endpoint is available. Exercise malformed JSON, truncation, timeout, retry bounds and fallback. Record when live access is unavailable; do not substitute mocks for live-provider claims.
+3. **Checkpoint C2 — durable execution.** Verify PostgreSQL task lifecycle, idempotent enqueue, leases, heartbeat, checkpoint persistence, expired-lease recovery, retry ceiling and terminal failure. Add/verify multi-workspace Git worktrees, path-scoped write boundaries and safe cleanup. Keep independent workers from writing to the same branch/worktree.
+4. **Checkpoint C3 — complete Product Factory run.** Run one bounded acceptance task through the Hub/Factory's intended API/control path. Produce an actual candidate diff and immutable SHA, not just an agent report. Run verification without model-provider secrets or repository write credentials; repair only from trusted verification evidence; publish a target PR only after exact-SHA checks pass.
+5. **Checkpoint C4 — independent acceptance.** A separate reviewer/QA inspects the candidate diff and test artifacts. Exercise success, malformed model output, provider outage, permission denial, cross-tenant access denial, duplicate request, concurrent claim, worker interruption/recovery and budget rejection. Verify logs/audit omit credentials, prompts and generated content.
+6. **Checkpoint C5 — close MVP cycle.** Confirm the critical user journey works against the candidate runtime and PostgreSQL, artifacts survive restart, CI is green on the exact candidate SHA, security findings are resolved or explicitly release-blocking, and rollback/recovery evidence exists. Only then mark this MVP milestone VERIFIED.
+
+### Evidence currently carried into this plan (not refreshed by this documentation change)
+
+- PR #49 and #50 were previously reported with green CI; #49/#50 were Draft and stacked. Their current status and mergeability must be checked against live GitHub before integration.
+- PR #67 records Product Factory run #114 failures: Claude Code workspace access denials and Qwen invalid/truncated JSON. Its PR description reports a successful push CI run #44070658312; that does not prove the live Factory run succeeds. Recheck exact head and checks.
+- PR #31 is the Starimg-primary / Qwen-fallback control-plane change and has a dependency on the current branch state; resolve its current conflict/stacking status before use.
+- Previous reports of Ollama installation/model loading and protocol probes are not sufficient to claim an operational end-to-end agent. Record fresh endpoint and tool-call evidence.
+- No successful end-to-end Product Factory candidate + independent verification report + target-product PR is established by this plan's creation.
+- The existing production deployment remains unverified; this plan does not authorize one.
+
+### Definition of done for this delivery cycle
+
+- [ ] All required PR dependencies are integrated through reviewed PRs; no failing or stale head is merged.
+- [ ] Exact-head CI passes for the final integrated commit, including Rust format/lint/tests, Python checks, migration smoke, Docker build and container/API smoke as applicable.
+- [ ] Live Starimg protocol probes pass for the selected compatible routes, or the documented fallback is proven with a real execution; provider/model IDs and redacted diagnostics are retained.
+- [ ] Claude Code workspace permissions allow the intended target and deny unrelated paths.
+- [ ] Qwen handles valid, invalid, truncated and timeout responses without emitting an unsafe or fabricated patch.
+- [ ] PostgreSQL queue, leases, checkpoints, retry/idempotency and worker recovery pass integration/failure-injection tests.
+- [ ] Workspaces/worktrees are isolated; one authoritative writer per branch; cleanup and interrupted-run recovery are tested.
+- [ ] One real Product Factory acceptance run creates a candidate diff and immutable SHA, passes independent verification, performs any required repair, and opens a target PR.
+- [ ] Independent QA/security review checks the exact candidate SHA and critical negative cases.
+- [ ] Evidence is added to this map: commit SHAs, PR URLs, Actions run URLs, named test commands/results, candidate artifact references and known limitations.
+- [ ] No unsupported production-readiness, commercial-readiness or cross-platform claims are made.
+
+### Archiving and next-cycle rule
+
+Do **not** archive this plan merely because its estimated window expires or because individual PRs/CI runs pass. When every applicable Definition of Done item above is backed by evidence:
+
+1. Create `docs/archive/2026-11-17-product-factory-mvp-cycle.md` as an immutable closeout containing the final scope, actual dates, merged PRs, exact commit SHAs, CI run URLs, test commands/results, candidate/preview references, unresolved risks and explicit exclusions.
+2. Update the current-state sections of this map to point to the archive and retain only live status, remaining platform/security milestones and the next active plan.
+3. Prepare a new dated execution plan for the next milestone, selected from verified blockers and the authoritative S0–S7 security roadmap; do not invent scope before the closeout evidence is reviewed.
+4. Keep the archive and next plan in the same reviewed documentation PR where practical. Do not delete historical evidence or rewrite a failed run as successful.
+
+**Current active plan:** this section. **Archive status:** NOT READY — acceptance cycle is not yet verified complete. **Next plan:** NOT STARTED — prepare only after the closeout gate above.
+
+
+## Live evidence refresh — 2026-11-17
+
+This refresh replaces the stale-evidence assumptions above where the following exact run evidence is newer. It does not change the acceptance gate or authorize merging implementation PRs.
+
+- **PR #68 documentation plan:** candidate commit `732d080af4e69640422c219f7843f9e6638806fe`; GitHub Actions run [#44091093334](https://github.com/Aloews/russian-dev-projects/actions/runs/44091093334), workflow `universal-service-hub-ci`, completed `success`. The job's Rust format/lint/tests, Python/Ruff, migration smoke, Docker build, local Compose startup smoke and container smoke steps all passed. This validates the documentation candidate's repository checks; PR #68 remains a separate, unmerged documentation change.
+- **PR #67 Product Factory recovery changes:** workflow run [#44070658312](https://github.com/Aloews/russian-dev-projects/actions/runs/44070658312) completed `success`; all listed Product Factory syntax/safety/workflow checks, Rust checks, Python/Ruff, migration smoke, Docker build and container smoke passed. The run does not prove a successful Product Factory execution or candidate publication. Run #114's reported failure therefore remains an end-to-end acceptance blocker until a new run produces a candidate diff, immutable SHA, independent verification and target PR.
+- **PR #64 durable dispatcher / tenancy candidate:** latest observed head in the PR discussion is `91eab5837ed1514470fc14e4e28ea3a2625dd26a`. Exact-head workflow run [#43910616200](https://github.com/Aloews/russian-dev-projects/actions/runs/43910616200) completed `failure`. Rust format, Clippy, Rust tests, Python/Ruff, migration smoke, Docker build and local Compose runtime startup passed; the final container smoke failed with HTTP 404 (curl exit 22). The initial log review incorrectly associated the final HTTP 404 with tenant-token creation. A subsequent full-log inspection shows both tenant-token creation requests returned successfully and the smoke progressed through cross-tenant authorization checks. The final HTTP 404 occurs later in the container smoke; the exact failing request/route still requires isolation. Do not change the tenant-token route based on the earlier mistaken attribution. Earlier run [#43907400632](https://github.com/Aloews/russian-dev-projects/actions/runs/43907400632) failed in the tenant schema smoke fixture; the later exact-head run progressed past that step. PR #64 must remain unmerged until the 404 is traced to a specific route/contract, corrected without weakening authorization or smoke coverage, and the complete exact-head run passes.
+- **Current multi-tenancy boundary:** the PR #64 discussion explicitly describes the database schema/RLS work as a foundation, not complete multi-tenancy. Tenant identity authentication and membership-aware authorization, tenant API coverage, enforced quotas/budgets, per-tenant execution/artifact isolation, export/deletion and cross-tenant API penetration tests remain release gaps. Do not present schema-level tenant ownership as a finished multi-tenant product.
+- **Factory acceptance:** no successful end-to-end Product Factory candidate plus independent verification report plus target-product PR has been established by the evidence reviewed in this refresh.
+
+### Updated execution order
+
+1. Resolve PR #64's exact HTTP 404 in container smoke and obtain a clean exact-head CI pass. Keep the PR open/unmerged until then.
+2. Reconcile the latest exact heads and stacked dependencies for PRs #31, #49, #50, #67 and #64 before integrating them. A passing PR #67 CI run does not remove PR #31's provider-routing dependency or prove Factory success.
+3. After control-plane integration, run a bounded Factory acceptance task and retain its candidate, independent verification, repair history and target PR as immutable evidence.
+4. Only then execute the remaining C4/C5 acceptance matrix and consider archiving. The archive remains **NOT READY**; the next plan remains **NOT STARTED**.
+
+
+### CI confirmation for refreshed map
+
+- Candidate commit: `870de739da3c364b96426441c95dbff3646fa889`.
+- Exact-commit GitHub Actions run [#44097803719](https://github.com/Aloews/russian-dev-projects/actions/runs/44097803719) completed with `success`.
+- All steps passed, including Product Factory shell/Python syntax, Qwen safety tests, workflow and action metadata validation, Rust format/lint/tests, Ruff/Python tests, migration smoke, Docker build, local Compose runtime startup smoke and container smoke.
+- This is CI evidence for the map branch's current commit. It is not evidence that the Product Factory has successfully completed a real product-generation run, nor does it clear PR #64's separate failing exact-head container smoke.
+
+
+### Latest execution checkpoint — 2026-11-17 20:02 MSK
+
+This checkpoint supersedes earlier PR #64 head/status references above; earlier run records remain historical evidence and are not rewritten.
+
+- **PR #64 current implementation head:** \`429791aa89ca68a661df3fc1b76dee4ee6b25ad1\`.
+- **Previous exact-head CI:** [run #44118119198](https://github.com/Aloews/russian-dev-projects/actions/runs/44118119198) completed \`failure\` on \`357aca70f299623e30ca576b3939d43e2a67f570\`. Rust format/Clippy/tests, Python/Ruff, migration smoke, DB tests, Docker build and Compose startup passed. The final container smoke failed specifically at \`test "$wrong_workspace_owner" = "403"\`: an authenticated tester worker attempted to heartbeat a workspace leased by the implementer; the handler returned the generic invalid-lease conflict instead of an authorization denial.
+- **Correction pushed:** the workspace heartbeat handler now performs a tenant- and project-scoped live-lease-owner check before extending the lease. A different authenticated worker receives HTTP 403; an expired or invalid lease remains on the existing conflict path. The change does not broaden tenant visibility or accept the foreign lease token.
+- **Current exact-head CI:** [run #44132283616](https://github.com/Aloews/russian-dev-projects/actions/runs/44132283616), run number 1485, was observed as \`pending\` on the current head. No pass is claimed. Recheck this run and inspect its final job/log evidence before treating the heartbeat correction as verified.
+- **PR #64 decision:** remain draft, open and unmerged until exact-head CI passes and the tenant authorization/RLS negative cases are independently reviewed. The durable dispatcher remains a control-plane foundation; it does not yet provision actual Git worktrees or operate a durable multi-role execution scheduler.
+- **Next actions:** (1) verify run #44132283616; (2) if it fails, diagnose the exact failing assertion from the job log and fix without weakening the security contract; (3) after a green exact-head run, continue with actual isolated Git worktree provisioning and durable worker runtime; (4) refresh the provider and Product Factory evidence before claiming an end-to-end product-generation cycle.
+
+**Archive status remains NOT READY. Next plan remains NOT STARTED.** The MVP definition of done and closeout gate above are unchanged.
