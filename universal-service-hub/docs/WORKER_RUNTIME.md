@@ -9,7 +9,7 @@ The worker process:
 - claims only explicitly allowlisted job types using PostgreSQL row locks and fencing tokens;
 - recovers expired leases transactionally and closes the matching attempt ledger row;
 - records successful non-billable jobs through the durable queue completion transaction;
-- backs off on database errors and exits on SIGINT after stopping its loops;
+- backs off on database errors and exits on SIGINT/SIGTERM after stopping its loops;
 - requires a dedicated worker database URL; it never falls back to the Hub administrator token or API token;
 - requires verified TLS (`verify-full`) when `USH_ENVIRONMENT=production`;
 - does not run schema migrations and therefore does not require DDL privileges.
