@@ -655,3 +655,12 @@ The cloud coding workflow was not triggered for these checks because it can call
 - **Status: IMPLEMENTED IN BRANCH; NOT YET VERIFIED.** Exact-head CI, Rust format/Clippy/tests and PostgreSQL migration/container smoke are pending.
 - This increment is the durable queue control plane, not yet the full autonomous worker daemon. Continuous polling/supervision, provider/model dispatch, specialist execution, artifact storage transfer, concurrency controls, metrics/alerts and restart-recovery integration tests remain next.
 - No merge, production migration/deployment, provider invocation or paid resource creation was performed.
+
+
+## Workspaces and Git Worktrees — architecture and acceptance contract
+
+- Added `docs/WORKSPACES_GIT_WORKTREES.md` as the design/acceptance contract for multi-workspace management and isolated Git worktrees.
+- The model separates tenant project, connected repository, durable workspace, task worktree and writer lease. PostgreSQL remains the control-plane source of truth; actual Git/filesystem state must be reconciled on worker restart.
+- Key invariants: generated paths only under an owner-controlled persistent root; exact base SHA; one writer per worktree; lease fencing; short-lived GitHub App credentials; no credentials in remotes/process args/logs; isolated integration worktrees; quarantine rather than destructive reset when state disagrees.
+- The design includes a tenant-safe schema proposal, API surface, crash-recovery protocol and acceptance matrix for cross-tenant isolation, concurrent writers, worker restarts, Git correctness and cleanup.
+- **Status: DESIGN ONLY; NO WORKSPACE OR WORKTREE IMPLEMENTATION YET.** Implementation begins after the durable worker queue/runtime increment passes exact-head CI and PostgreSQL smoke tests.
