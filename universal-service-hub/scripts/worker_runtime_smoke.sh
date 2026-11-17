@@ -41,7 +41,8 @@ done
 if [[ "$job_status" != "leased" ]]; then docker logs "$crash_container" >&2 || true; echo "worker did not claim the smoke job" >&2; exit 1; fi
 
 docker kill --signal=SIGKILL "$crash_container" >/dev/null
-docker wait "$crash_container" >/dev/null
+crash_exit=$(docker wait "$crash_container" || true)
+if [[ "$crash_exit" != "137" ]]; then echo "expected SIGKILL exit 137, got $crash_exit" >&2; exit 1; fi
 sleep 11
 
 compose run -d --no-deps --name "$restart_container" -e "USH_WORKER_DATABASE_URL=postgres://ush_worker:$worker_password@postgres:5432/ush" -e "USH_WORKER_ID=ci-restarted-worker" -e "USH_WORKER_CONCURRENCY=1" -e "USH_WORKER_POLL_MS=200" -e "USH_WORKER_LEASE_SECONDS=10" -e "USH_WORKER_JOB_TYPES=system_noop" --entrypoint /app/ush-worker hub >/dev/null
