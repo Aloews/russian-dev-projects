@@ -33,6 +33,20 @@ fn bounded_usize(name: &str, default: usize, min: usize, max: usize) -> anyhow::
     Ok(value)
 }
 
+async fn shutdown_signal() -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate = signal::unix::signal(signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = signal::ctrl_c() => result?,
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    signal::ctrl_c().await?;
+    Ok(())
+}
+
 async fn worker_loop(
     pool: sqlx::PgPool,
     worker_id: String,
@@ -140,7 +154,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     info!(concurrency, poll_ms, job_types = ?job_types, "USH worker supervisor started; provider execution is disabled");
-    signal::ctrl_c().await.context("failed to listen for shutdown signal")?;
+    shutdown_signal().await.context("failed to listen for shutdown signal")?;
     let _ = shutdown_tx.send(true);
     while workers.join_next().await.is_some() {}
     pool.close().await;
