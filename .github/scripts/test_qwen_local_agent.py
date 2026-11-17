@@ -41,6 +41,44 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertFalse(agent.allowed("package.json", set()))
         self.assertFalse(agent.allowed("migrations/0001_schema.sql", set()))
 
+    def test_prepare_edits_does_not_mutate_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "src/main.py"
+                source.parent.mkdir(parents=True)
+                source.write_text("VALUE = 1\\n", encoding="utf-8")
+                staged = agent.prepare_edits(
+                    [{"path": "src/main.py", "old": "VALUE = 1", "new": "VALUE = 2"}],
+                    {"src/main.py"},
+                )
+                self.assertEqual(staged, {"src/main.py": "VALUE = 2\\n"})
+                self.assertEqual(source.read_text(encoding="utf-8"), "VALUE = 1\\n")
+            finally:
+                agent.ROOT = previous_root
+
+    def test_invalid_later_edit_leaves_all_files_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "src/main.py"
+                source.parent.mkdir(parents=True)
+                source.write_text("VALUE = 1\\n", encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    agent.prepare_edits(
+                        [
+                            {"path": "src/main.py", "old": "VALUE = 1", "new": "VALUE = 2"},
+                            {"path": "src/missing.py", "old": "NOPE", "new": "VALUE = 3"},
+                        ],
+                        {"src/main.py"},
+                    )
+                self.assertEqual(source.read_text(encoding="utf-8"), "VALUE = 1\\n")
+                self.assertFalse((agent.ROOT / "src/missing.py").exists())
+            finally:
+                agent.ROOT = previous_root
+
     def test_exact_unique_replacement_is_applied(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT
