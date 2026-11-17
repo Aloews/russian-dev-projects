@@ -1451,7 +1451,7 @@ async fn claim_execution_job(
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_recovery_failed"))?;
 
     let row = sqlx::query(
-        "SELECT id,task_id,job_type,payload,checkpoint,attempt_count,max_attempts,priority FROM execution_jobs WHERE project_id=$1 AND status IN ('queued','retry_wait') AND available_at<=NOW() AND attempt_count<max_attempts ORDER BY priority DESC,available_at,created_at LIMIT 1 FOR UPDATE SKIP LOCKED"
+        "SELECT j.id,j.task_id,j.job_type,j.payload,j.checkpoint,j.attempt_count,j.max_attempts,j.priority,t.title AS task_title,t.objective AS task_objective,t.owner_role AS task_owner_role FROM execution_jobs j LEFT JOIN project_tasks t ON t.project_id=j.project_id AND t.id=j.task_id WHERE j.project_id=$1 AND j.status IN ('queued','retry_wait') AND j.available_at<=NOW() AND j.attempt_count<j.max_attempts ORDER BY j.priority DESC,j.available_at,j.created_at LIMIT 1 FOR UPDATE OF j SKIP LOCKED"
     ).bind(&project_id).fetch_optional(&mut *tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_claim_failed"))?;
     let Some(row) = row else {
@@ -1463,6 +1463,9 @@ async fn claim_execution_job(
     let job_type: String = row.get("job_type");
     let payload: Value = row.get("payload");
     let checkpoint: Value = row.get("checkpoint");
+    let task_title: Option<String> = row.try_get("task_title").ok();
+    let task_objective: Option<String> = row.try_get("task_objective").ok();
+    let task_owner_role: Option<String> = row.try_get("task_owner_role").ok();
     let attempt_number: i32 = row.get::<i32,_>("attempt_count") + 1;
     let lease_token = Uuid::new_v4();
     let updated = sqlx::query(
@@ -1485,6 +1488,7 @@ async fn claim_execution_job(
     Ok(Json(json!({"job":{
         "id":job_id,"project_id":project_id,"task_id":task_id,"job_type":job_type,
         "payload":payload,"checkpoint":checkpoint,"attempt":attempt_number,
+        "task_context":task_id.map(|_| json!({"title":task_title,"objective":task_objective,"owner_role":task_owner_role})),
         "worker_id":body.worker_id,"lease_token":lease_token,
         "lease_expires_at":updated.get::<DateTime<Utc>,_>("lease_expires_at")
     }})))
@@ -1590,10 +1594,18 @@ async fn complete_execution_job(
     if attempt_update.rows_affected()!=1 { return Err(ApiError(StatusCode::CONFLICT, "execution_attempt_not_running")); }
     let handoff_id = if let (Some(role),Some(kind),Some(key)) = (&body.next_agent_role,&body.next_job_type,&body.next_idempotency_key) {
         let next_payload = json!({"agent_role":role,"source_job_id":job_id,"input_artifact_ids":body.output_artifact_ids});
-        let inserted = sqlx::query("INSERT INTO execution_jobs (project_id,task_id,job_type,status,priority,idempotency_key,payload,max_attempts) SELECT $1,$2,$3,'queued',100,$4,$5,3 WHERE NOT EXISTS (SELECT 1 FROM execution_jobs WHERE project_id=$1 AND idempotency_key=$4) RETURNING id")
-            .bind(&project_id).bind(task_id).bind(kind).bind(key).bind(next_payload).fetch_optional(&mut *tx).await
+        let inserted = sqlx::query("INSERT INTO execution_jobs (project_id,task_id,job_type,status,priority,idempotency_key,payload,max_attempts) VALUES ($1,$2,$3,'queued',100,$4,$5,3) ON CONFLICT (project_id,idempotency_key) DO NOTHING RETURNING id")
+            .bind(&project_id).bind(task_id).bind(kind).bind(key).bind(&next_payload).fetch_optional(&mut *tx).await
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_handoff_failed"))?;
-        inserted.map(|r|r.get::<Uuid,_>("id"))
+        if let Some(row) = inserted {
+            Some(row.get::<Uuid,_>("id"))
+        } else {
+            let existing = sqlx::query("SELECT id FROM execution_jobs WHERE project_id=$1 AND idempotency_key=$2 AND job_type=$3 AND task_id IS NOT DISTINCT FROM $4 AND payload=$5")
+                .bind(&project_id).bind(key).bind(kind).bind(task_id).bind(&next_payload).fetch_optional(&mut *tx).await
+                .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_handoff_lookup_failed"))?
+                .ok_or(ApiError(StatusCode::CONFLICT, "handoff_idempotency_payload_mismatch"))?;
+            Some(existing.get::<Uuid,_>("id"))
+        }
     } else { None };
     sqlx::query("INSERT INTO project_events (project_id,task_id,event_type,actor,metadata) VALUES ($1,$2,'execution.job.succeeded',$3,$4)")
         .bind(&project_id).bind(task_id).bind(&body.worker_id)
@@ -1627,9 +1639,10 @@ async fn fail_execution_job(
         .ok_or(ApiError(StatusCode::CONFLICT, "execution_lease_lost"))?;
     let status: String = row.get("status");
     let attempt_status = if body.retryable { "retryable_failure" } else { "permanent_failure" };
-    sqlx::query("UPDATE execution_attempts SET status=$1,finished_at=NOW(),duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint),error_code=$2 WHERE project_id=$3 AND job_id=$4 AND lease_token=$5 AND status='running'")
+    let attempt_update = sqlx::query("UPDATE execution_attempts SET status=$1,finished_at=NOW(),duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint),error_code=$2 WHERE project_id=$3 AND job_id=$4 AND lease_token=$5 AND status='running'")
         .bind(attempt_status).bind(&body.error_code).bind(&project_id).bind(job_id).bind(body.lease_token)
         .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_attempt_update_failed"))?;
+    if attempt_update.rows_affected()!=1 { return Err(ApiError(StatusCode::CONFLICT, "execution_attempt_not_running")); }
     sqlx::query("INSERT INTO project_events (project_id,event_type,actor,metadata) VALUES ($1,'execution.job.failed',$2,$3)")
         .bind(&project_id).bind(&body.worker_id).bind(json!({"job_id":job_id,"error_code":body.error_code,"status":status}))
         .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_event_write_failed"))?;
