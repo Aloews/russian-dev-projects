@@ -633,3 +633,13 @@ The cloud coding workflow was not triggered for these checks because it can call
 - Added `docs/DURABLE_EXECUTION.md` with the queue fencing/retry contract and acceptance tests.
 - **Status: IMPLEMENTED IN BRANCH; NOT YET VERIFIED.** Exact-head CI and PostgreSQL 16 migration/container smoke are required. No task/job API, worker, lease claimant, heartbeat/checkpoint handler, recovery sweeper, metrics, dashboard, agent dispatch or production migration is included.
 - Next: run exact-head CI; repair migration issues; then implement transactionally safe enqueue/claim/heartbeat/checkpoint/complete operations with tenant authorization and stale-lease fencing. Only after those pass should a worker loop and monitoring be added.
+
+
+## Verified Autonomous Continuation skill
+
+- Added `.agents/skills/verified-autonomous-continuation/SKILL.md`.
+- Wired the skill into `universal-service-hub/AGENTS.md` so Hub agents load it for CI monitoring, exact-head verification and continuing planned work.
+- Green CI on the exact current PR head authorizes continuation of already-approved repository work without routine user confirmation.
+- Explicit approval remains mandatory for paid providers/resources, secrets/permissions, production data/migrations/deployments, merge/release, destructive changes and scope expansion.
+- A successful CI run on an older SHA is never evidence for a newer head. Required checks must all succeed; skipped/cancelled/missing/pending checks do not pass.
+- **Status: IMPLEMENTED IN BRANCH; CI PENDING.** This repository skill does not itself create a continuously running agent. Background status checks require a separate scheduled/event automation.
