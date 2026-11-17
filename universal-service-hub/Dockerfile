@@ -4,12 +4,13 @@ ENV CARGO_NET_RETRY=2 CARGO_HTTP_TIMEOUT=60 CARGO_PROFILE_RELEASE_OPT_LEVEL=1
 COPY Cargo.toml ./
 COPY src ./src
 COPY rust-migrations ./rust-migrations
-RUN cargo build --release
+RUN cargo build --release --bins
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /build/target/release/universal-service-hub /app/universal-service-hub
+COPY --from=builder /build/target/release/ush-worker /app/ush-worker
 USER 65532:65532
 ENV PORT=8000
 EXPOSE 8000
