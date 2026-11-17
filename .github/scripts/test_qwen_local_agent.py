@@ -168,5 +168,53 @@ class QwenEditSafetyTests(unittest.TestCase):
                 agent.ROOT = previous_root
 
 
+    def test_retry_does_not_replay_malformed_model_output(self):
+        base = [
+            {"role": "system", "content": "system contract"},
+            {"role": "user", "content": "original objective"},
+        ]
+        malformed = '{"review":"unterminated'
+        retry = agent.build_retry_messages(base, "Unterminated string", "")
+        self.assertEqual(retry[:2], base)
+        self.assertNotIn(malformed, json.dumps(retry))
+        self.assertIn("Discard that response", retry[-1]["content"])
+        self.assertIn("complete JSON object", retry[-1]["content"])
+
+    def test_retry_keeps_bounded_existing_file_evidence(self):
+        base = [{"role": "user", "content": "objective"}]
+        evidence = "EXISTING FILE: src/main.py\nVALUE = 1\n"
+        retry = agent.build_retry_messages(base, "old text mismatch", evidence)
+        self.assertIn("VALUE = 1", retry[-1]["content"])
+
+    def test_retry_prompt_caps_error_and_existing_file_context(self):
+        retry = agent.build_retry_messages(
+            [{"role": "user", "content": "objective"}],
+            "E" * 1000,
+            "C" * 6000,
+        )
+        self.assertLess(len(retry[-1]["content"]), 6000)
+        self.assertNotIn("E" * 301, retry[-1]["content"])
+
+    def test_response_validation_rejects_missing_review_before_editing(self):
+        with self.assertRaisesRegex(ValueError, "review report"):
+            agent.validate_response({
+                "review": "too short",
+                "edits": [{"path": "src/main.py", "old": "A", "new": "B"}],
+            })
+
+    def test_response_validation_rejects_documentation_only_candidate(self):
+        with self.assertRaisesRegex(ValueError, "no source or test edits"):
+            agent.validate_response({
+                "review": "A" * 100,
+                "edits": [{"path": "docs/MAP.md", "old": "A", "new": "B"}],
+            })
+
+    def test_qwen_generation_budget_is_bounded_for_small_model(self):
+        self.assertEqual(agent.MAX_FILES, 2)
+        self.assertEqual(agent.MAX_CONTEXT_CHARS, 8500)
+        self.assertEqual(agent.MAX_OUTPUT_TOKENS, 3072)
+        self.assertEqual(agent.EDIT_SCHEMA["properties"]["edits"]["maxItems"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
