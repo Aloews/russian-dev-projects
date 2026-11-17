@@ -162,6 +162,30 @@ def rejected_existing_file_context(answer):
     return "\n".join(sections)
 
 
+def validate_response(response_json):
+    if not isinstance(response_json, dict):
+        raise ValueError("Qwen response must be a JSON object")
+    review_text = response_json.get("review")
+    if not isinstance(review_text, str) or len(review_text.strip()) < 80:
+        raise ValueError("Qwen review report is missing or too short")
+    if "timed out" in review_text.lower():
+        raise ValueError("Qwen review report contains an execution error")
+    return review_text
+
+
+def build_retry_messages(base_messages, validation_error, existing_file_evidence=""):
+    """Build a clean retry without replaying malformed or oversized model output."""
+    instruction = (
+        "Your previous response failed validation: " + str(validation_error)[:300] + ". "
+        "Discard that response and produce a fresh, complete JSON object matching the schema. "
+        "Keep the review under 1200 characters and make at most two small source/test edits. "
+        "For an existing file, old must be an exact unique snippet from the evidence. "
+        "For a new file, old must be empty. Never include markdown fences or unescaped newlines inside JSON strings. "
+        "Do not claim tests were run.\n" + existing_file_evidence[:5000]
+    )
+    return [*base_messages, {"role": "user", "content": instruction}]
+
+
 def apply_edits(edits, tracked):
     if not isinstance(edits, list) or not edits or len(edits) > MAX_FILES:
         raise ValueError("model returned no edits or exceeded the edit limit")
@@ -286,62 +310,45 @@ def main():
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
     system += (
-        "\n\nYou are a coordinated Qwen2.5-Coder 3B engineering council. In ONE inference pass, "
-        "perform six explicitly separated roles: (1) architecture analyst, (2) product and user-journey analyst, "
-        "(3) security/privacy analyst, (4) QA/test analyst, (5) implementation engineer, and "
-        "(6) independent post-change reviewer. First reason through architecture, product, security and QA; "
-        "then make only the smallest coherent implementation changes; finally review your proposed changes "
-        "for regressions and missing tests. The 'review' field must contain concise findings for each role, "
-        "evidence-backed file references, acceptance criteria and any remaining unknowns. "
-        "Do not claim tests were run. Return only JSON matching the schema, including both review and edits."
+        "\n\nAct as a compact engineering council: check architecture, product journey, security/privacy "
+        "and test impact, then implement one small coherent increment and independently review it. "
+        "The review must briefly state findings, evidence file paths, acceptance criteria and unknowns. "
+        "Do not claim tests were run. Return only valid JSON with no markdown fences."
     )
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context + "\n\nProduce a review report and minimal exact structured edits. For existing files, old must be an exact unique snippet. For new files, old must be empty."},
     ]
     tracked_set = set(tracked)
-    validation_error = None
     answer = ""
     for attempt in range(3):
         try:
             answer = ask_ollama(
                 messages,
                 format_schema=EDIT_SCHEMA,
-                max_predict=2048 if attempt == 0 else (1024 if attempt == 1 else 768),
-                timeout_seconds=1200 if attempt == 0 else 600,
+                max_predict=MAX_OUTPUT_TOKENS,
+                timeout_seconds=1200,
             )
             response_json = json.loads(answer)
+            review_text = validate_response(response_json)
             changed_paths = apply_edits(response_json.get("edits"), tracked_set)
             if not changed_paths:
                 raise ValueError("Qwen returned no source or test edits")
             source_changes = [path for path in changed_paths if Path(path).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}]
             if not source_changes:
                 raise ValueError("Qwen returned documentation-only edits")
-            review_text = response_json.get("review")
-            if not isinstance(review_text, str) or len(review_text.strip()) < 80 or "timed out" in review_text.lower():
-                raise ValueError("Qwen review report is missing or contains an execution error")
             break
         except (TimeoutError, urllib.error.URLError) as exc:
             print("::error::Qwen inference timed out or could not connect: " + type(exc).__name__ + ": " + str(exc)[:500])
             return 4
         except (KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
-            validation_error = str(exc)[:1000]
             if attempt < 2:
                 existing_file_evidence = rejected_existing_file_context(answer)
-                messages.extend([
-                    {"role": "assistant", "content": answer[:10000]},
-                    {"role": "user", "content": (
-                        "Your previous JSON edit was rejected: " + validation_error + ". "
-                        "This is a strict correction attempt. For every path shown below as an existing file, old MUST be a non-empty exact unique snippet copied verbatim from that file. "
-                        "Never use old='' for an existing or tracked path unless the proposed complete replacement preserves at least 92 percent of the existing file. "
-                        "If you cannot produce an exact replacement, omit that file and choose a different existing source/test file. "
-                        "Do not recreate, truncate or overwrite existing files. Keep the patch minimal. "
-                        + existing_file_evidence
-                        + "\\nReturn only corrected JSON matching the schema."
-                    )},
-                ])
+                messages = build_retry_messages(
+                    messages[:2], str(exc), existing_file_evidence
+                )
                 continue
-            print("::error::Qwen multi-role engineering pass failed validation: " + validation_error)
+            print("::error::Qwen multi-role engineering pass failed validation: " + str(exc)[:1000])
             return 4
     report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
