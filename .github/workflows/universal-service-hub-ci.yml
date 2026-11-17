@@ -537,6 +537,16 @@ jobs:
           reviewer_task_lease=$(printf '%s' "$reviewer_claim" | jq -r '.lease_token')
           test "$(printf '%s' "$reviewer_claim" | jq -r '.task.id')" = "$task_id"
           echo "::add-mask::$reviewer_task_lease"
+
+          review_task_version=$(curl -fsS -H "Authorization: Bearer $USH_API_TOKEN" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tasks \
+            | jq -r --arg id "$task_id" '.[] | select(.id == $id) | .version')
+          generic_verify_status=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$task_id/transition" \
+            -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
+            -d "$(jq -nc --argjson expected_version "$review_task_version" '{next_status:"verified",expected_version:$expected_version}')")
+          test "$generic_verify_status" = "403"
+
           reviewer_workspace=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/lease-next \
             -H "Authorization: Bearer $reviewer_token" -H "Content-Type: application/json" \
             -d '{"worker_id":"reviewer-smoke","lease_seconds":600}')
