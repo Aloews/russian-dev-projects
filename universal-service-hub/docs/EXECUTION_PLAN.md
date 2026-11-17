@@ -88,7 +88,7 @@ Each increment is a separate PR-sized unit. Keep one writer per overlapping file
 
 | ID | Increment | Deliverable | Acceptance evidence |
 |---|---|---|---|
-| F1 | Recovery preview | Tenant-scoped critical-path forecast, bounded DAG validation and delay tiers | Exact-head Rust tests, API authorization tests, malformed-DAG tests and independent review |
+| F1 | Recovery preview | Tenant-scoped three-point critical-path forecast, bounded DAG validation and delay tiers | Exact-head Rust tests, three-point estimate tests, API authorization tests, malformed-DAG tests and independent review |
 | F2 | Durable schedule state | Versioned project plans, task DAGs, estimates and immutable progress events in PostgreSQL | Migration, tenant-isolation, concurrency and history-integrity tests |
 | F3 | Forecast history | Timestamped snapshots, drift trends and three-point estimates with confidence ranges | Deterministic replay against historical task events; forecast calibration report |
 | F4 | Delivery visibility | Project dashboard, critical-path view, optimistic/realistic/pessimistic finish forecasts and alert preferences | API/UI E2E, accessibility, alert deduplication and notification opt-out tests |
