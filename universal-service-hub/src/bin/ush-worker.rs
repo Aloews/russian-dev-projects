@@ -19,8 +19,8 @@ fn parse_job_types(raw: &str) -> anyhow::Result<Vec<String>> {
         .map(str::to_owned).collect::<Vec<_>>();
     types.sort();
     types.dedup();
-    if types.is_empty() || types.iter().any(|value| value != "system.noop") {
-        bail!("USH_WORKER_JOB_TYPES currently permits only system.noop");
+    if types.is_empty() || types.iter().any(|value| value != "system_noop") {
+        bail!("USH_WORKER_JOB_TYPES currently permits only system_noop");
     }
     Ok(types)
 }
@@ -73,9 +73,9 @@ async fn worker_loop(
             Ok(Some(lease)) => {
                 let job_id = lease.job.id;
                 match lease.job.job_type.as_str() {
-                    "system.noop" => {
+                    "system_noop" => {
                         let result = json!({
-                            "executor": "system.noop",
+                            "executor": "system_noop",
                             "worker_version": WORKER_VERSION,
                             "attempt": lease.job.attempt_count
                         });
@@ -125,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
 
     let concurrency = bounded_usize("USH_WORKER_CONCURRENCY", 2, 1, 32)?;
     let poll_ms = bounded_usize("USH_WORKER_POLL_MS", 1000, 100, 30_000)?;
-    let job_types = parse_job_types(&env::var("USH_WORKER_JOB_TYPES").unwrap_or_else(|_| "system.noop".into()))?;
+    let job_types = parse_job_types(&env::var("USH_WORKER_JOB_TYPES").unwrap_or_else(|_| "system_noop".into()))?;
     let worker_prefix = env::var("USH_WORKER_ID").unwrap_or_else(|_| "ush-worker".into());
     if worker_prefix.is_empty() || worker_prefix.len() > 100
         || !worker_prefix.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) {
@@ -168,10 +168,10 @@ mod tests {
 
     #[test]
     fn worker_capability_allowlist_is_nonempty_and_non_billable() {
-        assert_eq!(parse_job_types("system.noop").unwrap(), vec!["system.noop"]);
-        assert_eq!(parse_job_types(" system.noop,system.noop ").unwrap(), vec!["system.noop"]);
+        assert_eq!(parse_job_types("system_noop").unwrap(), vec!["system_noop"]);
+        assert_eq!(parse_job_types(" system_noop,system_noop ").unwrap(), vec!["system_noop"]);
         assert!(parse_job_types("").is_err());
         assert!(parse_job_types("agent.develop").is_err());
-        assert!(parse_job_types("system.noop,agent.architect").is_err());
+        assert!(parse_job_types("system_noop,agent.architect").is_err());
     }
 }
