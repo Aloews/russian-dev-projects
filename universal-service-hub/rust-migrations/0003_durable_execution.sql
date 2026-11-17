@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS execution_artifacts (
     size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY (project_id, job_id) REFERENCES execution_jobs(project_id, id) ON DELETE SET NULL (job_id),
-    FOREIGN KEY (project_id, task_id) REFERENCES project_tasks(project_id, id) ON DELETE SET NULL
+    FOREIGN KEY (project_id, task_id) REFERENCES project_tasks(project_id, id) ON DELETE SET NULL (task_id)
 );
 CREATE INDEX IF NOT EXISTS ix_execution_artifacts_project_created
     ON execution_artifacts(project_id, created_at DESC);
