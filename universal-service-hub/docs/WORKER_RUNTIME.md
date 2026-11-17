@@ -51,7 +51,7 @@ Use a unique strong password, TLS and a connection string stored in the deployme
 
 A non-billable smoke job can be enqueued through the existing project-scoped API with `job_type: "system_noop"`, `agent_role: "integrator"` and a unique `idempotency_key`. The worker's allowlist matches the API's lowercase/underscore job-type validation; it does not accept dotted job types.
 
-Run the image with `/app/ush-worker` as its command/entrypoint in a separate worker service. Keep the API and worker as separate processes so their restart policies, resource limits and scaling can be controlled independently. Do not start the worker until the dedicated role and secret are provisioned.
+The Compose file defines an opt-in `worker` profile. Start it with `USH_WORKER_DATABASE_URL=... docker compose --profile worker up -d worker`. This service receives only the worker database URL and worker settings; it does not inherit the API token or application database URL. Keep the API and worker as separate processes so their restart policies, resource limits and scaling can be controlled independently. Do not start the worker until the dedicated role and secret are provisioned.
 
 ## Acceptance gates
 
