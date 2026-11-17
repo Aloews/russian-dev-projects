@@ -452,7 +452,8 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 
 ### Execution model
 
-- **Status:** CONFIGURED IN WORKFLOW; live subagent execution is NOT YET VERIFIED.
+- **Status:** CONFIGURED IN WORKFLOW; exact-head CI is VERIFIED, but live subagent execution is NOT YET VERIFIED.
+- PR #49 exact head `3b6968c9ae7b608784135fc22627d885700433fe` passed GitHub Actions run #1460 (`43954894657`): Rust format/Clippy/tests, Python/Ruff, migration smoke, repository/workflow checks, Docker build, Compose startup and container smoke all succeeded. This validates the workflow/configuration and repository checks, not actual live subagent spawning.
 - Workflow: `.github/workflows/universal-hub-codex-claude.yml`.
 - Codex subagents are enabled with a maximum of four concurrent child agents and nesting depth one. The primary selected Codex model is the default child model; this avoids silently introducing another provider or unverified model.
 - Four bounded roles are provisioned: `codebase_explorer`, `security_reviewer`, `provider_analyst`, and `test_analyst`. Start with two or three; use the fourth only when it has a distinct task. The main Codex session remains the sole writer and integrator.
@@ -556,7 +557,8 @@ Initial implementation sequence:
 
 ## Local model control and development failover — first runtime increment
 
-- **Status:** IN PROGRESS; source changes are in branch `feat/ush-local-agent-failover`. Exact-head CI and live Ollama execution are pending.
+- **Status:** SOURCE AND EXACT-HEAD CI VERIFIED; LIVE OLLAMA EXECUTION AND CLOUD-FAILURE FAILOVER NOT VERIFIED. Source changes are in branch `feat/ush-local-agent-failover`.
+- Current PR #50 head `1925eb68b0cf6871e42a2740ce492502d4acff1e` passed exact-head GitHub Actions run #1465 (`43962743394`): agent-contract documentation validation, Qwen safety tests, workflow validation, Rust format/Clippy/tests, Python/Ruff, migration smoke, Docker build, Compose startup and container smoke all succeeded.
 - The Rust provider registry now recognizes an `ollama` AI adapter for chat inference and model discovery through Ollama's documented local `/api/chat` and `/api/tags` endpoints.
 - Local endpoints are intentionally separate from public cloud endpoints. They must use loopback or a hostname explicitly listed in `USH_OLLAMA_ALLOWED_HOSTS`; each hostname is resolved once per request, every DNS answer is validated, and the HTTP client pins the selected validated socket address with reqwest `ClientBuilder::resolve`. The pinned client disables environment proxies and redirects while retaining the original hostname for HTTP Host and TLS SNI. No API key or Infisical secret is required for the local adapter.
 - The health-check path probes Ollama's local model-tags endpoint. The provider model catalogue normalizes Ollama model names and sizes.
@@ -566,6 +568,6 @@ Initial implementation sequence:
 - The local Qwen script is project-scoped through explicit `ALLOWED_PREFIXES` and context-file allowlists. It cannot edit workflow files, credentials, dependency manifests, deployment configuration or database migrations. Its role-separated engineering prompt is one model inference session, not four independent local agents.
 - The workflow can use a self-hosted runner selected by repository variable `USH_DEV_RUNNER_LABELS` (JSON array); without it, the workflow defaults to `ubuntu-latest`. It reuses a running Ollama server and configured model when present; otherwise it installs Ollama and pulls the selected model (default `qwen2.5-coder:3b`). A self-hosted runner with preloaded weights is the path to persistent owner-operated local inference.
 - **Not yet implemented:** automatic cross-runner resume after the runner itself is lost; a separate independent local-model reviewer; multiple local models selected by task class; resource-aware GPU/model sizing; full management UI for local-model pool and task routing.
-- **Verification boundary:** Rust format, lint, tests and Qwen safety tests passed on intermediate commit `720849e`; Docker build and container smoke test were still running at the time of this map update. The final branch head and the newly added local fallback workflow have not yet passed exact-head CI. No real cloud-outage-to-Ollama workflow run has been observed. Do not call local failover operational until that simulation produces a candidate and the exact candidate SHA passes CI.
+- **Verification boundary:** exact-head CI passed on `1925eb68b0cf6871e42a2740ce492502d4acff1e` (run #1465). This is repository CI evidence only. No live Ollama `/api/tags` or `/api/chat` request, actual provider-health probe against a running Ollama service, controlled Starimg/Codex/Claude failure, local Qwen candidate generation, or defective-candidate rejection has yet been observed. Do not call local failover operational until those live acceptance checks are recorded.
 - **Acceptance required:** exact-head CI including actionlint on the updated workflow; live Ollama health/model-discovery/chat smoke tests; a controlled cloud-agent failure that demonstrably invokes Qwen; successful bounded patch generation; exact-head CI on the generated candidate; proof that a defective candidate is blocked.
 - No production deployment, provider credential change, paid resource creation or production data mutation is included.
