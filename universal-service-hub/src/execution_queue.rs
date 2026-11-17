@@ -20,6 +20,29 @@ pub struct EnqueueRequest {
 
 fn default_attempts() -> i32 { 3 }
 
+
+fn safe_metadata(value: &Value, max_bytes: usize) -> bool {
+    fn inspect(value: &Value) -> bool {
+        match value {
+            Value::Object(map) => map.iter().all(|(key, child)| {
+                let key = key.to_ascii_lowercase();
+                !["prompt", "transcript", "secret", "password", "credential", "api_key",
+                  "access_token", "refresh_token", "raw_response", "generated_text",
+                  "customer_data", "messages", "system_prompt", "user_input"]
+                    .iter().any(|blocked| key.contains(blocked))
+                    && inspect(child)
+            }),
+            Value::Array(items) => items.iter().all(inspect),
+            Value::String(text) => text.len() <= 2048,
+            _ => true,
+        }
+    }
+    value.is_object()
+        && serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= max_bytes)
+        && inspect(value)
+}
+
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Job {
     pub id: Uuid,
@@ -73,8 +96,7 @@ pub async fn enqueue(pool: &PgPool, project_id: &str, request: &EnqueueRequest) 
         || !request.job_type.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
         || request.priority < 0 || request.priority > 1000
         || !(1..=20).contains(&request.max_attempts)
-        || !request.payload.is_object()
-        || serde_json::to_vec(&request.payload).map_err(|_| QueueError::InvalidInput)?.len() > 32768
+        || !safe_metadata(&request.payload, 32768)
     {
         return Err(QueueError::InvalidInput);
     }
@@ -99,7 +121,9 @@ pub async fn enqueue(pool: &PgPool, project_id: &str, request: &EnqueueRequest) 
          .ok_or(QueueError::Database)?;
         let same = row.try_get::<String, _>("job_type").map_err(|_| QueueError::Database)? == request.job_type
             && row.try_get::<Option<Uuid>, _>("task_id").map_err(|_| QueueError::Database)? == request.task_id
-            && row.try_get::<Value, _>("payload").map_err(|_| QueueError::Database)? == request.payload;
+            && row.try_get::<Value, _>("payload").map_err(|_| QueueError::Database)? == request.payload
+            && row.try_get::<i16, _>("priority").map_err(|_| QueueError::Database)? == request.priority
+            && row.try_get::<i32, _>("max_attempts").map_err(|_| QueueError::Database)? == request.max_attempts;
         if !same { return Err(QueueError::IdempotencyConflict); }
         (row, false)
     };
@@ -152,7 +176,7 @@ pub async fn heartbeat(pool: &PgPool, project_id: &str, job_id: Uuid, token: Uui
 }
 
 pub async fn save_checkpoint(pool: &PgPool, project_id: &str, job_id: Uuid, token: Uuid, checkpoint: &Value) -> Result<(), QueueError> {
-    if !checkpoint.is_object() || serde_json::to_vec(checkpoint).map_err(|_| QueueError::InvalidInput)?.len() > 32768 {
+    if !safe_metadata(checkpoint, 32768) {
         return Err(QueueError::InvalidInput);
     }
     let result = sqlx::query(
@@ -164,7 +188,7 @@ pub async fn save_checkpoint(pool: &PgPool, project_id: &str, job_id: Uuid, toke
 }
 
 pub async fn complete(pool: &PgPool, project_id: &str, job_id: Uuid, token: Uuid, result_metadata: &Value) -> Result<(), QueueError> {
-    if !result_metadata.is_object() || serde_json::to_vec(result_metadata).map_err(|_| QueueError::InvalidInput)?.len() > 16384 {
+    if !safe_metadata(result_metadata, 16384) {
         return Err(QueueError::InvalidInput);
     }
     let mut tx = pool.begin().await.map_err(|_| QueueError::Database)?;
@@ -176,12 +200,13 @@ pub async fn complete(pool: &PgPool, project_id: &str, job_id: Uuid, token: Uuid
      .ok_or(QueueError::NotFoundOrLeaseLost)?;
     let project_id: String = row.try_get("project_id").map_err(|_| QueueError::Database)?;
     let attempt: i32 = row.try_get("attempt_count").map_err(|_| QueueError::Database)?;
-    sqlx::query(
+    let attempt_update = sqlx::query(
         "UPDATE execution_attempts SET status='succeeded', finished_at=NOW(), \
          duration_ms=(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint, result_metadata=$4 \
          WHERE project_id=$1 AND job_id=$2 AND attempt_number=$3 AND lease_token=$5 AND status='running'"
     ).bind(&project_id).bind(job_id).bind(attempt).bind(result_metadata).bind(token)
      .execute(&mut *tx).await.map_err(|_| QueueError::Database)?;
+    if attempt_update.rows_affected() != 1 { return Err(QueueError::Database); }
     tx.commit().await.map_err(|_| QueueError::Database)?;
     Ok(())
 }
@@ -210,12 +235,13 @@ pub async fn fail(pool: &PgPool, project_id: &str, job_id: Uuid, token: Uuid, er
     let attempt: i32 = row.try_get("attempt_count").map_err(|_| QueueError::Database)?;
     let status: String = row.try_get("status").map_err(|_| QueueError::Database)?;
     let attempt_status = if status == "retry_wait" { "retryable_failure" } else { "permanent_failure" };
-    sqlx::query(
+    let attempt_update = sqlx::query(
         "UPDATE execution_attempts SET status=$4, finished_at=NOW(), \
          duration_ms=(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint, error_code=$5 \
          WHERE project_id=$1 AND job_id=$2 AND attempt_number=$3 AND lease_token=$6 AND status='running'"
     ).bind(&project_id).bind(job_id).bind(attempt).bind(attempt_status).bind(error_code).bind(token)
      .execute(&mut *tx).await.map_err(|_| QueueError::Database)?;
+    if attempt_update.rows_affected() != 1 { return Err(QueueError::Database); }
     tx.commit().await.map_err(|_| QueueError::Database)?;
     Ok(())
 }
@@ -269,4 +295,18 @@ pub async fn recover_expired(pool: &PgPool, limit: i64) -> Result<u64, QueueErro
     let count = rows.len() as u64;
     tx.commit().await.map_err(|_| QueueError::Database)?;
     Ok(count)
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn metadata_rejects_non_objects_oversize_and_sensitive_keys() {
+        assert!(safe_metadata(&serde_json::json!({"stage":"build","progress":2}), 1024));
+        assert!(!safe_metadata(&serde_json::json!(["not-an-object"]), 1024));
+        assert!(!safe_metadata(&serde_json::json!({"prompt":"private text"}), 1024));
+        assert!(!safe_metadata(&serde_json::json!({"nested":{"api_key":"secret"}}), 1024));
+        assert!(!safe_metadata(&serde_json::json!({"stage":"x".repeat(3000)}), 4096));
+    }
 }
