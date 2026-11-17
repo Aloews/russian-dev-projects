@@ -1,4 +1,6 @@
 mod schedule_recovery;
+mod execution_queue;
+mod execution_api;
 
 use std::{env, net::{IpAddr, SocketAddr}, str::FromStr, sync::Arc, time::{Duration, Instant}};
 
@@ -1457,6 +1459,19 @@ async fn main() -> anyhow::Result<()> {
         _ => anyhow::bail!("Infisical backend requires client ID, client secret, project ID and environment"),
     };
     let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical, rate_limit_per_minute };
+    let recovery_db = state.db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match execution_queue::recover_expired(&recovery_db, 100).await {
+                Ok(recovered) if recovered > 0 => info!(recovered, "Expired execution leases recovered"),
+                Ok(_) => {}
+                Err(_) => error!("Execution lease recovery sweep failed"),
+            }
+        }
+    });
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -1471,6 +1486,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/providers/health-check", post(health_check))
         .route("/v1/ai/chat", post(ai_chat))
         .route("/v1/projects/{project_id}/delivery/recovery-plan", post(delivery_recovery_plan))
+        .route("/v1/projects/{project_id}/jobs", get(execution_api::list_jobs).post(execution_api::enqueue_job))
+        .route("/v1/projects/{project_id}/jobs/claim", post(execution_api::claim_job))
+        .route("/v1/projects/{project_id}/jobs/{job_id}/heartbeat", post(execution_api::heartbeat_job))
+        .route("/v1/projects/{project_id}/jobs/{job_id}/checkpoint", post(execution_api::checkpoint_job))
+        .route("/v1/projects/{project_id}/jobs/{job_id}/complete", post(execution_api::complete_job))
+        .route("/v1/projects/{project_id}/jobs/{job_id}/fail", post(execution_api::fail_job))
         .route("/v1/providers/select", post(select_provider))
         .route("/v1/audit", get(list_audit))
         .with_state(state)
