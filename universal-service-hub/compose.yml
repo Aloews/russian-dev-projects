@@ -14,6 +14,27 @@ services:
       retries: 20
     restart: unless-stopped
 
+  worker:
+    image: universal-service-hub:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/ush-worker"]
+    environment:
+      USH_WORKER_DATABASE_URL: ${USH_WORKER_DATABASE_URL:-}
+      USH_ENVIRONMENT: ${USH_ENVIRONMENT:-development}
+      USH_WORKER_ID: ${USH_WORKER_ID:-ush-worker}
+      USH_WORKER_CONCURRENCY: ${USH_WORKER_CONCURRENCY:-2}
+      USH_WORKER_POLL_MS: ${USH_WORKER_POLL_MS:-1000}
+      USH_WORKER_LEASE_SECONDS: ${USH_WORKER_LEASE_SECONDS:-60}
+      USH_WORKER_JOB_TYPES: ${USH_WORKER_JOB_TYPES:-system_noop}
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["worker"]
+
   hub:
     image: universal-service-hub:local
     build:
