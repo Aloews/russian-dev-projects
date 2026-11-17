@@ -22,18 +22,18 @@ Example request:
 {
   "planned_remaining_hours": 40,
   "tasks": [
-    {"id": "architecture", "remaining_hours": 4, "completed": false, "depends_on": []},
-    {"id": "api", "remaining_hours": 12, "completed": false, "depends_on": ["architecture"]},
-    {"id": "ui", "remaining_hours": 10, "completed": false, "depends_on": ["architecture"]},
-    {"id": "integration", "remaining_hours": 8, "completed": false, "depends_on": ["api", "ui"]},
-    {"id": "release-checks", "remaining_hours": 5, "completed": false, "depends_on": ["integration"]}
+    {"id": "architecture", "remaining_hours": 4, "optimistic_remaining_hours": 3, "pessimistic_remaining_hours": 6, "completed": false, "depends_on": []},
+    {"id": "api", "remaining_hours": 12, "optimistic_remaining_hours": 9, "pessimistic_remaining_hours": 18, "completed": false, "depends_on": ["architecture"]},
+    {"id": "ui", "remaining_hours": 10, "optimistic_remaining_hours": 8, "pessimistic_remaining_hours": 15, "completed": false, "depends_on": ["architecture"]},
+    {"id": "integration", "remaining_hours": 8, "optimistic_remaining_hours": 6, "pessimistic_remaining_hours": 14, "completed": false, "depends_on": ["api", "ui"]},
+    {"id": "release-checks", "remaining_hours": 5, "optimistic_remaining_hours": 4, "pessimistic_remaining_hours": 8, "completed": false, "depends_on": ["integration"]}
   ]
 }
 ```
 
 The endpoint returns:
 - `status`: `complete`, `on_track`, `optimize`, `parallelize`, `rescope` or `replan`;
-- planned and forecast remaining hours, signed variance, positive delay hours and delay percentage;
+- optimistic, most-likely and pessimistic remaining hours, signed variance, positive delay hours and delay percentage;
 - critical-path task IDs;
 - currently ready tasks (all dependencies complete) and blocked tasks;
 - completed/total task counts and recommended actions.
@@ -59,7 +59,7 @@ The thresholds are initial policy defaults, not universal productivity benchmark
 - Maximum 250 tasks per request.
 - Task IDs are 1–80 ASCII characters from letters, digits, dot, underscore and hyphen.
 - Planned remaining hours must be finite, greater than zero and no more than 1,000,000.
-- Remaining effort must be finite, non-negative and no more than 1,000,000 hours per task.
+- Most-likely and optional optimistic/pessimistic effort must be finite, non-negative and no more than 1,000,000 hours per task; optimistic ≤ most-likely ≤ pessimistic.
 - Completed tasks cannot retain remaining effort.
 - Dependencies must use valid task IDs and refer to known, distinct tasks; self-dependencies and cycles are rejected.
 - Maximum 250 dependencies per task.
@@ -71,6 +71,7 @@ The thresholds are initial policy defaults, not universal productivity benchmark
 The Rust unit tests cover:
 - longest dependency path vs. total effort;
 - every recovery threshold;
+- three-point optimistic/most-likely/pessimistic path calculation and inconsistent-range rejection;
 - dependency release after completion;
 - all-completed plans;
 - cycle, unknown dependency and duplicate-ID rejection;
