@@ -1464,6 +1464,19 @@ async fn heartbeat_engineering_workspace(
     }
     let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
     let hash=hex::encode(Sha256::digest(body.lease_token.as_bytes()));
+    // Distinguish an authenticated worker attempting to operate another
+    // worker's live lease (authorization failure) from an expired or invalid
+    // lease token (lease conflict). This lookup is scoped by the already-authenticated tenant and project.
+    let current_lease=sqlx::query("SELECT lease_owner FROM engineering_workspaces WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_expires_at>NOW()")
+        .bind(&workspace_id).bind(tenant_id).bind(&project_id).fetch_optional(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_lease_owner_check_failed"))?;
+    if let Some(current_lease)=current_lease {
+        let current_owner:String=current_lease.try_get("lease_owner")
+            .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"workspace_lease_owner_check_failed"))?;
+        if current_owner!=body.worker_id {
+            return Err(ApiError(StatusCode::FORBIDDEN,"workspace_lease_owner_forbidden"));
+        }
+    }
     let lease_seconds=body.lease_seconds.unwrap_or(120).clamp(15,900);
     let row=sqlx::query("UPDATE engineering_workspaces SET lease_expires_at=NOW()+($6::text||' seconds')::interval,last_heartbeat_at=NOW(),head_sha=COALESCE($7,head_sha),git_worktree_path=COALESCE($8,git_worktree_path),git_branch=COALESCE($9,git_branch),metadata=CASE WHEN $10 IS NULL THEN metadata ELSE metadata||jsonb_build_object('runtime_id',$10) END,updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND state='leased' AND lease_owner=$4 AND lease_token_hash=$5 AND lease_expires_at>NOW() RETURNING lease_expires_at")
         .bind(&workspace_id).bind(tenant_id).bind(&project_id).bind(&body.worker_id).bind(hash)
