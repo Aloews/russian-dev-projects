@@ -176,7 +176,7 @@ pub async fn claim_for_types(
          UPDATE execution_jobs j SET status='leased', lease_owner=$1, lease_token=$2, \
             lease_expires_at=NOW() + ($3 * INTERVAL '1 second'), heartbeat_at=NOW(), \
             attempt_count=j.attempt_count+1, updated_at=NOW() \
-         FROM candidate c WHERE j.id=c.id RETURNING j.*"
+         FROM candidate c WHERE j.id=c.id RETURNING j.id,j.project_id,j.task_id,j.job_type,j.status,j.priority,j.attempt_count,j.max_attempts,j.available_at,j.created_at,j.lease_expires_at"
     ).bind(worker_id).bind(token).bind(lease_seconds)
      .bind(if allowed_job_types.is_empty() { None::<Vec<String>> } else { Some(allowed_job_types.to_vec()) })
      .fetch_optional(&mut *tx).await.map_err(|_| QueueError::Database)?;
