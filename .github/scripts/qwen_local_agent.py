@@ -170,6 +170,17 @@ def validate_response(response_json):
         raise ValueError("Qwen review report is missing or too short")
     if "timed out" in review_text.lower():
         raise ValueError("Qwen review report contains an execution error")
+    edits = response_json.get("edits")
+    if not isinstance(edits, list) or not edits or len(edits) > MAX_FILES:
+        raise ValueError("Qwen response has no edits or exceeds the edit limit")
+    source_edits = [
+        edit for edit in edits
+        if isinstance(edit, dict)
+        and isinstance(edit.get("path"), str)
+        and Path(edit["path"]).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}
+    ]
+    if not source_edits:
+        raise ValueError("Qwen response contains no source or test edits")
     return review_text
 
 
@@ -334,9 +345,6 @@ def main():
             changed_paths = apply_edits(response_json.get("edits"), tracked_set)
             if not changed_paths:
                 raise ValueError("Qwen returned no source or test edits")
-            source_changes = [path for path in changed_paths if Path(path).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}]
-            if not source_changes:
-                raise ValueError("Qwen returned documentation-only edits")
             break
         except (TimeoutError, urllib.error.URLError) as exc:
             print("::error::Qwen inference timed out or could not connect: " + type(exc).__name__ + ": " + str(exc)[:500])
