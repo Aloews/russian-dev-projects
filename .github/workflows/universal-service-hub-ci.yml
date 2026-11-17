@@ -268,6 +268,36 @@ jobs:
           beta_worker_token=$(printf '%s' "$beta_worker_response" | jq -r '.token')
           echo "::add-mask::$beta_worker_token"
 
+          beta_project_token_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/beta-project/tokens \
+            -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"beta-viewer","role":"viewer"}')
+          beta_project_token=$(printf '%s' "$beta_project_token_response" | jq -r '.token')
+          echo "::add-mask::$beta_project_token"
+
+          docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -v ON_ERROR_STOP=1 \
+            -c "UPDATE tenants SET status='suspended' WHERE id='tenant-beta'"
+
+          suspended_tenant_status=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $tenant_beta_token" \
+            http://127.0.0.1:8000/v1/projects/beta-project/tasks)
+          suspended_project_status=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $beta_project_token" \
+            http://127.0.0.1:8000/v1/projects/beta-project/tasks)
+          suspended_worker_status=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $beta_worker_token" -H "Content-Type: application/json" \
+            -d '{"queue":"review","worker_id":"beta-reviewer"}')
+          test "$suspended_tenant_status" = "401"
+          test "$suspended_project_status" = "401"
+          test "$suspended_worker_status" = "401"
+
+          docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -v ON_ERROR_STOP=1 \
+            -c "UPDATE tenants SET status='active' WHERE id='tenant-beta'"
+          curl -fsS -H "Authorization: Bearer $tenant_beta_token" \
+            http://127.0.0.1:8000/v1/projects/beta-project/tasks | jq -e 'type == "array"' >/dev/null
+
           operator_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
             -H "Authorization: Bearer $owner_token" \
             -H "Content-Type: application/json" \
