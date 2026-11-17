@@ -571,3 +571,42 @@ Initial implementation sequence:
 - **Verification boundary:** exact-head CI passed on `160b4cb6f5b030d19591c7b980389783052ca6fd` (run #1487). This is repository CI evidence only. No live Ollama `/api/tags` or `/api/chat` request, actual provider-health probe against a running Ollama service, controlled Starimg/Codex/Claude failure, local Qwen candidate generation, or defective-candidate rejection has yet been observed. Do not call local failover operational until those live acceptance checks are recorded.
 - **Acceptance required:** live Ollama health/model-discovery/chat smoke tests; a controlled cloud-agent failure that demonstrably invokes Qwen; successful bounded patch generation; exact-head CI on the generated candidate; proof that a defective candidate is blocked.
 - No production deployment, provider credential change, paid resource creation or production data mutation is included.
+
+## Latest delivery state — 2026-11-17
+
+This section supersedes earlier historical workflow snapshots above. Historical sections remain for traceability; their run IDs and branch states must not be treated as current.
+
+### Adaptive agent orchestration — PR #49
+
+- Branch: `feat/ush-adaptive-agent-team`; base: `main`.
+- Exact head: `3b6968c9ae7b608784135fc22627d885700433fe`.
+- State: OPEN, Draft, mergeable.
+- Exact-head CI run #1460 (`43954894657`) passed Rust format/Clippy/tests, Python/Ruff, migration smoke, repository/workflow checks, Docker build, Compose startup and container smoke.
+- Codex is configured for up to four depth-one read-only specialist subagents, with one primary writer and a sequential Claude review/repair phase.
+- **Live delegation is not verified:** no completed run currently provides evidence of actual subagent spawn/return events. The first live acceptance must show at least two distinct child agents and collected results, or record the safe single-writer fallback. Custom agent instructions are not a hard filesystem write boundary.
+
+### Local Ollama/Qwen failover — PR #50
+
+- Branch: `feat/ush-local-agent-failover`; stacked on PR #49. Base: `feat/ush-adaptive-agent-team`.
+- Exact head at the latest verified map snapshot: `727221c8659cfa9a82d4e04ec93ffa1e3c691307`.
+- State: OPEN, Draft, mergeable; 28 commits ahead / 0 behind PR #49; 8 changed files.
+- Implementation head `160b4cb6f5b030d19591c7b980389783052ca6fd` passed exact-head CI run #1487 (`44132474523`).
+- Map/documentation head `727221c8659cfa9a82d4e04ec93ffa1e3c691307` passed exact-head CI run #1488 (`44136677290`): all 23 workflow steps and cleanup succeeded, including Qwen safety/regression tests, Rust format/Clippy/tests, Python/Ruff, migration smoke, repository tests, Docker build, Compose startup and container smoke.
+- The Rust Ollama adapter uses an explicit hostname allowlist, validates every DNS answer, pins the selected private/loopback socket address, disables redirects and proxies, and preserves the original hostname for HTTP Host/TLS SNI. Model discovery and chat use `/api/tags` and `/api/chat`.
+- The GitHub coding workflow falls back to a bounded local Qwen pass after Starimg/CLI/Codex/Claude failure. Qwen edits are restricted to explicit Universal Hub source/docs prefixes and cannot change workflows, credentials, manifests, deployment configuration or migrations. Its multiple review roles are one local inference session, not independent agents.
+
+### Live acceptance still outstanding
+
+1. Against a real running Ollama service, verify `/api/tags`, `/api/chat`, and the Hub provider health/model-discovery routes.
+2. Cause a controlled cloud-agent failure and prove the workflow actually starts local Ollama/Qwen and generates a bounded candidate.
+3. Verify exact changed-file scope and secret scanning; run exact-head CI on the generated candidate.
+4. Submit a deliberately defective candidate and prove the verification/publication gate blocks it.
+5. For PR #49, capture real Starimg subagent spawn/return evidence or record the safe single-writer fallback.
+
+The cloud coding workflow was not triggered for these checks because it can call Starimg/Fal.ai and create a PR; no spend ceiling/approval was supplied. No production deployment, merge to `main`, paid resource provisioning, secret change or production-data mutation has occurred. Passing repository CI is not live-provider, live-agent or production-readiness evidence.
+
+### Next execution order
+
+- Keep both PRs Draft and unmerged until the live acceptance evidence above is collected.
+- Run live provider checks only on an already available, owner-authorized Ollama runtime; do not create paid infrastructure to manufacture a green result.
+- After PR #49 is integrated, rebase PR #50 onto the resulting `main` and rerun exact-head CI before any merge decision.
