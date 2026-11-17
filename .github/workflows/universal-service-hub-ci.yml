@@ -382,7 +382,7 @@ jobs:
             "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/heartbeat" \
             -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
             -d "$(jq -nc --arg worker_id "tester-smoke" --arg lease_token "$implementer_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')")
-          test "$wrong_workspace_owner" = "403"
+          test "$wrong_workspace_owner" = "409"
 
           curl -fsS -X POST \
             "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/release" \
