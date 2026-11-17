@@ -87,6 +87,8 @@ pub async fn claim_job(
     Ok(Json(match lease {
         Some(lease) => json!({"lease": {
             "job": lease.job,
+            "payload": lease.payload,
+            "checkpoint": lease.checkpoint,
             "worker_id": lease.worker_id,
             "lease_token": lease.lease_token,
             "lease_expires_at": lease.lease_expires_at
