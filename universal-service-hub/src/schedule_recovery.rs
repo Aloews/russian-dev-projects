@@ -17,6 +17,10 @@ pub struct RecoveryTask {
     pub id: String,
     pub remaining_hours: f64,
     #[serde(default)]
+    pub optimistic_remaining_hours: Option<f64>,
+    #[serde(default)]
+    pub pessimistic_remaining_hours: Option<f64>,
+    #[serde(default)]
     pub completed: bool,
     #[serde(default)]
     pub depends_on: Vec<String>,
@@ -26,7 +30,11 @@ pub struct RecoveryTask {
 pub struct RecoveryPlan {
     pub status: String,
     pub planned_remaining_hours: f64,
+    pub optimistic_remaining_hours: f64,
     pub forecast_remaining_hours: f64,
+    pub pessimistic_remaining_hours: f64,
+    pub optimistic_delay_hours: f64,
+    pub pessimistic_delay_hours: f64,
     pub variance_hours: f64,
     pub delay_hours: f64,
     pub delay_percent: f64,
@@ -48,6 +56,7 @@ pub enum RecoveryError {
     DuplicateTaskId,
     DuplicateDependency,
     InvalidRemainingHours,
+    InvalidEstimateRange,
     CompletedTaskHasRemainingWork,
     TooManyDependencies,
     UnknownDependency,
@@ -77,13 +86,19 @@ pub fn assess(request: RecoveryRequest) -> Result<RecoveryPlan, RecoveryError> {
         {
             return Err(RecoveryError::InvalidTaskId);
         }
-        if !task.remaining_hours.is_finite()
-            || task.remaining_hours < 0.0
-            || task.remaining_hours > MAX_ESTIMATE_HOURS
-        {
-            return Err(RecoveryError::InvalidRemainingHours);
+        let optimistic = task.optimistic_remaining_hours.unwrap_or(task.remaining_hours);
+        let pessimistic = task.pessimistic_remaining_hours.unwrap_or(task.remaining_hours);
+        for estimate in [task.remaining_hours, optimistic, pessimistic] {
+            if !estimate.is_finite() || estimate < 0.0 || estimate > MAX_ESTIMATE_HOURS {
+                return Err(RecoveryError::InvalidRemainingHours);
+            }
         }
-        if task.completed && task.remaining_hours > 0.0 {
+        if optimistic > task.remaining_hours || pessimistic < task.remaining_hours {
+            return Err(RecoveryError::InvalidEstimateRange);
+        }
+        if task.completed
+            && (task.remaining_hours > 0.0 || optimistic > 0.0 || pessimistic > 0.0)
+        {
             return Err(RecoveryError::CompletedTaskHasRemainingWork);
         }
         if task.depends_on.len() > MAX_DEPENDENCIES_PER_TASK {
@@ -151,45 +166,18 @@ pub fn assess(request: RecoveryRequest) -> Result<RecoveryPlan, RecoveryError> {
         return Err(RecoveryError::DependencyCycle);
     }
 
-    let mut longest_finish: BTreeMap<String, f64> = BTreeMap::new();
-    let mut predecessor: BTreeMap<String, Option<String>> = BTreeMap::new();
-    for id in &topological_order {
-        let task = tasks.get(id).expect("topological task exists");
-        let best_dependency = task
-            .depends_on
-            .iter()
-            .filter_map(|dependency| {
-                longest_finish
-                    .get(dependency)
-                    .map(|hours| (dependency, *hours))
-            })
-            .max_by(|left, right| left.1.total_cmp(&right.1));
-        let (prior_id, prior_hours) = best_dependency
-            .map(|(dependency, hours)| (Some(dependency.clone()), hours))
-            .unwrap_or((None, 0.0));
-        let duration = if task.completed { 0.0 } else { task.remaining_hours };
-        longest_finish.insert(id.clone(), prior_hours + duration);
-        predecessor.insert(id.clone(), prior_id);
-    }
-
-    let terminal = longest_finish
-        .iter()
-        .max_by(|left, right| left.1.total_cmp(right.1))
-        .map(|(id, hours)| (id.clone(), *hours));
-    let (mut cursor, forecast_remaining_hours) = terminal.unwrap_or_default();
-    let mut critical_path_task_ids = Vec::new();
-    if forecast_remaining_hours > 0.0 {
-        loop {
-            if !tasks.get(&cursor).expect("critical task exists").completed {
-                critical_path_task_ids.push(cursor.clone());
-            }
-            match predecessor.get(&cursor).and_then(Clone::clone) {
-                Some(previous) => cursor = previous,
-                None => break,
-            }
-        }
-        critical_path_task_ids.reverse();
-    }
+    let (optimistic_remaining_hours, _) = critical_path_for(
+        &tasks,
+        &topological_order,
+        |task| task.optimistic_remaining_hours.unwrap_or(task.remaining_hours),
+    );
+    let (forecast_remaining_hours, critical_path_task_ids) =
+        critical_path_for(&tasks, &topological_order, |task| task.remaining_hours);
+    let (pessimistic_remaining_hours, _) = critical_path_for(
+        &tasks,
+        &topological_order,
+        |task| task.pessimistic_remaining_hours.unwrap_or(task.remaining_hours),
+    );
 
     let ready_task_ids: Vec<String> = tasks
         .iter()
@@ -215,6 +203,8 @@ pub fn assess(request: RecoveryRequest) -> Result<RecoveryPlan, RecoveryError> {
     let variance_hours = forecast_remaining_hours - request.planned_remaining_hours;
     let delay_hours = variance_hours.max(0.0);
     let delay_percent = delay_hours / request.planned_remaining_hours * 100.0;
+    let optimistic_delay_hours = (optimistic_remaining_hours - request.planned_remaining_hours).max(0.0);
+    let pessimistic_delay_hours = (pessimistic_remaining_hours - request.planned_remaining_hours).max(0.0);
     let completed_task_count = tasks.values().filter(|task| task.completed).count();
     let status = if completed_task_count == tasks.len() {
         "complete"
@@ -260,7 +250,11 @@ pub fn assess(request: RecoveryRequest) -> Result<RecoveryPlan, RecoveryError> {
     Ok(RecoveryPlan {
         status: status.into(),
         planned_remaining_hours: round_hours(request.planned_remaining_hours),
+        optimistic_remaining_hours: round_hours(optimistic_remaining_hours),
         forecast_remaining_hours: round_hours(forecast_remaining_hours),
+        pessimistic_remaining_hours: round_hours(pessimistic_remaining_hours),
+        optimistic_delay_hours: round_hours(optimistic_delay_hours),
+        pessimistic_delay_hours: round_hours(pessimistic_delay_hours),
         variance_hours: round_hours(variance_hours),
         delay_hours: round_hours(delay_hours),
         delay_percent: round_hours(delay_percent),
@@ -271,6 +265,56 @@ pub fn assess(request: RecoveryRequest) -> Result<RecoveryPlan, RecoveryError> {
         total_task_count: tasks.len(),
         recommended_actions,
     })
+}
+
+fn critical_path_for<F>(
+    tasks: &BTreeMap<String, RecoveryTask>,
+    topological_order: &[String],
+    estimate: F,
+) -> (f64, Vec<String>)
+where
+    F: Fn(&RecoveryTask) -> f64,
+{
+    let mut longest_finish: BTreeMap<String, f64> = BTreeMap::new();
+    let mut predecessor: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for id in topological_order {
+        let task = tasks.get(id).expect("topological task exists");
+        let best_dependency = task
+            .depends_on
+            .iter()
+            .filter_map(|dependency| {
+                longest_finish
+                    .get(dependency)
+                    .map(|hours| (dependency, *hours))
+            })
+            .max_by(|left, right| left.1.total_cmp(&right.1));
+        let (prior_id, prior_hours) = best_dependency
+            .map(|(dependency, hours)| (Some(dependency.clone()), hours))
+            .unwrap_or((None, 0.0));
+        let duration = if task.completed { 0.0 } else { estimate(task) };
+        longest_finish.insert(id.clone(), prior_hours + duration);
+        predecessor.insert(id.clone(), prior_id);
+    }
+
+    let terminal = longest_finish
+        .iter()
+        .max_by(|left, right| left.1.total_cmp(right.1))
+        .map(|(id, hours)| (id.clone(), *hours));
+    let (mut cursor, forecast_hours) = terminal.unwrap_or_default();
+    let mut path = Vec::new();
+    if forecast_hours > 0.0 {
+        loop {
+            if !tasks.get(&cursor).expect("critical task exists").completed {
+                path.push(cursor.clone());
+            }
+            match predecessor.get(&cursor).and_then(Clone::clone) {
+                Some(previous) => cursor = previous,
+                None => break,
+            }
+        }
+        path.reverse();
+    }
+    (forecast_hours, path)
 }
 
 fn round_hours(value: f64) -> f64 {
@@ -285,6 +329,8 @@ mod tests {
         RecoveryTask {
             id: id.into(),
             remaining_hours,
+            optimistic_remaining_hours: None,
+            pessimistic_remaining_hours: None,
             completed: false,
             depends_on: depends_on.iter().map(|value| (*value).into()).collect(),
         }
@@ -326,6 +372,33 @@ mod tests {
             let plan = assess(request(100.0, vec![task("critical", forecast, &[])])).unwrap();
             assert_eq!(plan.status, expected, "forecast={forecast}");
         }
+    }
+
+    #[test]
+    fn returns_optimistic_most_likely_and_pessimistic_critical_paths() {
+        let mut first = task("first", 10.0, &[]);
+        first.optimistic_remaining_hours = Some(8.0);
+        first.pessimistic_remaining_hours = Some(14.0);
+        let mut second = task("second", 4.0, &["first"]);
+        second.optimistic_remaining_hours = Some(3.0);
+        second.pessimistic_remaining_hours = Some(8.0);
+        let plan = assess(request(12.0, vec![first, second])).unwrap();
+
+        assert_eq!(plan.optimistic_remaining_hours, 11.0);
+        assert_eq!(plan.forecast_remaining_hours, 14.0);
+        assert_eq!(plan.pessimistic_remaining_hours, 22.0);
+        assert_eq!(plan.optimistic_delay_hours, 0.0);
+        assert_eq!(plan.pessimistic_delay_hours, 10.0);
+    }
+
+    #[test]
+    fn rejects_inconsistent_three_point_estimates() {
+        let mut inconsistent = task("task", 5.0, &[]);
+        inconsistent.optimistic_remaining_hours = Some(6.0);
+        assert_eq!(
+            assess(request(4.0, vec![inconsistent])).unwrap_err(),
+            RecoveryError::InvalidEstimateRange
+        );
     }
 
     #[test]
