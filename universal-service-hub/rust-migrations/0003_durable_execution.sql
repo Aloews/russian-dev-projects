@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS project_tasks (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (project_id, id),
+    UNIQUE (project_id, plan_id, id),
     UNIQUE (project_id, plan_id, task_key),
     FOREIGN KEY (project_id, plan_id) REFERENCES project_plans(project_id, id) ON DELETE CASCADE,
     CHECK (
@@ -56,14 +57,15 @@ CREATE INDEX IF NOT EXISTS ix_project_tasks_plan
 
 CREATE TABLE IF NOT EXISTS task_dependencies (
     project_id VARCHAR(80) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    plan_id UUID NOT NULL,
     task_id UUID NOT NULL,
     depends_on_task_id UUID NOT NULL,
     dependency_type VARCHAR(16) NOT NULL DEFAULT 'finish_to_start'
         CHECK (dependency_type IN ('finish_to_start')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (project_id, task_id, depends_on_task_id),
-    FOREIGN KEY (project_id, task_id) REFERENCES project_tasks(project_id, id) ON DELETE CASCADE,
-    FOREIGN KEY (project_id, depends_on_task_id) REFERENCES project_tasks(project_id, id) ON DELETE CASCADE,
+    PRIMARY KEY (project_id, plan_id, task_id, depends_on_task_id),
+    FOREIGN KEY (project_id, plan_id, task_id) REFERENCES project_tasks(project_id, plan_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id, plan_id, depends_on_task_id) REFERENCES project_tasks(project_id, plan_id, id) ON DELETE CASCADE,
     CHECK (task_id <> depends_on_task_id)
 );
 CREATE INDEX IF NOT EXISTS ix_task_dependencies_reverse
