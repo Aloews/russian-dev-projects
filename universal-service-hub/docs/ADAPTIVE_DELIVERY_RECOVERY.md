@@ -42,7 +42,7 @@ The endpoint returns:
 
 The calculated critical path is the longest remaining dependency path, not the sum of all task effort. Completed tasks contribute zero remaining effort. This is a lower-bound estimate that assumes independent branches can proceed concurrently. The first slice does not model finite agent/workspace capacity, review or CI queues, holidays, provider quotas or external blockers, so it is not yet a calibrated finish-date forecast and must not be used to promise a delivery date.
 
-`delay_percent = max(forecast_remaining_hours - planned_remaining_hours, 0) / planned_remaining_hours * 100`
+`delay_percent = max(forecast_remaining_hours - planned_remaining_hours, 0) / planned_remaining_hours * 100` (where `forecast_remaining_hours` is the most-likely scenario).
 
 | Delay vs. planned remaining hours | Tier | Suggested response |
 |---:|---|---|
