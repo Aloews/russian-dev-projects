@@ -210,6 +210,10 @@ def apply_edits(edits, tracked):
     return sorted(staged)
 
 
+
+def append_policy_section(prompt, heading, body):
+    return f"{prompt}\n\n{heading}\n{body}"
+
 def ask_ollama(messages, format_schema=None, max_predict=1200, timeout_seconds=480):
     payload = {
         "model": MODEL,
@@ -282,7 +286,7 @@ def main():
     except (OSError, UnicodeError):
         print("::error::Shared Product Factory agent contract could not be loaded.")
         return 2
-    system += "\\n\\nApply this shared Product Factory agent contract as mandatory execution policy:\\n" + factory_contract
+    system = append_policy_section(system, "Apply this shared Product Factory agent contract as mandatory execution policy:", factory_contract)
     template_path = os.environ.get("TARGET_AGENTS_TEMPLATE_PATH", "")
     if not template_path:
         print("::error::Target AGENTS.md template path is missing.")
@@ -292,7 +296,7 @@ def main():
     except (OSError, UnicodeError):
         print("::error::Target AGENTS.md template could not be loaded.")
         return 2
-    system += "\\n\\nUse this template when onboarding a target project or correcting missing/outdated local agent instructions. Replace every placeholder with verified facts; never copy placeholders into a product repository:\\n" + target_agents_template
+    system = append_policy_section(system, "Use this template when onboarding a target project or correcting missing/outdated local agent instructions. Replace every placeholder with verified facts; never copy placeholders into a product repository:", target_agents_template)
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
     system += (
@@ -346,7 +350,7 @@ def main():
                         "never mark an existing path as a new file. Use old='' only for a path that is confirmed absent. "
                         "Do not overwrite or recreate existing files. "
                         + existing_file_evidence
-                        + "\\nReturn only the corrected JSON schema."
+                        + "\nReturn only the corrected JSON schema."
                     )},
                 ])
                 continue

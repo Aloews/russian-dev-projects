@@ -14,6 +14,10 @@ SPEC.loader.exec_module(agent)
 
 
 class QwenEditSafetyTests(unittest.TestCase):
+    def test_policy_sections_use_actual_newlines(self):
+        result = agent.append_policy_section("base", "policy heading", "policy body")
+        self.assertEqual(result, "base\n\npolicy heading\npolicy body")
+
     def test_source_file_is_allowed(self):
         self.assertTrue(agent.allowed("src/main.py", {"src/main.py"}))
 
