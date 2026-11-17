@@ -44,6 +44,7 @@ pub enum RecoveryError {
     InvalidPlannedHours,
     InvalidTaskId,
     DuplicateTaskId,
+    DuplicateDependency,
     InvalidRemainingHours,
     CompletedTaskHasRemainingWork,
     TooManyDependencies,
@@ -95,7 +96,7 @@ pub fn assess(request: RecoveryRequest) -> Result<RecoveryPlan, RecoveryError> {
                 return Err(RecoveryError::UnknownDependency);
             }
             if !unique_dependencies.insert(dependency) {
-                return Err(RecoveryError::DuplicateTaskId);
+                return Err(RecoveryError::DuplicateDependency);
             }
         }
     }
@@ -356,6 +357,23 @@ mod tests {
             assess(request(4.0, vec![task("a", 1.0, &[]), task("a", 2.0, &[])]))
                 .unwrap_err(),
             RecoveryError::DuplicateTaskId
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_dependencies_and_invalid_task_sets() {
+        assert_eq!(
+            assess(request(4.0, vec![task("a", 1.0, &["base", "base"]), task("base", 1.0, &[])]))
+                .unwrap_err(),
+            RecoveryError::DuplicateDependency
+        );
+        assert_eq!(
+            assess(request(4.0, vec![])).unwrap_err(),
+            RecoveryError::EmptyTaskSet
+        );
+        assert_eq!(
+            assess(request(4.0, vec![task("../unsafe", 1.0, &[])])).unwrap_err(),
+            RecoveryError::InvalidTaskId
         );
     }
 
