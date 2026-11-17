@@ -144,10 +144,12 @@ jobs:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
         run: |
           set -Eeuo pipefail
+          failure_context=""
+          trap 'failure_context=$BASH_COMMAND' ERR
           cleanup() {
             status=$?
             if [ "$status" -ne 0 ]; then
-              echo "Container smoke failed at: ${BASH_COMMAND} (exit ${status})"
+              echo "Container smoke failed at: ${failure_context:-${BASH_COMMAND}} (exit ${status})"
               echo "Listener state for port 8000:"
               (ss -ltnp '( sport = :8000 )' || true)
               echo "Container state:"
@@ -182,6 +184,7 @@ jobs:
             sleep 2
           done
           if [ "$ready" -ne 1 ]; then
+            failure_context="readiness endpoint returned HTTP ${http_status:-unknown}; expected 200"
             echo "Container did not reach HTTP 200 on /readyz."
             exit 1
           fi
