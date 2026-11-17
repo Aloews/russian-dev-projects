@@ -123,9 +123,6 @@ async fn main() -> anyhow::Result<()> {
         .connect(&database_url).await
         .context("worker database connection failed")?;
 
-    sqlx::migrate!("./rust-migrations").run(&pool).await
-        .context("worker schema verification failed")?;
-
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut workers = JoinSet::new();
     let poll_interval = Duration::from_millis(poll_ms as u64);
