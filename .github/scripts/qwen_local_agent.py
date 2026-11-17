@@ -13,9 +13,10 @@ from pathlib import Path
 ROOT = Path(os.environ.get("TARGET_WORKDIR", "target")).resolve()
 MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
-MAX_FILES = 6
-MAX_CONTEXT_CHARS = 16000
-MAX_FILE_CHARS = 3500
+MAX_FILES = 2
+MAX_CONTEXT_CHARS = 8500
+MAX_FILE_CHARS = 2500
+MAX_OUTPUT_TOKENS = 3072
 SOURCE_SUFFIXES = (
     ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".go", ".java", ".kt", ".swift", ".cs", ".rb", ".php",
@@ -103,14 +104,15 @@ def make_context(task, tracked):
         chunks.append(chunk)
         total += len(chunk)
     verification = read_text("PRODUCT_FACTORY_VERIFICATION.md")
-    if verification:
-        chunks.append("\n--- FAILED VERIFICATION EVIDENCE ---\n" + scrub(verification[:12000]))
+    if verification and total < MAX_CONTEXT_CHARS:
+        evidence = "\n--- FAILED VERIFICATION EVIDENCE ---\n" + scrub(verification)
+        chunks.append(evidence[:MAX_CONTEXT_CHARS - total])
     return "\n".join(chunks)
 
 EDIT_SCHEMA = {
     "type": "object",
     "properties": {
-        "review": {"type": "string", "minLength": 1, "maxLength": 7000},
+        "review": {"type": "string", "minLength": 80, "maxLength": 2000},
         "edits": {
             "type": "array",
             "minItems": 1,
@@ -119,8 +121,8 @@ EDIT_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "old": {"type": "string", "maxLength": 6000},
-                    "new": {"type": "string", "minLength": 1, "maxLength": 12000},
+                    "old": {"type": "string", "maxLength": 1500},
+                    "new": {"type": "string", "minLength": 1, "maxLength": 5000},
                 },
                 "required": ["path", "old", "new"],
                 "additionalProperties": False,
@@ -224,7 +226,7 @@ def ask_ollama(messages, format_schema=None, max_predict=1200, timeout_seconds=4
         "model": MODEL,
         "stream": False,
         "messages": messages,
-        "options": {"temperature": 0.1, "num_ctx": 8192, "num_predict": max_predict},
+        "options": {"temperature": 0.0, "num_ctx": 8192, "num_predict": max_predict},
     }
     if format_schema is not None:
         payload["format"] = format_schema
@@ -253,7 +255,7 @@ def main():
     skill = ""
     if skill_path:
         try:
-            skill = Path(skill_path).read_text(encoding="utf-8")[:7000]
+            skill = Path(skill_path).read_text(encoding="utf-8")[:1000]
         except (OSError, UnicodeError):
             print("::error::Pinned Caveman skill could not be loaded.")
             return 2
@@ -276,7 +278,7 @@ def main():
     reality_path = os.environ.get("REALITY_FIRST_SKILL_PATH", "")
     if reality_path:
         try:
-            reality_skill = Path(reality_path).read_text(encoding="utf-8")[:10000]
+            reality_skill = Path(reality_path).read_text(encoding="utf-8")[:2500]
         except (OSError, UnicodeError):
             print("::error::Reality-First Business skill could not be loaded.")
             return 2
