@@ -518,3 +518,21 @@ Do **not** archive this plan merely because its estimated window expires or beca
 4. Keep the archive and next plan in the same reviewed documentation PR where practical. Do not delete historical evidence or rewrite a failed run as successful.
 
 **Current active plan:** this section. **Archive status:** NOT READY — acceptance cycle is not yet verified complete. **Next plan:** NOT STARTED — prepare only after the closeout gate above.
+
+
+## Live evidence refresh — 2026-11-17
+
+This refresh replaces the stale-evidence assumptions above where the following exact run evidence is newer. It does not change the acceptance gate or authorize merging implementation PRs.
+
+- **PR #68 documentation plan:** candidate commit `732d080af4e69640422c219f7843f9e6638806fe`; GitHub Actions run [#44091093334](https://github.com/Aloews/russian-dev-projects/actions/runs/44091093334), workflow `universal-service-hub-ci`, completed `success`. The job's Rust format/lint/tests, Python/Ruff, migration smoke, Docker build, local Compose startup smoke and container smoke steps all passed. This validates the documentation candidate's repository checks; PR #68 remains a separate, unmerged documentation change.
+- **PR #67 Product Factory recovery changes:** workflow run [#44070658312](https://github.com/Aloews/russian-dev-projects/actions/runs/44070658312) completed `success`; all listed Product Factory syntax/safety/workflow checks, Rust checks, Python/Ruff, migration smoke, Docker build and container smoke passed. The run does not prove a successful Product Factory execution or candidate publication. Run #114's reported failure therefore remains an end-to-end acceptance blocker until a new run produces a candidate diff, immutable SHA, independent verification and target PR.
+- **PR #64 durable dispatcher / tenancy candidate:** latest observed head in the PR discussion is `91eab5837ed1514470fc14e4e28ea3a2625dd26a`. Exact-head workflow run [#43910616200](https://github.com/Aloews/russian-dev-projects/actions/runs/43910616200) completed `failure`. Rust format, Clippy, Rust tests, Python/Ruff, migration smoke, Docker build and local Compose runtime startup passed; the final container smoke failed with HTTP 404 (curl exit 22). The exact failing request has not yet been isolated from the available log excerpt. Earlier run [#43907400632](https://github.com/Aloews/russian-dev-projects/actions/runs/43907400632) failed in the tenant schema smoke fixture; the later exact-head run progressed past that step. PR #64 must remain unmerged until the 404 is traced to a specific route/contract, corrected without weakening authorization or smoke coverage, and the complete exact-head run passes.
+- **Current multi-tenancy boundary:** the PR #64 discussion explicitly describes the database schema/RLS work as a foundation, not complete multi-tenancy. Tenant identity authentication and membership-aware authorization, tenant API coverage, enforced quotas/budgets, per-tenant execution/artifact isolation, export/deletion and cross-tenant API penetration tests remain release gaps. Do not present schema-level tenant ownership as a finished multi-tenant product.
+- **Factory acceptance:** no successful end-to-end Product Factory candidate plus independent verification report plus target-product PR has been established by the evidence reviewed in this refresh.
+
+### Updated execution order
+
+1. Resolve PR #64's exact HTTP 404 in container smoke and obtain a clean exact-head CI pass. Keep the PR open/unmerged until then.
+2. Reconcile the latest exact heads and stacked dependencies for PRs #31, #49, #50, #67 and #64 before integrating them. A passing PR #67 CI run does not remove PR #31's provider-routing dependency or prove Factory success.
+3. After control-plane integration, run a bounded Factory acceptance task and retain its candidate, independent verification, repair history and target PR as immutable evidence.
+4. Only then execute the remaining C4/C5 acceptance matrix and consider archiving. The archive remains **NOT READY**; the next plan remains **NOT STARTED**.
