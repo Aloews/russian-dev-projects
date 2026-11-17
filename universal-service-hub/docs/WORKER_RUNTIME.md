@@ -44,6 +44,8 @@ Use a unique strong password, TLS and a connection string stored in the deployme
 - `USH_WORKER_ID`: optional bounded worker identity prefix.
 - `USH_WORKER_CONCURRENCY`: 1–32, default 2.
 - `USH_WORKER_POLL_MS`: 100–30000, default 1000.
+- `USH_WORKER_LEASE_SECONDS`: 10–300, default 60.
+- `USH_WORKER_TEST_PAUSE_AFTER_CLAIM_MS`: test-only crash-injection delay; nonzero values are rejected in production.
 - `USH_WORKER_JOB_TYPES`: currently only `system_noop`; default `system_noop`.
 - `USH_ENVIRONMENT=production`: enforces PostgreSQL TLS certificate and hostname verification.
 
@@ -56,7 +58,7 @@ Run the image with `/app/ush-worker` as its command/entrypoint in a separate wor
 1. Cargo builds both binaries and unit tests validate the worker capability allowlist.
 2. PostgreSQL integration tests prove concurrent claims are unique, expired leases update both job and attempt rows, exhausted attempts enter dead-letter, and stale fencing tokens cannot complete.
 3. Container smoke confirms the API image contains both executables.
-4. A process-kill/restart test proves a claimed job is recovered after lease expiry and not lost.
+4. The PostgreSQL/container smoke starts a worker with a least-privilege role, kills it with SIGKILL after claim, restarts it, and verifies one expired attempt plus one successful retry.
 5. A production worker test proves TLS verification and database grants reject DDL and unrelated table access.
 
 Until gates 2–5 have exact-head evidence, report the worker binary as implemented but the end-to-end worker service as unverified. Specialist provider execution remains a separate gated milestone.
