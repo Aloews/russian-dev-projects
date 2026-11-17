@@ -42,6 +42,9 @@ def allowed(path, tracked):
     path = path.replace("\\", "/")
     if path.startswith("/") or any(part in (".", "..") for part in path.split("/")):
         return False
+    prefixes = [item.strip().strip("/") for item in os.environ.get("ALLOWED_PREFIXES", "").split(";") if item.strip()]
+    if prefixes and not any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes):
+        return False
     low = path.lower()
     parts = low.split("/")
     if any(part in PROTECTED_DIRS for part in parts):
@@ -71,7 +74,8 @@ def scrub(text):
 
 def make_context(task, tracked):
     tokens = set(re.findall(r"[a-zA-Z0-9_/-]{3,}", task.lower()))
-    preferred = [
+    configured_context = [item.strip() for item in os.environ.get("CONTEXT_FILES", "").split(";") if item.strip()]
+    preferred = configured_context or [
         "docs/MAP.md", "docs/DELIVERY_PLAN.md", "docs/AI_AGENT_WORKFLOW.md",
         "AGENTS.md", "README.md", "README.rst",
     ]
@@ -101,7 +105,8 @@ def make_context(task, tracked):
             continue
         chunks.append(chunk)
         total += len(chunk)
-    verification = read_text("PRODUCT_FACTORY_VERIFICATION.md")
+    verification_path = os.environ.get("VERIFICATION_FILE", "PRODUCT_FACTORY_VERIFICATION.md")
+    verification = read_text(verification_path)
     if verification:
         chunks.append("\n--- FAILED VERIFICATION EVIDENCE ---\n" + scrub(verification[:12000]))
     return "\n".join(chunks)
@@ -205,6 +210,10 @@ def apply_edits(edits, tracked):
     return sorted(staged)
 
 
+
+def append_policy_section(prompt, heading, body):
+    return f"{prompt}\n\n{heading}\n{body}"
+
 def ask_ollama(messages, format_schema=None, max_predict=1200, timeout_seconds=480):
     payload = {
         "model": MODEL,
@@ -232,9 +241,10 @@ def main():
         return 2
     tracked = git("ls-files").stdout.splitlines()
     task = os.environ.get("OBJECTIVE", "Complete the highest-priority bounded, testable product increment.")
-    verification = read_text("PRODUCT_FACTORY_VERIFICATION.md")
+    verification_path = os.environ.get("VERIFICATION_FILE", "PRODUCT_FACTORY_VERIFICATION.md")
+    verification = read_text(verification_path)
     if verification:
-        task += "\n\nRepair the actual failures listed in PRODUCT_FACTORY_VERIFICATION.md. Preserve all checks."
+        task += "\n\nRepair the actual failures listed in the supplied verification evidence. Preserve all checks."
     skill_path = os.environ.get("CAVEMAN_SKILL_PATH", "")
     skill = ""
     if skill_path:
@@ -276,7 +286,7 @@ def main():
     except (OSError, UnicodeError):
         print("::error::Shared Product Factory agent contract could not be loaded.")
         return 2
-    system += "\n\nApply this shared Product Factory agent contract as mandatory execution policy:\n" + factory_contract
+    system = append_policy_section(system, "Apply this shared Product Factory agent contract as mandatory execution policy:", factory_contract)
     template_path = os.environ.get("TARGET_AGENTS_TEMPLATE_PATH", "")
     if not template_path:
         print("::error::Target AGENTS.md template path is missing.")
@@ -286,7 +296,7 @@ def main():
     except (OSError, UnicodeError):
         print("::error::Target AGENTS.md template could not be loaded.")
         return 2
-    system += "\n\nUse this template when onboarding a target project or correcting missing/outdated local agent instructions. Replace every placeholder with verified facts; never copy placeholders into a product repository:\n" + target_agents_template
+    system = append_policy_section(system, "Use this template when onboarding a target project or correcting missing/outdated local agent instructions. Replace every placeholder with verified facts; never copy placeholders into a product repository:", target_agents_template)
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
     system += (
@@ -340,13 +350,20 @@ def main():
                         "never mark an existing path as a new file. Use old='' only for a path that is confirmed absent. "
                         "Do not overwrite or recreate existing files. "
                         + existing_file_evidence
-                        + "\\nReturn only the corrected JSON schema."
+                        + "\nReturn only the corrected JSON schema."
                     )},
                 ])
                 continue
             print("::error::Qwen multi-role engineering pass failed validation: " + validation_error)
             return 4
-    report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
+    review_relative = os.environ.get("QWEN_REVIEW_PATH", "docs/PRODUCT_FACTORY_QWEN_REVIEW.md")
+    if Path(review_relative).is_absolute() or not allowed(review_relative, tracked_set):
+        print("::error::Qwen review path is outside the configured allowlist.")
+        return 5
+    report_path = ROOT / review_relative
+    if not report_path.resolve().is_relative_to(ROOT.resolve()):
+        print("::error::Qwen review path escapes the target repository.")
+        return 5
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
         "# Qwen2.5-Coder 3B multi-role engineering review\n\n"
@@ -358,8 +375,9 @@ def main():
     changed = set(git("diff", "--name-only").stdout.splitlines())
     changed.update(git("ls-files", "--others", "--exclude-standard").stdout.splitlines())
     changed.discard("PRODUCT_FACTORY_VERIFICATION.md")
-    if not changed or any(not allowed(path, tracked_set) for path in changed):
-        print("::error::Final patch failed the path allowlist.")
+    qwen_touched = set(changed_paths) | {review_relative}
+    if not changed or not qwen_touched or any(not allowed(path, tracked_set) for path in qwen_touched):
+        print("::error::Qwen edits or review artifact failed the configured path allowlist.")
         return 5
     check = git("diff", "--check", check=False)
     if check.returncode:

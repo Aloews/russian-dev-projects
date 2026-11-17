@@ -39,7 +39,7 @@ When Infisical is enabled:
 - `POST /v1/ai/chat`
 - `GET /v1/audit`
 
-Provider adapters currently support OpenAI-compatible chat, Anthropic Messages and Gemini generateContent. Model discovery uses their corresponding model-list endpoints. Starimg/OpenRouter should be configured through the compatible adapter only after their current account protocol and model IDs have been verified.
+Provider adapters support OpenAI-compatible chat, Anthropic Messages, Gemini generateContent and local Ollama chat. Model discovery uses each provider's model-list endpoint; Ollama uses `/api/tags` and `/api/chat`. Configure the local adapter with an explicit model ID, `adapter_type: "ollama"`, `api_key_env: null`, `health_url: null`, `supports_idempotency: false` and a loopback or allowlisted private `base_url`. Add the private service hostname to `USH_OLLAMA_ALLOWED_HOSTS` (comma-separated exact hostnames); DNS results must all resolve to private/loopback addresses. For a Docker service named `ollama`, for example, configure `USH_OLLAMA_ALLOWED_HOSTS=ollama` and `base_url=http://ollama:11434`. Do not expose the Ollama API publicly. Starimg/OpenRouter should be configured through the compatible adapter only after their current account protocol and model IDs have been verified.
 
 ## Security boundaries
 

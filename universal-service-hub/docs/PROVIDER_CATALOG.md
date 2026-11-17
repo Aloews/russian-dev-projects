@@ -115,3 +115,12 @@ Qwen roles are a bounded, role-separated local engineering pass using one Qwen2.
 For every candidate, capture: official docs URL, supported API/SDK, auth type, regions, data residency, pricing unit, free-tier limits, rate limits, service-level commitments, portability, export path, failure modes, status-page URL and last verification timestamp.
 
 Only candidates with a working sandbox integration and automated contract tests may be promoted to "verified". A vendor appearing in this catalog is only a discovery candidate.
+
+
+## Local inference operating boundary
+
+- Ollama is a first-class local chat/model-discovery adapter in the Rust runtime branch `feat/ush-local-agent-failover`; this is not yet a verified live deployment.
+- The Hub accepts only loopback or explicitly allowlisted private Ollama hosts via `USH_OLLAMA_ALLOWED_HOSTS`. Public hosts, metadata endpoints and DNS answers outside private/loopback ranges are rejected.
+- Local model routing must retain project capability/provider allowlists, explicit model IDs, health status and audit attribution. Do not silently route a cloud-only or billable workload to local inference if required capabilities (tools, vision, structured output, context length) are missing.
+- The Hub coding workflow now has a bounded Ollama/Qwen fallback path for Starimg/CLI/Codex/Claude unavailability. It reuses an existing local Ollama server/model when present, otherwise installs Ollama and pulls the configured model. The live failure-triggered path remains unverified until an actual fallback workflow run completes.
+- This is a single local model execution with role-separated instructions, not a parallel multi-model agent network. The exact-head CI and review process remain mandatory.
