@@ -117,6 +117,7 @@ pub async fn recover_expired_leases(pool: &PgPool, allowed_job_types: &[String])
          WHERE status = 'leased' AND lease_expires_at <= NOW()
            AND ($1::text[] IS NULL OR job_type = ANY($1))
          ORDER BY lease_expires_at
+         LIMIT 100
          FOR UPDATE SKIP LOCKED"
     ).bind(if allowed_job_types.is_empty() { None::<Vec<String>> } else { Some(allowed_job_types.to_vec()) })
      .fetch_all(&mut *tx).await.map_err(|_| QueueError::Database)?;
@@ -128,7 +129,9 @@ pub async fn recover_expired_leases(pool: &PgPool, allowed_job_types: &[String])
         let updated_job = sqlx::query(
             "UPDATE execution_jobs SET
                 status = CASE WHEN attempt_count < max_attempts THEN 'retry_wait' ELSE 'dead_letter' END,
-                available_at = NOW(),
+                available_at = CASE WHEN attempt_count < max_attempts
+                    THEN NOW() + (LEAST(300, (5 * power(2, GREATEST(0, attempt_count-1)))::integer) * INTERVAL '1 second')
+                    ELSE available_at END,
                 lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
                 last_error_code = 'worker_lease_expired',
                 finished_at = CASE WHEN attempt_count < max_attempts THEN NULL ELSE NOW() END,
