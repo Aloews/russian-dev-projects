@@ -83,6 +83,21 @@ Each increment is a separate PR-sized unit. Keep one writer per overlapping file
 | E6 | Release and rollback | Staged rollout, health gates, rollback automation and incident runbook | Rehearsed staging rollback |
 | E7 | Product delivery | Product brief → design → implementation → build → running preview → E2E → handover | Product-level definition of done in MAP.md |
 
+
+### Track F — adaptive delivery and schedule recovery
+
+| ID | Increment | Deliverable | Acceptance evidence |
+|---|---|---|---|
+| F1 | Recovery preview | Tenant-scoped three-point critical-path forecast, bounded DAG validation and delay tiers | Exact-head Rust tests, three-point estimate tests, API authorization tests, malformed-DAG tests and independent review |
+| F2 | Durable schedule state | Versioned project plans, task DAGs, estimates and immutable progress events in PostgreSQL | Migration, tenant-isolation, concurrency and history-integrity tests |
+| F3 | Forecast history | Timestamped snapshots, drift trends and three-point estimates with confidence ranges | Deterministic replay against historical task events; forecast calibration report |
+| F4 | Delivery visibility | Project dashboard, critical-path view, optimistic/realistic/pessimistic finish forecasts and alert preferences | API/UI E2E, accessibility, alert deduplication and notification opt-out tests |
+| F5 | Recovery executor | Policy-gated creation of isolated assignments for ready independent tasks | Dry-run/approval tests, concurrency limits, no shared-writer conflicts, spend ceilings and rollback |
+| F6 | Recovery calibration | Failure-injection and delivery simulations; calibrate thresholds from accepted work | Reproducible worker-loss, CI-delay, provider-outage and stale-estimate simulations |
+
+F1 is implemented on branch `feat/ush-adaptive-delivery-recovery` (PR #70) and remains unverified until exact-head CI and independent review pass. F1 is advisory only; it does not mutate schedules or dispatch work. Do not enable F5 until F2–F4 provide durable, tenant-scoped state and auditable approval policy.
+
+
 ## 2. Bounded task decomposition contract
 
 The coordinator converts every large request into a persisted DAG (directed acyclic graph) of tasks.
