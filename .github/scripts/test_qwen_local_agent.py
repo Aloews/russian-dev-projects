@@ -48,13 +48,13 @@ class QwenEditSafetyTests(unittest.TestCase):
                 agent.ROOT = Path(directory)
                 source = agent.ROOT / "src/main.py"
                 source.parent.mkdir(parents=True)
-                source.write_text("VALUE = 1\\n", encoding="utf-8")
+                source.write_text("VALUE = 1\n", encoding="utf-8")
                 staged = agent.prepare_edits(
                     [{"path": "src/main.py", "old": "VALUE = 1", "new": "VALUE = 2"}],
                     {"src/main.py"},
                 )
-                self.assertEqual(staged, {"src/main.py": "VALUE = 2\\n"})
-                self.assertEqual(source.read_text(encoding="utf-8"), "VALUE = 1\\n")
+                self.assertEqual(staged, {"src/main.py": "VALUE = 2\n"})
+                self.assertEqual(source.read_text(encoding="utf-8"), "VALUE = 1\n")
             finally:
                 agent.ROOT = previous_root
 
@@ -65,7 +65,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                 agent.ROOT = Path(directory)
                 source = agent.ROOT / "src/main.py"
                 source.parent.mkdir(parents=True)
-                source.write_text("VALUE = 1\\n", encoding="utf-8")
+                source.write_text("VALUE = 1\n", encoding="utf-8")
                 with self.assertRaises(ValueError):
                     agent.prepare_edits(
                         [
@@ -74,7 +74,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                         ],
                         {"src/main.py"},
                     )
-                self.assertEqual(source.read_text(encoding="utf-8"), "VALUE = 1\\n")
+                self.assertEqual(source.read_text(encoding="utf-8"), "VALUE = 1\n")
                 self.assertFalse((agent.ROOT / "src/missing.py").exists())
             finally:
                 agent.ROOT = previous_root
