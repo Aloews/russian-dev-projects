@@ -655,3 +655,12 @@ The cloud coding workflow was not triggered for these checks because it can call
 - **Status: IMPLEMENTED IN BRANCH; NOT YET VERIFIED.** Exact-head CI, Rust format/Clippy/tests and PostgreSQL migration/container smoke are pending.
 - This increment is the durable queue control plane, not yet the full autonomous worker daemon. Continuous polling/supervision, provider/model dispatch, specialist execution, artifact storage transfer, concurrency controls, metrics/alerts and restart-recovery integration tests remain next.
 - No merge, production migration/deployment, provider invocation or paid resource creation was performed.
+
+
+## Durable worker queue integrity follow-up
+
+- Branch: `fix/ush-worker-handoff-integrity`, stacked on the verified PR #74 queue API.
+- Claim responses now include same-project task title/objective/owner-role context to support future specialist executors without putting prompt or transcript text into queue metadata.
+- Handoff idempotency now relies on the database unique constraint and verifies exact payload equality on duplicate keys; conflicting key reuse returns a conflict instead of racing through a `NOT EXISTS` check.
+- Failure handling now verifies exactly one running attempt is finalized, preserving consistency between the job row and attempt ledger.
+- Exact-head CI is pending. This change does not yet start a continuously polling process or invoke an LLM. A worker supervisor, object-store-backed artifacts and real specialist dispatch remain the next implementation milestones.
