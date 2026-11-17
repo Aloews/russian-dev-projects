@@ -81,8 +81,8 @@ CREATE TABLE IF NOT EXISTS project_events (
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb
         CHECK (jsonb_typeof(metadata) = 'object' AND pg_column_size(metadata) <= 16384),
-    FOREIGN KEY (project_id, plan_id) REFERENCES project_plans(project_id, id) ON DELETE SET NULL,
-    FOREIGN KEY (project_id, task_id) REFERENCES project_tasks(project_id, id) ON DELETE SET NULL
+    FOREIGN KEY (project_id, plan_id) REFERENCES project_plans(project_id, id) ON DELETE SET NULL (plan_id),
+    FOREIGN KEY (project_id, task_id) REFERENCES project_tasks(project_id, id) ON DELETE SET NULL (task_id)
 );
 CREATE INDEX IF NOT EXISTS ix_project_events_project_time
     ON project_events(project_id, occurred_at DESC, id);
@@ -170,7 +170,7 @@ CREATE TABLE IF NOT EXISTS execution_artifacts (
     content_sha256 CHAR(64) NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
     size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY (project_id, job_id) REFERENCES execution_jobs(project_id, id) ON DELETE SET NULL,
+    FOREIGN KEY (project_id, job_id) REFERENCES execution_jobs(project_id, id) ON DELETE SET NULL (job_id),
     FOREIGN KEY (project_id, task_id) REFERENCES project_tasks(project_id, id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS ix_execution_artifacts_project_created
