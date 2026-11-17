@@ -399,8 +399,11 @@ mod tests {
             RecoveryError::InvalidPlannedHours
         );
         assert_eq!(
-            assess(request(4.0, vec![task("a", 1.0, &["../bad"]), task("../bad", 1.0, &[])]))
-                .unwrap_err(),
+            assess(request(4.0, vec![task("a", 1.0, &["../bad"])] )).unwrap_err(),
+            RecoveryError::InvalidDependencyId
+        );
+        assert_eq!(
+            assess(request(4.0, vec![task("../bad", 1.0, &[])] )).unwrap_err(),
             RecoveryError::InvalidTaskId
         );
     }
