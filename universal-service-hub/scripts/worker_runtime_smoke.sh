@@ -7,15 +7,23 @@ set +a
 if [[ -z "$USH_API_TOKEN" || -z "$USH_WORKER_SMOKE_BASE_URL" ]]; then echo "required smoke env missing" >&2; exit 1; fi
 worker_password=ush-worker-ci-test-password
 if printenv USH_WORKER_TEST_DB_PASSWORD >/dev/null 2>&1; then worker_password="$USH_WORKER_TEST_DB_PASSWORD"; fi
+if [[ ! "$worker_password" =~ ^[A-Za-z0-9._-]{20,100}$ ]]; then
+  echo "worker smoke password must be 20-100 safe ASCII characters" >&2
+  exit 1
+fi
 suffix=local
 if printenv GITHUB_RUN_ID >/dev/null 2>&1; then suffix="$GITHUB_RUN_ID"; fi
 project_id="worker-smoke-$suffix"
 idempotency_key="worker-smoke-$suffix"
 crash_container=""
 restart_container=""
-cleanup() { docker rm -f "$crash_container" "$restart_container" >/dev/null 2>&1 || true; }
+cleanup() {
+  docker rm -f "$crash_container" "$restart_container" >/dev/null 2>&1 || true
+  compose exec -T postgres psql -U ush -d ush -v ON_ERROR_STOP=1 -c "DROP OWNED BY ush_worker; DROP ROLE IF EXISTS ush_worker;" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 
+compose exec -T postgres psql -U ush -d ush -v ON_ERROR_STOP=1 -c "DROP OWNED BY ush_worker; DROP ROLE IF EXISTS ush_worker;" >/dev/null 2>&1 || true
 compose exec -T postgres psql -U ush -d ush -v ON_ERROR_STOP=1 -c "CREATE ROLE ush_worker LOGIN PASSWORD '$worker_password';"
 compose exec -T postgres psql -U ush -d ush -v ON_ERROR_STOP=1 <<'SQL'
 GRANT CONNECT ON DATABASE ush TO ush_worker;
