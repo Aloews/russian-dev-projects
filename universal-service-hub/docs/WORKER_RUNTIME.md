@@ -23,12 +23,14 @@ Provision a dedicated PostgreSQL login outside the application process. Do not r
 ```sql
 GRANT CONNECT ON DATABASE ush TO ush_worker;
 GRANT USAGE ON SCHEMA public TO ush_worker;
-GRANT SELECT ON execution_jobs TO ush_worker;
+GRANT SELECT (id, project_id, task_id, job_type, status, priority, attempt_count, max_attempts, available_at, created_at, lease_token, lease_expires_at)
+  ON execution_jobs TO ush_worker;
 GRANT UPDATE (
   status, lease_owner, lease_token, lease_expires_at, heartbeat_at,
   attempt_count, available_at, last_error_code, finished_at, updated_at, checkpoint
 ) ON execution_jobs TO ush_worker;
-GRANT SELECT ON execution_attempts TO ush_worker;
+GRANT SELECT (project_id, job_id, attempt_number, lease_token, status, started_at)
+  ON execution_attempts TO ush_worker;
 GRANT INSERT ON execution_attempts TO ush_worker;
 GRANT UPDATE (status, finished_at, duration_ms, error_code, result_metadata)
   ON execution_attempts TO ush_worker;
