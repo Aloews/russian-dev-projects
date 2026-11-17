@@ -232,7 +232,7 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
 
     let mut worker_auth_tx=begin_platform_transaction(state).await?;
     let worker_row = sqlx::query(
-        "SELECT id,tenant_id,project_id,worker_id,worker_role,queue_name FROM engineering_worker_tokens WHERE token_hash=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>NOW())"
+        "SELECT wt.id,wt.tenant_id,wt.project_id,wt.worker_id,wt.worker_role,wt.queue_name FROM engineering_worker_tokens wt JOIN tenants t ON t.id=wt.tenant_id AND t.status='active' JOIN projects p ON p.id=wt.project_id AND p.tenant_id=wt.tenant_id WHERE wt.token_hash=$1 AND wt.revoked_at IS NULL AND (wt.expires_at IS NULL OR wt.expires_at>NOW())"
     ).bind(&digest).fetch_optional(&mut *worker_auth_tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     if let Some(row) = worker_row {
@@ -256,7 +256,7 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
 
     let mut tenant_auth_tx=begin_platform_transaction(state).await?;
     let tenant_row = sqlx::query(
-        "SELECT id,tenant_id,role FROM tenant_tokens WHERE token_hash=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>NOW())"
+        "SELECT tt.id,tt.tenant_id,tt.role FROM tenant_tokens tt JOIN tenants t ON t.id=tt.tenant_id AND t.status='active' WHERE tt.token_hash=$1 AND tt.revoked_at IS NULL AND (tt.expires_at IS NULL OR tt.expires_at>NOW())"
     ).bind(&digest).fetch_optional(&mut *tenant_auth_tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?;
     if let Some(row) = tenant_row {
@@ -276,7 +276,7 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Princi
 
     let mut project_auth_tx=begin_platform_transaction(state).await?;
     let row = sqlx::query(
-        "SELECT id,tenant_id,project_id,role FROM project_tokens WHERE token_hash=$1 AND revoked_at IS NULL"
+        "SELECT pt.id,pt.tenant_id,pt.project_id,pt.role FROM project_tokens pt JOIN tenants t ON t.id=pt.tenant_id AND t.status='active' JOIN projects p ON p.id=pt.project_id AND p.tenant_id=pt.tenant_id WHERE pt.token_hash=$1 AND pt.revoked_at IS NULL"
     ).bind(&digest).fetch_optional(&mut *project_auth_tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "authentication_store_error"))?
       .ok_or(ApiError(StatusCode::UNAUTHORIZED, "invalid_bearer_token"))?;
