@@ -13,9 +13,9 @@ from pathlib import Path
 ROOT = Path(os.environ.get("TARGET_WORKDIR", "target")).resolve()
 MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
-MAX_FILES = 6
-MAX_CONTEXT_CHARS = 16000
-MAX_FILE_CHARS = 3500
+MAX_FILES = 3
+MAX_CONTEXT_CHARS = 10000
+MAX_FILE_CHARS = 2500
 SOURCE_SUFFIXES = (
     ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".go", ".java", ".kt", ".swift", ".cs", ".rb", ".php",
@@ -90,7 +90,7 @@ def make_context(task, tracked):
         if score:
             ranked.append((score, path))
     ranked.sort(key=lambda item: (-item[0], item[1]))
-    chosen = candidates + [p for _, p in ranked[:12]]
+    chosen = candidates + [p for _, p in ranked[:8]]
     chunks = []
     total = 0
     for path in chosen:
@@ -110,7 +110,7 @@ def make_context(task, tracked):
 EDIT_SCHEMA = {
     "type": "object",
     "properties": {
-        "review": {"type": "string", "minLength": 1, "maxLength": 7000},
+        "review": {"type": "string", "minLength": 1, "maxLength": 1800},
         "edits": {
             "type": "array",
             "minItems": 1,
@@ -119,8 +119,8 @@ EDIT_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "old": {"type": "string", "maxLength": 6000},
-                    "new": {"type": "string", "minLength": 1, "maxLength": 12000},
+                    "old": {"type": "string", "maxLength": 4000},
+                    "new": {"type": "string", "minLength": 1, "maxLength": 8000},
                 },
                 "required": ["path", "old", "new"],
                 "additionalProperties": False,
@@ -219,7 +219,29 @@ def apply_edits(edits, tracked):
     return sorted(staged)
 
 
-def ask_ollama(messages, format_schema=None, max_predict=1200, timeout_seconds=480):
+class IncompleteOllamaResponse(ValueError):
+    pass
+
+
+def parse_ollama_response(data):
+    if not isinstance(data, dict):
+        raise ValueError("Ollama returned an invalid response object")
+    message = data.get("message")
+    answer = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(answer, str) or not answer.strip():
+        raise ValueError("Qwen returned an empty or invalid response")
+    if data.get("done_reason") == "length":
+        raise IncompleteOllamaResponse(
+            "Qwen response reached the num_predict limit (chars=" + str(len(answer)) + ")"
+        )
+    return answer
+
+
+def generation_budget(attempt):
+    return 3072 if attempt == 0 else 4096
+
+
+def ask_ollama(messages, format_schema=None, max_predict=3072, timeout_seconds=900):
     payload = {
         "model": MODEL,
         "stream": False,
@@ -233,11 +255,8 @@ def ask_ollama(messages, format_schema=None, max_predict=1200, timeout_seconds=4
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        data = json.loads(response.read())
-    answer = data.get("message", {}).get("content")
-    if not isinstance(answer, str) or not answer.strip():
-        raise ValueError("Qwen returned an empty or invalid response")
-    return answer
+        data = json.loads(response.read().decode("utf-8"))
+    return parse_ollama_response(data)
 
 
 def main():
@@ -297,16 +316,17 @@ def main():
         {"role": "system", "content": system},
         {"role": "user", "content": "OBJECTIVE:\n" + task + "\n\nREPOSITORY EVIDENCE:\n" + context + "\n\nProduce a review report and minimal exact structured edits. For existing files, old must be an exact unique snippet. For new files, old must be empty."},
     ]
+    base_messages = list(messages)
     tracked_set = set(tracked)
     validation_error = None
     answer = ""
-    for attempt in range(3):
+    for attempt in range(2):
         try:
             answer = ask_ollama(
                 messages,
                 format_schema=EDIT_SCHEMA,
-                max_predict=2048 if attempt == 0 else (1024 if attempt == 1 else 768),
-                timeout_seconds=1200 if attempt == 0 else 600,
+                max_predict=generation_budget(attempt),
+                timeout_seconds=900,
             )
             response_json = json.loads(answer)
             changed_paths = apply_edits(response_json.get("edits"), tracked_set)
@@ -316,28 +336,58 @@ def main():
             if not source_changes:
                 raise ValueError("Qwen returned documentation-only edits")
             review_text = response_json.get("review")
-            if not isinstance(review_text, str) or len(review_text.strip()) < 80 or "timed out" in review_text.lower():
-                raise ValueError("Qwen review report is missing or contains an execution error")
+            if not isinstance(review_text, str) or len(review_text.strip()) < 80 or len(review_text) > 1800 or "timed out" in review_text.lower():
+                raise ValueError("Qwen review report is missing, too long or contains an execution error")
             break
         except (TimeoutError, urllib.error.URLError) as exc:
             print("::error::Qwen inference timed out or could not connect: " + type(exc).__name__ + ": " + str(exc)[:500])
             return 4
-        except (KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
+        except IncompleteOllamaResponse as exc:
+            validation_error = str(exc)
+            if attempt < 1:
+                messages = base_messages + [{
+                    "role": "user",
+                    "content": (
+                        "The previous response reached the generation limit. Return a smaller valid JSON object only: "
+                        "review must be 80-1000 characters and edits must contain at most two minimal changes. "
+                        "Preserve exact unique old snippets for existing files. Do not use markdown or prose."
+                    ),
+                }]
+                continue
+            print("::error::Qwen response remained incomplete after bounded retry: " + validation_error)
+            return 4
+        except json.JSONDecodeError as exc:
+            validation_error = (
+                "invalid JSON at line=" + str(exc.lineno) + ", column=" + str(exc.colno) + ", char=" + str(exc.pos)
+            )
+            if attempt < 1:
+                messages = base_messages + [{
+                    "role": "user",
+                    "content": (
+                        "Your previous response was not valid JSON (" + validation_error + "). "
+                        "Return compact valid JSON only, with review no longer than 1000 characters and at most two edits. "
+                        "Escape all quotes and newlines inside JSON strings. No markdown fences or prose."
+                    ),
+                }]
+                continue
+            print("::error::Qwen response remained invalid after bounded retry: " + validation_error)
+            return 4
+        except (KeyError, ValueError, OSError, UnicodeError) as exc:
             validation_error = str(exc)[:1000]
-            if attempt < 2:
+            if attempt < 1:
                 existing_file_evidence = rejected_existing_file_context(answer)
-                messages.extend([
-                    {"role": "assistant", "content": answer[:10000]},
+                messages = base_messages + [
+                    {"role": "assistant", "content": answer[:8000]},
                     {"role": "user", "content": (
                         "Your previous JSON edit was rejected: " + validation_error + ". "
-                        "This is a strict correction attempt. For every path shown below as an existing file, old MUST be a non-empty exact unique snippet copied verbatim from that file. "
+                        "For every path shown below as an existing file, old MUST be a non-empty exact unique snippet copied verbatim from that file. "
                         "Never use old='' for an existing or tracked path unless the proposed complete replacement preserves at least 92 percent of the existing file. "
                         "If you cannot produce an exact replacement, omit that file and choose a different existing source/test file. "
                         "Do not recreate, truncate or overwrite existing files. Keep the patch minimal. "
                         + existing_file_evidence
                         + "\\nReturn only corrected JSON matching the schema."
                     )},
-                ])
+                ]
                 continue
             print("::error::Qwen multi-role engineering pass failed validation: " + validation_error)
             return 4
@@ -346,7 +396,7 @@ def main():
     report_path.write_text(
         "# Qwen2.5-Coder 3B multi-role engineering review\n\n"
         + "OBJECTIVE: " + task + "\n\n"
-        + review_text[:7000] + "\n",
+        + review_text[:1800] + "\n",
         encoding="utf-8",
     )
     print("Qwen multi-role engineering council completed in one inference pass.")
