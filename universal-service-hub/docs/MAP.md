@@ -308,7 +308,7 @@ If a product has no applicable authentication, persistence, payment or external 
 - Implementation branch: `feat/ush-adaptive-delivery-recovery`, stacked on Qwen candidate-integrity PR #69.
 - First increment: deterministic critical-path forecast and schedule-recovery preview at `POST /v1/projects/{project_id}/delivery/recovery-plan`.
 - The preview is scoped to project owner/operator tokens or Hub admin; viewer and cross-project access are denied.
-- The engine validates a bounded DAG, rejects cycles and invalid estimates, calculates the longest remaining dependency path, and returns delay tiers (0–5%, >5–10%, >10–20%, >20–30%, >30%) with recommended responses.
+- The engine validates a bounded DAG, rejects cycles and invalid estimates, calculates optimistic, most-likely and pessimistic remaining critical paths, and returns delay tiers (0–5%, >5–10%, >10–20%, >20–30%, >30%) with recommended responses.
 - This is advisory only: it does not persist schedules, move deadlines, create agents, reassign tasks, call providers or spend money.
 - Detailed contract, limits, API example and acceptance criteria: [ADAPTIVE_DELIVERY_RECOVERY.md](./ADAPTIVE_DELIVERY_RECOVERY.md).
 - **Status: IMPLEMENTED IN BRANCH; exact-head CI and independent review are pending.** Do not mark the recovery engine verified or operational until the exact candidate CI and authorization/regression tests pass.
