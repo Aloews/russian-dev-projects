@@ -48,7 +48,7 @@ class ProductFactoryAgentPermissionTests(unittest.TestCase):
 
     def test_agent_is_started_in_target_product_working_directory(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("CLAUDE_WORKING_DIR: \${{ github.workspace }}/target", workflow)
+        self.assertIn("CLAUDE_WORKING_DIR: " + "$" + "{{ github.workspace }}/target", workflow)
         action = ACTION.read_text(encoding="utf-8")
         self.assertIn("Verify target workspace source files are readable", action)
         self.assertIn('test -r "target/$path"', action)
