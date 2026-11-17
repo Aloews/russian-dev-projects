@@ -119,7 +119,7 @@ jobs:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
           USH_DB_PASSWORD: ush-ci-db-password-with-at-least-32-characters
         run: |
-          bash -n scripts/dev-up.sh scripts/dev-down.sh
+          bash -n scripts/dev-up.sh scripts/dev-down.sh scripts/worker_runtime_smoke.sh
           docker compose --env-file .env.example -f compose.yml config -q
       - name: Local Compose runtime startup smoke
         run: |
@@ -130,6 +130,7 @@ jobs:
           curl -fsS http://127.0.0.1:18000/healthz >/dev/null
           docker compose --env-file .env.local -f compose.yml ps
           docker compose --env-file .env.local -f compose.yml logs --no-color hub
+          USH_WORKER_SMOKE_BASE_URL=http://127.0.0.1:18000 bash scripts/worker_runtime_smoke.sh
       - name: Container smoke test
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
