@@ -235,7 +235,7 @@ jobs:
           echo "Platform DB tenant-beta rows: $tenant_beta_admin_count"
           test "$tenant_beta_admin_count" = "1"
           app_visible_tenant=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
-            psql -h 127.0.0.1 -U ush_app -d ush_test -qAtc "SET ROLE ush_runtime; SET app.is_admin='true'; SELECT current_user || ':' || current_setting('app.is_admin', true) || ':' || COALESCE((SELECT status FROM tenants WHERE id='tenant-beta'), 'hidden_or_missing')")
+            psql -h 127.0.0.1 -U ush_app -d ush_test -qAtc "SET ROLE ush_runtime; SET app.is_admin='true'; SELECT COALESCE((SELECT status FROM tenants WHERE id='tenant-beta'), 'hidden_or_missing')")
           echo "Runtime DB role visibility for tenant-beta: ${app_visible_tenant:-<not-visible>}"
           test "$app_visible_tenant" = "active"
 
