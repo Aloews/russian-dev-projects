@@ -215,6 +215,8 @@ jobs:
             -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" -d '{"lease_seconds":60}')
           lease_token=$(printf '%s' "$lease_response" | jq -r '.lease.lease_token')
           test "$(printf '%s' "$lease_response" | jq -r '.lease.job.id')" = "$job_id"
+          test "$(printf '%s' "$lease_response" | jq -r '.lease.payload.stage')" = "ci-smoke"
+          test "$(printf '%s' "$lease_response" | jq -r '.lease.checkpoint | length')" = "0"
           curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/jobs/$job_id/heartbeat" \
             -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
             -d "{\"lease_token\":\"$lease_token\",\"lease_seconds\":60}" | jq -e '.lease_expires_at != null' >/dev/null
