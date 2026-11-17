@@ -111,6 +111,8 @@ jobs:
         run: pytest -q
       - name: Docker build
         run: docker build --network=host --progress=plain -t universal-service-hub:test .
+      - name: Worker binary image smoke
+        run: docker run --rm --entrypoint /bin/sh universal-service-hub:test -c 'test -x /app/universal-service-hub && test -x /app/ush-worker'
 
       - name: Local runtime scripts and Compose configuration
         env:
