@@ -544,3 +544,17 @@ This refresh replaces the stale-evidence assumptions above where the following e
 - Exact-commit GitHub Actions run [#44097803719](https://github.com/Aloews/russian-dev-projects/actions/runs/44097803719) completed with `success`.
 - All steps passed, including Product Factory shell/Python syntax, Qwen safety tests, workflow and action metadata validation, Rust format/lint/tests, Ruff/Python tests, migration smoke, Docker build, local Compose runtime startup smoke and container smoke.
 - This is CI evidence for the map branch's current commit. It is not evidence that the Product Factory has successfully completed a real product-generation run, nor does it clear PR #64's separate failing exact-head container smoke.
+
+
+### Latest execution checkpoint — 2026-11-17 20:02 MSK
+
+This checkpoint supersedes earlier PR #64 head/status references above; earlier run records remain historical evidence and are not rewritten.
+
+- **PR #64 current implementation head:** \`429791aa89ca68a661df3fc1b76dee4ee6b25ad1\`.
+- **Previous exact-head CI:** [run #44118119198](https://github.com/Aloews/russian-dev-projects/actions/runs/44118119198) completed \`failure\` on \`357aca70f299623e30ca576b3939d43e2a67f570\`. Rust format/Clippy/tests, Python/Ruff, migration smoke, DB tests, Docker build and Compose startup passed. The final container smoke failed specifically at \`test "$wrong_workspace_owner" = "403"\`: an authenticated tester worker attempted to heartbeat a workspace leased by the implementer; the handler returned the generic invalid-lease conflict instead of an authorization denial.
+- **Correction pushed:** the workspace heartbeat handler now performs a tenant- and project-scoped live-lease-owner check before extending the lease. A different authenticated worker receives HTTP 403; an expired or invalid lease remains on the existing conflict path. The change does not broaden tenant visibility or accept the foreign lease token.
+- **Current exact-head CI:** [run #44132283616](https://github.com/Aloews/russian-dev-projects/actions/runs/44132283616), run number 1485, was observed as \`pending\` on the current head. No pass is claimed. Recheck this run and inspect its final job/log evidence before treating the heartbeat correction as verified.
+- **PR #64 decision:** remain draft, open and unmerged until exact-head CI passes and the tenant authorization/RLS negative cases are independently reviewed. The durable dispatcher remains a control-plane foundation; it does not yet provision actual Git worktrees or operate a durable multi-role execution scheduler.
+- **Next actions:** (1) verify run #44132283616; (2) if it fails, diagnose the exact failing assertion from the job log and fix without weakening the security contract; (3) after a green exact-head run, continue with actual isolated Git worktree provisioning and durable worker runtime; (4) refresh the provider and Product Factory evidence before claiming an end-to-end product-generation cycle.
+
+**Archive status remains NOT READY. Next plan remains NOT STARTED.** The MVP definition of done and closeout gate above are unchanged.
