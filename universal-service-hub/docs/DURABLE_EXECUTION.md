@@ -8,7 +8,7 @@ This increment adds the PostgreSQL persistence contract for project plans and ta
 
 | Table | Responsibility |
 |---|---|
-| `project_plans` | Immutable plan versions and one active plan per project |
+| `project_plans` | Versioned plan records and one active plan per project |
 | `project_tasks` | Tenant-scoped tasks, status, priority, role and three-point estimates |
 | `task_dependencies` | Tenant-safe finish-to-start task edges |
 | `project_events` | Append-oriented project/task lifecycle metadata |
