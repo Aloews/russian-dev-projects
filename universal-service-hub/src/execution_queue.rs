@@ -123,7 +123,7 @@ pub async fn claim(pool: &PgPool, project_id: &str, worker_id: &str, lease_secon
             FOR UPDATE SKIP LOCKED LIMIT 1 \
          ) \
          UPDATE execution_jobs j SET status='leased', lease_owner=$1, lease_token=$2, \
-            lease_expires_at=NOW() + ($3 * INTERVAL '1 second'), heartbeat_at=NOW(), \
+            lease_expires_at=NOW() + ($4 * INTERVAL '1 second'), heartbeat_at=NOW(), \
             attempt_count=j.attempt_count+1, updated_at=NOW() \
          FROM candidate c WHERE j.id=c.id RETURNING j.*"
     ).bind(project_id).bind(worker_id).bind(token).bind(lease_seconds)
@@ -144,7 +144,7 @@ pub async fn claim(pool: &PgPool, project_id: &str, worker_id: &str, lease_secon
 pub async fn heartbeat(pool: &PgPool, project_id: &str, job_id: Uuid, token: Uuid, lease_seconds: i64) -> Result<DateTime<Utc>, QueueError> {
     if !(5..=3600).contains(&lease_seconds) { return Err(QueueError::InvalidInput); }
     let row = sqlx::query(
-        "UPDATE execution_jobs SET heartbeat_at=NOW(), lease_expires_at=NOW()+($3 * INTERVAL '1 second'), updated_at=NOW() \
+        "UPDATE execution_jobs SET heartbeat_at=NOW(), lease_expires_at=NOW()+($4 * INTERVAL '1 second'), updated_at=NOW() \
          WHERE project_id=$1 AND id=$2 AND lease_token=$3 AND status='leased' AND lease_expires_at > NOW() RETURNING lease_expires_at"
     ).bind(project_id).bind(job_id).bind(token).bind(lease_seconds).fetch_optional(pool).await.map_err(|_| QueueError::Database)?
      .ok_or(QueueError::NotFoundOrLeaseLost)?;
@@ -156,7 +156,7 @@ pub async fn save_checkpoint(pool: &PgPool, project_id: &str, job_id: Uuid, toke
         return Err(QueueError::InvalidInput);
     }
     let result = sqlx::query(
-        "UPDATE execution_jobs SET checkpoint=$3, heartbeat_at=NOW(), updated_at=NOW() \
+        "UPDATE execution_jobs SET checkpoint=$4, heartbeat_at=NOW(), updated_at=NOW() \
          WHERE project_id=$1 AND id=$2 AND lease_token=$3 AND status='leased' AND lease_expires_at > NOW()"
     ).bind(project_id).bind(job_id).bind(token).bind(checkpoint).execute(pool).await.map_err(|_| QueueError::Database)?;
     if result.rows_affected() != 1 { return Err(QueueError::NotFoundOrLeaseLost); }
@@ -195,12 +195,12 @@ pub async fn fail(pool: &PgPool, project_id: &str, job_id: Uuid, token: Uuid, er
     let mut tx = pool.begin().await.map_err(|_| QueueError::Database)?;
     let row = sqlx::query(
         "UPDATE execution_jobs SET \
-           status=CASE WHEN $3 AND attempt_count < max_attempts THEN 'retry_wait' ELSE 'dead_letter' END, \
-           available_at=CASE WHEN $3 AND attempt_count < max_attempts \
+           status=CASE WHEN $4 AND attempt_count < max_attempts THEN 'retry_wait' ELSE 'dead_letter' END, \
+           available_at=CASE WHEN $4 AND attempt_count < max_attempts \
              THEN NOW() + (LEAST(300, (5 * power(2, GREATEST(0, attempt_count-1)))::integer) * INTERVAL '1 second') \
              ELSE available_at END, \
            lease_owner=NULL, lease_token=NULL, lease_expires_at=NULL, heartbeat_at=NULL, \
-           last_error_code=$4, finished_at=CASE WHEN NOT ($3 AND attempt_count < max_attempts) THEN NOW() ELSE NULL END, updated_at=NOW() \
+           last_error_code=$5, finished_at=CASE WHEN NOT ($4 AND attempt_count < max_attempts) THEN NOW() ELSE NULL END, updated_at=NOW() \
          WHERE id=$1 AND lease_token=$2 AND status='leased' AND lease_expires_at > NOW() \
          RETURNING project_id, attempt_count, status"
     ).bind(project_id).bind(job_id).bind(token).bind(retryable).bind(error_code)
