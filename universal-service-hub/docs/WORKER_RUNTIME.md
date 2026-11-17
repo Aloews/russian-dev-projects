@@ -1,0 +1,58 @@
+# Worker Supervisor v1
+
+## Delivered boundary
+
+This increment adds a separately runnable Tokio worker supervisor to the Rust container image. It is deliberately limited to the non-billable `system.noop` job type while provider authorization, project budgets, artifact transfer and specialist dispatch are implemented and reviewed.
+
+The worker process:
+- runs a bounded number of independent polling loops;
+- claims only explicitly allowlisted job types using PostgreSQL row locks and fencing tokens;
+- recovers expired leases transactionally and closes the matching attempt ledger row;
+- records successful non-billable jobs through the durable queue completion transaction;
+- backs off on database errors and exits on SIGINT after stopping its loops;
+- requires a dedicated worker database URL; it never falls back to the Hub administrator token or API token;
+- requires verified TLS (`verify-full`) when `USH_ENVIRONMENT=production`;
+- does not run schema migrations and therefore does not require DDL privileges.
+
+This is a supervisor/lease-recovery foundation, **not yet an AI agent runtime**. It does not call Starimg, Anthropic, OpenAI, Ollama or any other model provider. It does not process architecture, development, QA, security-review or integration jobs.
+
+## Worker database role
+
+Provision a dedicated PostgreSQL login outside the application process. Do not reuse the Hub migration owner, root database role or API token. The worker needs access only to queue tables:
+
+```sql
+GRANT CONNECT ON DATABASE ush TO ush_worker;
+GRANT USAGE ON SCHEMA public TO ush_worker;
+GRANT SELECT ON execution_jobs TO ush_worker;
+GRANT UPDATE (
+  status, lease_owner, lease_token, lease_expires_at, heartbeat_at,
+  attempt_count, available_at, last_error_code, finished_at, updated_at, checkpoint
+) ON execution_jobs TO ush_worker;
+GRANT SELECT ON execution_attempts TO ush_worker;
+GRANT INSERT ON execution_attempts TO ush_worker;
+GRANT UPDATE (status, finished_at, duration_ms, error_code, result_metadata)
+  ON execution_attempts TO ush_worker;
+```
+
+Use a unique strong password, TLS and a connection string stored in the deployment secret manager. The example assumes the database name is `ush`; adapt it to the isolated environment. The worker must not receive project-token, provider-secret or administrator credentials.
+
+## Configuration
+
+- `USH_WORKER_DATABASE_URL`: required, dedicated role only.
+- `USH_WORKER_ID`: optional bounded worker identity prefix.
+- `USH_WORKER_CONCURRENCY`: 1–32, default 2.
+- `USH_WORKER_POLL_MS`: 100–30000, default 1000.
+- `USH_WORKER_JOB_TYPES`: currently only `system.noop`; default `system.noop`.
+- `USH_ENVIRONMENT=production`: enforces PostgreSQL TLS certificate and hostname verification.
+
+Run the image with `/app/ush-worker` as its command/entrypoint in a separate worker service. Keep the API and worker as separate processes so their restart policies, resource limits and scaling can be controlled independently. Do not start the worker until the dedicated role and secret are provisioned.
+
+## Acceptance gates
+
+1. Cargo builds both binaries and unit tests validate the worker capability allowlist.
+2. PostgreSQL integration tests prove concurrent claims are unique, expired leases update both job and attempt rows, exhausted attempts enter dead-letter, and stale fencing tokens cannot complete.
+3. Container smoke confirms the API image contains both executables.
+4. A process-kill/restart test proves a claimed job is recovered after lease expiry and not lost.
+5. A production worker test proves TLS verification and database grants reject DDL and unrelated table access.
+
+Until gates 2–5 have exact-head evidence, report the worker binary as implemented but the end-to-end worker service as unverified. Specialist provider execution remains a separate gated milestone.
