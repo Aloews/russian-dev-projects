@@ -643,3 +643,15 @@ The cloud coding workflow was not triggered for these checks because it can call
 - Explicit approval remains mandatory for paid providers/resources, secrets/permissions, production data/migrations/deployments, merge/release, destructive changes and scope expansion.
 - A successful CI run on an older SHA is never evidence for a newer head. Required checks must all succeed; skipped/cancelled/missing/pending checks do not pass.
 - **Status: IMPLEMENTED IN BRANCH; CI PENDING.** This repository skill does not itself create a continuously running agent. Background status checks require a separate scheduled/event automation.
+
+
+## Worker Runtime — durable queue control plane
+
+- Branch: `feat/ush-worker-runtime-core`, stacked on the verified-autonomous-continuation skill branch and inheriting the durable execution schema.
+- Added authenticated project-scoped enqueue and worker-claim APIs. Claims use PostgreSQL transactions and `FOR UPDATE SKIP LOCKED`; expired leases are recovered before a new claim, attempt rows are recorded, and each lease receives a fresh fencing token.
+- Added heartbeat, strict metadata checkpoint, completion, bounded retry/dead-letter and optional specialist handoff operations. Handoff job creation and source completion share a transaction; artifact references are checked against the same project and source job.
+- Worker mutations require matching project scope, worker ID, current lease token and an unexpired lease. A stale worker cannot checkpoint or complete after re-lease.
+- Payload/checkpoint contracts deliberately exclude prompts, generated content, credentials and raw provider responses. Checkpoints have a strict key/type allowlist.
+- **Status: IMPLEMENTED IN BRANCH; NOT YET VERIFIED.** Exact-head CI, Rust format/Clippy/tests and PostgreSQL migration/container smoke are pending.
+- This increment is the durable queue control plane, not yet the full autonomous worker daemon. Continuous polling/supervision, provider/model dispatch, specialist execution, artifact storage transfer, concurrency controls, metrics/alerts and restart-recovery integration tests remain next.
+- No merge, production migration/deployment, provider invocation or paid resource creation was performed.

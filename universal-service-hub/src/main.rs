@@ -1347,6 +1347,297 @@ async fn delivery_recovery_plan(
 }
 
 
+
+
+#[derive(Deserialize)]
+struct JobEnqueueRequest {
+    idempotency_key: String,
+    job_type: String,
+    agent_role: String,
+    task_id: Option<Uuid>,
+    #[serde(default = "default_job_priority")]
+    priority: i16,
+    #[serde(default = "default_max_attempts")]
+    max_attempts: i32,
+}
+fn default_job_priority() -> i16 { 100 }
+fn default_max_attempts() -> i32 { 3 }
+
+fn valid_agent_role(value: &str) -> bool {
+    ["planner", "architect", "implementation", "qa", "security_reviewer", "independent_reviewer", "researcher", "integrator"].contains(&value)
+}
+
+fn valid_worker_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 160 &&
+        value.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
+}
+
+async fn enqueue_execution_job(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(body): Json<JobEnqueueRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let principal = require_operator(&state, &headers).await?;
+    if !can_manage_delivery_schedule(&principal, &project_id) {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch"));
+    }
+    if body.idempotency_key.is_empty() || body.idempotency_key.len() > 160
+        || !body.idempotency_key.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
+        || body.job_type.is_empty() || body.job_type.len() > 64
+        || !body.job_type.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c))
+        || !valid_agent_role(&body.agent_role)
+        || !(0..=1000).contains(&body.priority)
+        || !(1..=20).contains(&body.max_attempts)
+    {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_execution_job"));
+    }
+    if let Some(task_id) = body.task_id {
+        let exists = sqlx::query("SELECT 1 FROM project_tasks WHERE project_id=$1 AND id=$2")
+            .bind(&project_id).bind(task_id).fetch_optional(&state.db).await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_task_lookup_failed"))?;
+        if exists.is_none() { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "task_not_in_project")); }
+    }
+    let id = Uuid::new_v4();
+    let payload = json!({"agent_role":body.agent_role});
+    let row = sqlx::query(
+        "INSERT INTO execution_jobs (id,project_id,task_id,job_type,status,priority,idempotency_key,payload,max_attempts,created_at,updated_at) VALUES ($1,$2,$3,$4,'queued',$5,$6,$7,$8,NOW(),NOW()) ON CONFLICT (project_id,idempotency_key) DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key WHERE execution_jobs.job_type=EXCLUDED.job_type AND execution_jobs.task_id IS NOT DISTINCT FROM EXCLUDED.task_id AND execution_jobs.payload=EXCLUDED.payload AND execution_jobs.priority=EXCLUDED.priority AND execution_jobs.max_attempts=EXCLUDED.max_attempts RETURNING id,status,created_at"
+    ).bind(id).bind(&project_id).bind(body.task_id).bind(&body.job_type).bind(body.priority)
+     .bind(&body.idempotency_key).bind(payload).bind(body.max_attempts)
+     .fetch_optional(&state.db).await
+     .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_enqueue_failed"))?
+     .ok_or(ApiError(StatusCode::CONFLICT, "idempotency_key_payload_mismatch"))?;
+    let job_id: Uuid = row.get("id");
+    let status: String = row.get("status");
+    audit(&state, &principal.actor, "execution.job.enqueue", "execution_job", &job_id.to_string(),
+        json!({"project_id":project_id,"job_type":body.job_type,"agent_role":body.agent_role,"status":status})).await;
+    let created = job_id == id;
+    Ok((if created { StatusCode::CREATED } else { StatusCode::OK },
+        Json(json!({"job_id":job_id,"status":status,"created":created,"created_at":row.get::<DateTime<Utc>,_>("created_at")}))))
+}
+
+#[derive(Deserialize)]
+struct WorkerClaimRequest {
+    worker_id: String,
+    #[serde(default = "default_lease_seconds")]
+    lease_seconds: i64,
+}
+fn default_lease_seconds() -> i64 { 60 }
+
+async fn claim_execution_job(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(body): Json<WorkerClaimRequest>,
+) -> ApiResult<Json<Value>> {
+    let principal = require_operator(&state, &headers).await?;
+    if !can_manage_delivery_schedule(&principal, &project_id) {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch"));
+    }
+    if !valid_worker_id(&body.worker_id) || !(10..=300).contains(&body.lease_seconds) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_worker_claim"));
+    }
+    let mut tx = state.db.begin().await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+
+    // Expired leases are made retryable (or dead-lettered) before a fresh claim.
+    sqlx::query(
+        "UPDATE execution_attempts a SET status='lease_expired',finished_at=NOW(),duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-a.started_at))*1000)::bigint) FROM execution_jobs j WHERE a.project_id=$1 AND j.project_id=$1 AND a.job_id=j.id AND a.lease_token=j.lease_token AND a.status='running' AND j.status='leased' AND j.lease_expires_at<=NOW()"
+    ).bind(&project_id).execute(&mut *tx).await
+      .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_recovery_failed"))?;
+    sqlx::query(
+        "UPDATE execution_jobs SET status=CASE WHEN attempt_count>=max_attempts THEN 'dead_letter' ELSE 'retry_wait' END,available_at=NOW(),lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,finished_at=CASE WHEN attempt_count>=max_attempts THEN NOW() ELSE NULL END,last_error_code='lease_expired',updated_at=NOW() WHERE project_id=$1 AND status='leased' AND lease_expires_at<=NOW()"
+    ).bind(&project_id).execute(&mut *tx).await
+      .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_recovery_failed"))?;
+
+    let row = sqlx::query(
+        "SELECT id,task_id,job_type,payload,checkpoint,attempt_count,max_attempts,priority FROM execution_jobs WHERE project_id=$1 AND status IN ('queued','retry_wait') AND available_at<=NOW() AND attempt_count<max_attempts ORDER BY priority DESC,available_at,created_at LIMIT 1 FOR UPDATE SKIP LOCKED"
+    ).bind(&project_id).fetch_optional(&mut *tx).await
+      .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_claim_failed"))?;
+    let Some(row) = row else {
+        tx.commit().await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+        return Ok(Json(json!({"job":null})));
+    };
+    let job_id: Uuid = row.get("id");
+    let task_id: Option<Uuid> = row.get("task_id");
+    let job_type: String = row.get("job_type");
+    let payload: Value = row.get("payload");
+    let checkpoint: Value = row.get("checkpoint");
+    let attempt_number: i32 = row.get::<i32,_>("attempt_count") + 1;
+    let lease_token = Uuid::new_v4();
+    let updated = sqlx::query(
+        "UPDATE execution_jobs SET status='leased',attempt_count=$1,lease_owner=$2,lease_token=$3,lease_expires_at=NOW()+($4 * INTERVAL '1 second'),heartbeat_at=NOW(),updated_at=NOW() WHERE project_id=$5 AND id=$6 RETURNING lease_expires_at"
+    ).bind(attempt_number).bind(&body.worker_id).bind(lease_token).bind(body.lease_seconds)
+     .bind(&project_id).bind(job_id).fetch_one(&mut *tx).await
+     .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_claim_update_failed"))?;
+    sqlx::query(
+        "INSERT INTO execution_attempts (project_id,job_id,attempt_number,worker_id,lease_token,status) VALUES ($1,$2,$3,$4,$5,'running')"
+    ).bind(&project_id).bind(job_id).bind(attempt_number).bind(&body.worker_id).bind(lease_token)
+     .execute(&mut *tx).await
+     .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_attempt_create_failed"))?;
+    sqlx::query(
+        "INSERT INTO project_events (project_id,task_id,event_type,actor,metadata) VALUES ($1,$2,'execution.job.claimed',$3,$4)"
+    ).bind(&project_id).bind(task_id).bind(&body.worker_id)
+     .bind(json!({"job_id":job_id,"attempt":attempt_number,"job_type":job_type}))
+     .execute(&mut *tx).await
+     .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_event_write_failed"))?;
+    tx.commit().await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+    Ok(Json(json!({"job":{
+        "id":job_id,"project_id":project_id,"task_id":task_id,"job_type":job_type,
+        "payload":payload,"checkpoint":checkpoint,"attempt":attempt_number,
+        "worker_id":body.worker_id,"lease_token":lease_token,
+        "lease_expires_at":updated.get::<DateTime<Utc>,_>("lease_expires_at")
+    }})))
+}
+
+#[derive(Deserialize)]
+struct WorkerLeaseRequest {
+    worker_id: String,
+    lease_token: Uuid,
+    #[serde(default = "default_lease_seconds")]
+    lease_seconds: i64,
+}
+
+async fn heartbeat_execution_job(
+    State(state): State<AppState>, headers: HeaderMap, Path((project_id, job_id)): Path<(String, Uuid)>,
+    Json(body): Json<WorkerLeaseRequest>,
+) -> ApiResult<Json<Value>> {
+    let principal = require_operator(&state, &headers).await?;
+    if !can_manage_delivery_schedule(&principal, &project_id) { return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch")); }
+    if !valid_worker_id(&body.worker_id) || !(10..=300).contains(&body.lease_seconds) { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_worker_heartbeat")); }
+    let row = sqlx::query("UPDATE execution_jobs SET heartbeat_at=NOW(),lease_expires_at=NOW()+($1 * INTERVAL '1 second'),updated_at=NOW() WHERE project_id=$2 AND id=$3 AND status='leased' AND lease_owner=$4 AND lease_token=$5 AND lease_expires_at>NOW() RETURNING lease_expires_at")
+        .bind(body.lease_seconds).bind(&project_id).bind(job_id).bind(&body.worker_id).bind(body.lease_token)
+        .fetch_optional(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_heartbeat_failed"))?
+        .ok_or(ApiError(StatusCode::CONFLICT, "execution_lease_lost"))?;
+    Ok(Json(json!({"job_id":job_id,"lease_expires_at":row.get::<DateTime<Utc>,_>("lease_expires_at")})))
+}
+
+#[derive(Deserialize)]
+struct WorkerCheckpointRequest {
+    worker_id: String,
+    lease_token: Uuid,
+    checkpoint: Value,
+}
+fn valid_execution_checkpoint(value: &Value) -> bool {
+    let Some(object) = value.as_object() else { return false; };
+    if object.len() > 5 { return false; }
+    for (key, item) in object {
+        match key.as_str() {
+            "phase" => if !item.as_str().is_some_and(|v| v.len() <= 48 && v.chars().all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))) { return false; },
+            "cursor" => if !item.as_str().is_some_and(|v| v.len() <= 256 && !v.chars().any(|c| c == '\n' || c == '\r')) { return false; },
+            "progress" => if !item.as_f64().is_some_and(|v| v.is_finite() && (0.0..=100.0).contains(&v)) { return false; },
+            "completed_steps" => if !item.as_array().is_some_and(|v| v.len() <= 100 && v.iter().all(|x| x.as_str().is_some_and(|s| s.len() <= 80))) { return false; },
+            "artifact_ids" => if !item.as_array().is_some_and(|v| v.len() <= 50 && v.iter().all(|x| x.as_str().and_then(|s| Uuid::parse_str(s).ok()).is_some())) { return false; },
+            _ => return false,
+        }
+    }
+    true
+}
+
+async fn checkpoint_execution_job(
+    State(state): State<AppState>, headers: HeaderMap, Path((project_id, job_id)): Path<(String, Uuid)>,
+    Json(body): Json<WorkerCheckpointRequest>,
+) -> ApiResult<StatusCode> {
+    let principal = require_operator(&state, &headers).await?;
+    if !can_manage_delivery_schedule(&principal, &project_id) { return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch")); }
+    if !valid_worker_id(&body.worker_id) || !valid_execution_checkpoint(&body.checkpoint) { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_execution_checkpoint")); }
+    let result = sqlx::query("UPDATE execution_jobs SET checkpoint=$1,updated_at=NOW() WHERE project_id=$2 AND id=$3 AND status='leased' AND lease_owner=$4 AND lease_token=$5 AND lease_expires_at>NOW()")
+        .bind(&body.checkpoint).bind(&project_id).bind(job_id).bind(&body.worker_id).bind(body.lease_token)
+        .execute(&state.db).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_checkpoint_failed"))?;
+    if result.rows_affected()==0 { return Err(ApiError(StatusCode::CONFLICT, "execution_lease_lost")); }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct WorkerCompleteRequest {
+    worker_id: String,
+    lease_token: Uuid,
+    #[serde(default)]
+    output_artifact_ids: Vec<Uuid>,
+    next_agent_role: Option<String>,
+    next_job_type: Option<String>,
+    next_idempotency_key: Option<String>,
+}
+
+async fn complete_execution_job(
+    State(state): State<AppState>, headers: HeaderMap, Path((project_id, job_id)): Path<(String, Uuid)>,
+    Json(body): Json<WorkerCompleteRequest>,
+) -> ApiResult<Json<Value>> {
+    let principal = require_operator(&state, &headers).await?;
+    if !can_manage_delivery_schedule(&principal, &project_id) { return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch")); }
+    if !valid_worker_id(&body.worker_id) || body.output_artifact_ids.len()>50
+        || body.output_artifact_ids.iter().collect::<std::collections::HashSet<_>>().len()!=body.output_artifact_ids.len()
+        || body.next_agent_role.as_deref().is_some_and(|v| !valid_agent_role(v))
+        || body.next_job_type.as_deref().is_some_and(|v| v.is_empty() || v.len()>64 || !v.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c)))
+        || body.next_idempotency_key.as_deref().is_some_and(|v| v.is_empty() || v.len()>160 || !v.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c)))
+        || (body.next_agent_role.is_some() != body.next_job_type.is_some() || body.next_agent_role.is_some() != body.next_idempotency_key.is_some())
+    { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_execution_completion")); }
+    let mut tx = state.db.begin().await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+    for artifact_id in &body.output_artifact_ids {
+        let exists = sqlx::query("SELECT 1 FROM execution_artifacts WHERE project_id=$1 AND id=$2 AND job_id=$3")
+            .bind(&project_id).bind(artifact_id).bind(job_id).fetch_optional(&mut *tx).await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_artifact_lookup_failed"))?;
+        if exists.is_none() { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "artifact_not_from_job")); }
+    }
+    let row = sqlx::query("UPDATE execution_jobs SET status='succeeded',lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,finished_at=NOW(),updated_at=NOW() WHERE project_id=$1 AND id=$2 AND status='leased' AND lease_owner=$3 AND lease_token=$4 AND lease_expires_at>NOW() RETURNING task_id")
+        .bind(&project_id).bind(job_id).bind(&body.worker_id).bind(body.lease_token).fetch_optional(&mut *tx).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_completion_failed"))?
+        .ok_or(ApiError(StatusCode::CONFLICT, "execution_lease_lost"))?;
+    let task_id: Option<Uuid> = row.get("task_id");
+    let attempt_update = sqlx::query("UPDATE execution_attempts SET status='succeeded',finished_at=NOW(),duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint),result_metadata=$1 WHERE project_id=$2 AND job_id=$3 AND lease_token=$4 AND status='running'")
+        .bind(json!({"output_artifact_ids":body.output_artifact_ids})).bind(&project_id).bind(job_id).bind(body.lease_token)
+        .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_attempt_update_failed"))?;
+    if attempt_update.rows_affected()!=1 { return Err(ApiError(StatusCode::CONFLICT, "execution_attempt_not_running")); }
+    let handoff_id = if let (Some(role),Some(kind),Some(key)) = (&body.next_agent_role,&body.next_job_type,&body.next_idempotency_key) {
+        let next_payload = json!({"agent_role":role,"source_job_id":job_id,"input_artifact_ids":body.output_artifact_ids});
+        let inserted = sqlx::query("INSERT INTO execution_jobs (project_id,task_id,job_type,status,priority,idempotency_key,payload,max_attempts) SELECT $1,$2,$3,'queued',100,$4,$5,3 WHERE NOT EXISTS (SELECT 1 FROM execution_jobs WHERE project_id=$1 AND idempotency_key=$4) RETURNING id")
+            .bind(&project_id).bind(task_id).bind(kind).bind(key).bind(next_payload).fetch_optional(&mut *tx).await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_handoff_failed"))?;
+        inserted.map(|r|r.get::<Uuid,_>("id"))
+    } else { None };
+    sqlx::query("INSERT INTO project_events (project_id,task_id,event_type,actor,metadata) VALUES ($1,$2,'execution.job.succeeded',$3,$4)")
+        .bind(&project_id).bind(task_id).bind(&body.worker_id)
+        .bind(json!({"job_id":job_id,"output_artifact_count":body.output_artifact_ids.len(),"handoff_job_id":handoff_id}))
+        .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_event_write_failed"))?;
+    tx.commit().await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+    Ok(Json(json!({"job_id":job_id,"status":"succeeded","handoff_job_id":handoff_id})))
+}
+
+#[derive(Deserialize)]
+struct WorkerFailRequest {
+    worker_id: String,
+    lease_token: Uuid,
+    error_code: String,
+    retryable: bool,
+}
+
+async fn fail_execution_job(
+    State(state): State<AppState>, headers: HeaderMap, Path((project_id, job_id)): Path<(String, Uuid)>,
+    Json(body): Json<WorkerFailRequest>,
+) -> ApiResult<Json<Value>> {
+    let principal = require_operator(&state, &headers).await?;
+    if !can_manage_delivery_schedule(&principal, &project_id) { return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch")); }
+    if !valid_worker_id(&body.worker_id) || body.error_code.is_empty() || body.error_code.len()>100
+        || !body.error_code.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c))
+    { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_execution_failure")); }
+    let mut tx = state.db.begin().await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+    let row = sqlx::query("UPDATE execution_jobs SET status=CASE WHEN $1 AND attempt_count<max_attempts THEN 'retry_wait' WHEN $1 THEN 'dead_letter' ELSE 'failed' END,available_at=NOW()+LEAST(300,POWER(2,LEAST(attempt_count,8))::integer)*INTERVAL '1 second',lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,finished_at=CASE WHEN NOT $1 OR attempt_count>=max_attempts THEN NOW() ELSE NULL END,last_error_code=$2,updated_at=NOW() WHERE project_id=$3 AND id=$4 AND status='leased' AND lease_owner=$5 AND lease_token=$6 AND lease_expires_at>NOW() RETURNING status")
+        .bind(body.retryable).bind(&body.error_code).bind(&project_id).bind(job_id).bind(&body.worker_id).bind(body.lease_token)
+        .fetch_optional(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_failure_update_failed"))?
+        .ok_or(ApiError(StatusCode::CONFLICT, "execution_lease_lost"))?;
+    let status: String = row.get("status");
+    let attempt_status = if body.retryable { "retryable_failure" } else { "permanent_failure" };
+    sqlx::query("UPDATE execution_attempts SET status=$1,finished_at=NOW(),duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint),error_code=$2 WHERE project_id=$3 AND job_id=$4 AND lease_token=$5 AND status='running'")
+        .bind(attempt_status).bind(&body.error_code).bind(&project_id).bind(job_id).bind(body.lease_token)
+        .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_attempt_update_failed"))?;
+    sqlx::query("INSERT INTO project_events (project_id,event_type,actor,metadata) VALUES ($1,'execution.job.failed',$2,$3)")
+        .bind(&project_id).bind(&body.worker_id).bind(json!({"job_id":job_id,"error_code":body.error_code,"status":status}))
+        .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_event_write_failed"))?;
+    tx.commit().await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+    Ok(Json(json!({"job_id":job_id,"status":status})))
+}
+
+
 #[derive(Deserialize)]
 struct AuditQuery { #[serde(default = "default_limit")] limit: i64 }
 fn default_limit() -> i64 { 50 }
@@ -1471,6 +1762,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/providers/health-check", post(health_check))
         .route("/v1/ai/chat", post(ai_chat))
         .route("/v1/projects/{project_id}/delivery/recovery-plan", post(delivery_recovery_plan))
+        .route("/v1/projects/{project_id}/jobs", post(enqueue_execution_job))
+        .route("/v1/projects/{project_id}/workers/claim", post(claim_execution_job))
+        .route("/v1/projects/{project_id}/jobs/{job_id}/heartbeat", post(heartbeat_execution_job))
+        .route("/v1/projects/{project_id}/jobs/{job_id}/checkpoint", put(checkpoint_execution_job))
+        .route("/v1/projects/{project_id}/jobs/{job_id}/complete", post(complete_execution_job))
+        .route("/v1/projects/{project_id}/jobs/{job_id}/fail", post(fail_execution_job))
         .route("/v1/providers/select", post(select_provider))
         .route("/v1/audit", get(list_audit))
         .with_state(state)
@@ -1787,5 +2084,46 @@ mod integration_security_tests {
         assert!(valid_s3_bucket_name("project-assets"));
         assert!(!valid_s3_bucket_name("Project-Assets"));
         assert!(!valid_s3_bucket_name("192.168.1.1"));
+    }
+}
+
+#[cfg(test)]
+mod worker_contract_tests {
+    use super::*;
+
+    #[test]
+    fn specialist_roles_are_an_explicit_allowlist() {
+        for role in ["planner", "architect", "implementation", "qa", "security_reviewer", "independent_reviewer", "researcher", "integrator"] {
+            assert!(valid_agent_role(role));
+        }
+        for role in ["admin", "shell", "../implementation", "unknown"] {
+            assert!(!valid_agent_role(role));
+        }
+    }
+
+    #[test]
+    fn worker_identity_is_bounded_and_rejects_path_or_whitespace_characters() {
+        assert!(valid_worker_id("worker-eu-01"));
+        assert!(valid_worker_id("runner:job_123"));
+        assert!(!valid_worker_id(""));
+        assert!(!valid_worker_id("../worker"));
+        assert!(!valid_worker_id("worker id"));
+        assert!(!valid_worker_id(&"w".repeat(161)));
+    }
+
+    #[test]
+    fn checkpoints_accept_only_small_non_sensitive_metadata_contract() {
+        assert!(valid_execution_checkpoint(&json!({
+            "phase":"implementation",
+            "progress":42.5,
+            "completed_steps":["inspect","patch"],
+            "artifact_ids":[Uuid::new_v4().to_string()]
+        })));
+        assert!(valid_execution_checkpoint(&json!({"cursor":"page:3"})));
+        assert!(!valid_execution_checkpoint(&json!({"prompt":"write a feature"})));
+        assert!(!valid_execution_checkpoint(&json!({"phase":"bad phase"})));
+        assert!(!valid_execution_checkpoint(&json!({"progress":101.0})));
+        assert!(!valid_execution_checkpoint(&json!({"cursor":"line\nsecret"})));
+        assert!(!valid_execution_checkpoint(&json!({"unknown":true})));
     }
 }

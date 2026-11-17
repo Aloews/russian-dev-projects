@@ -2,7 +2,7 @@
 
 ## Delivery boundary
 
-This increment adds the PostgreSQL persistence contract for project plans and task execution. It does **not** yet expose task CRUD, enqueue jobs, claim leases, run workers, invoke agents/providers, or enable automatic schedule mutation. The schema is intentionally deployed only through the existing Rust SQLx migration path.
+This increment adds the PostgreSQL persistence contract and the first authenticated queue-control API. It exposes enqueue, claim, heartbeat, metadata checkpoint, completion, bounded failure/retry and artifact-reference handoff. It does **not** yet include a continuously running worker daemon, model/provider invocation, task CRUD, object-store byte transfer, monitoring or production deployment. The schema is applied only through the existing Rust SQLx migration path.
 
 ## Data model
 
@@ -30,12 +30,26 @@ Every project-owned row carries `project_id`. Composite foreign keys include tha
 7. Artifact bytes remain in a separately authorized object store. PostgreSQL stores only opaque storage references, SHA-256 and size.
 8. Approval records are required before any future paid-resource, deployment, secret, production-data or other policy-gated action.
 
+## Implemented queue API (worker-runtime foundation)
+
+All routes are project-scoped. A project `owner` or `operator` token is required; the authenticated project must match `{project_id}`. A worker identity is a bounded identifier supplied by the authenticated worker and is not a substitute for the project token.
+
+- `POST /v1/projects/{project_id}/jobs`: enqueue an idempotent job with `job_type`, `agent_role`, optional project task, priority and bounded attempt count. The persisted payload contains only the specialist role, not a prompt or model transcript.
+- `POST /v1/projects/{project_id}/workers/claim`: transactionally recovers expired leases, then claims one due job using `FOR UPDATE SKIP LOCKED`. A fresh UUID fencing token and attempt row are created in the same transaction. Lease duration is 10–300 seconds.
+- `POST /v1/projects/{project_id}/jobs/{job_id}/heartbeat`: extends only the current unexpired lease for the same worker and fencing token.
+- `PUT /v1/projects/{project_id}/jobs/{job_id}/checkpoint`: accepts a strict metadata allowlist (`phase`, `cursor`, `progress`, `completed_steps`, `artifact_ids`); arbitrary text/prompt fields are rejected.
+- `POST /v1/projects/{project_id}/jobs/{job_id}/complete`: commits success and attempt outcome transactionally. An optional `next_agent_role` + `next_job_type` + `next_idempotency_key` creates a follow-up job in the same transaction; artifact references must belong to the same project and source job.
+- `POST /v1/projects/{project_id}/jobs/{job_id}/fail`: records a sanitized error code and applies bounded exponential retry or terminal failure/dead-letter based on retry budget.
+
+A worker that loses its lease must treat the job as cancelled locally: every mutation is rejected unless its worker ID, lease token, job state and unexpired lease all match. The queue is at-least-once; external side effects still require idempotency at the provider boundary.
+
 ## Security and operational invariants
 
 - Tenant scope is enforced structurally by composite foreign keys and must also be enforced in every API query.
 - Lease tokens are fencing tokens, not authentication credentials; workers still require a separate authenticated identity.
 - JSON metadata has explicit type and size bounds. Application-level allowlists and redaction remain mandatory.
-- The event stream is append-oriented by contract. The next API increment must not expose event update/delete routes.
+- The event stream is append-oriented by contract. No event update/delete routes are exposed.
+- The current API is a durable queue protocol, not yet an autonomous execution daemon: no process currently polls this API continuously or invokes specialist models. That worker supervisor/agent adapter is the next increment.
 - Database backups, point-in-time recovery, retention, restore rehearsal, worker concurrency limits, metrics and alerting are separate release gates.
 - The existing runtime runs SQLx migrations at startup. This migration must pass the repository's PostgreSQL-backed container smoke test before the schema is treated as verified.
 
@@ -54,6 +68,7 @@ Every project-owned row carries `project_id`. Composite foreign keys include tha
 
 ## Current status
 
-- Schema migration authored on branch `feat/ush-durable-execution-schema`.
-- CI and PostgreSQL migration execution are pending for the exact branch head.
-- Task/job API, worker claim/heartbeat/checkpoint handlers, recovery sweeper, metrics and dashboards are not implemented in this increment.
+- Schema migration is inherited from `feat/ush-durable-execution-schema`.
+- Queue API and lease lifecycle handlers are implemented on `feat/ush-worker-runtime-core`; exact-head CI and PostgreSQL smoke are pending.
+- Continuous worker supervisor, specialized-agent dispatch, durable artifact upload/download, metrics, alerts and dashboards remain outstanding.
+- No production migration, deployment or provider invocation has occurred.
