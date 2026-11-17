@@ -213,6 +213,12 @@ fn can_access_project(principal: &Principal) -> bool {
     principal.admin || ["owner", "operator", "viewer"].contains(&principal.role.as_str())
 }
 
+fn can_manage_delivery_schedule(principal: &Principal, project_id: &str) -> bool {
+    principal.admin
+        || (["owner", "operator"].contains(&principal.role.as_str())
+            && principal.project_id.as_deref() == Some(project_id))
+}
+
 fn can_manage_project_tokens(principal: &Principal, project_id: &str) -> bool {
     principal.admin
         || (principal.role == "owner" && principal.project_id.as_deref() == Some(project_id))
@@ -1299,7 +1305,7 @@ async fn delivery_recovery_plan(
     Json(request): Json<schedule_recovery::RecoveryRequest>,
 ) -> ApiResult<Json<Value>> {
     let principal = require_operator(&state, &headers).await?;
-    if !principal.admin && principal.project_id.as_deref() != Some(project_id.as_str()) {
+    if !can_manage_delivery_schedule(&principal, &project_id) {
         return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch"));
     }
     let exists = sqlx::query("SELECT id FROM projects WHERE id=$1")
@@ -1503,6 +1509,21 @@ mod tests {
         for invalid in ["../admin", "project/name", "project name", ""] {
             assert!(invalid.is_empty() || !invalid.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)));
         }
+    }
+
+    #[test]
+    fn delivery_schedule_access_is_project_scoped_and_operator_only() {
+        let owner = Principal { actor: "owner".into(), role: "owner".into(), project_id: Some("alpha".into()), admin: false };
+        let operator = Principal { actor: "operator".into(), role: "operator".into(), project_id: Some("alpha".into()), admin: false };
+        let viewer = Principal { actor: "viewer".into(), role: "viewer".into(), project_id: Some("alpha".into()), admin: false };
+        let other_project = Principal { actor: "other".into(), role: "operator".into(), project_id: Some("beta".into()), admin: false };
+        let admin = Principal { actor: "admin".into(), role: "admin".into(), project_id: None, admin: true };
+
+        assert!(can_manage_delivery_schedule(&owner, "alpha"));
+        assert!(can_manage_delivery_schedule(&operator, "alpha"));
+        assert!(!can_manage_delivery_schedule(&viewer, "alpha"));
+        assert!(!can_manage_delivery_schedule(&other_project, "alpha"));
+        assert!(can_manage_delivery_schedule(&admin, "alpha"));
     }
 
     #[test]
