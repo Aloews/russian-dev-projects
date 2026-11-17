@@ -12,7 +12,6 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 const WORKER_VERSION: &str = "0.1.0";
-const LEASE_SECONDS: i64 = 60;
 
 fn parse_job_types(raw: &str) -> anyhow::Result<Vec<String>> {
     let mut types = raw.split(',').map(str::trim).filter(|v| !v.is_empty())
@@ -52,6 +51,8 @@ async fn worker_loop(
     worker_id: String,
     job_types: Vec<String>,
     poll_interval: Duration,
+    lease_seconds: i64,
+    test_pause: Duration,
     mut shutdown: watch::Receiver<bool>,
 ) {
     loop {
@@ -69,9 +70,12 @@ async fn worker_loop(
             }
         }
 
-        match execution_queue::claim_for_types(&pool, &worker_id, LEASE_SECONDS, &job_types).await {
+        match execution_queue::claim_for_types(&pool, &worker_id, lease_seconds, &job_types).await {
             Ok(Some(lease)) => {
                 let job_id = lease.job.id;
+                if !test_pause.is_zero() {
+                    sleep(test_pause).await;
+                }
                 match lease.job.job_type.as_str() {
                     "system_noop" => {
                         let result = json!({
@@ -125,6 +129,8 @@ async fn main() -> anyhow::Result<()> {
 
     let concurrency = bounded_usize("USH_WORKER_CONCURRENCY", 2, 1, 32)?;
     let poll_ms = bounded_usize("USH_WORKER_POLL_MS", 1000, 100, 30_000)?;
+    let lease_seconds = bounded_usize("USH_WORKER_LEASE_SECONDS", 60, 10, 300)? as i64;
+    let test_pause_ms = bounded_usize("USH_WORKER_TEST_PAUSE_AFTER_CLAIM_MS", 0, 0, 120_000)?;
     let job_types = parse_job_types(&env::var("USH_WORKER_JOB_TYPES").unwrap_or_else(|_| "system_noop".into()))?;
     let worker_prefix = env::var("USH_WORKER_ID").unwrap_or_else(|_| "ush-worker".into());
     if worker_prefix.is_empty() || worker_prefix.len() > 100
@@ -133,6 +139,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let production = env::var("USH_ENVIRONMENT").unwrap_or_else(|_| "development".into()) == "production";
+    if production && test_pause_ms > 0 {
+        bail!("USH_WORKER_TEST_PAUSE_AFTER_CLAIM_MS is forbidden in production");
+    }
     let mut connect_options = PgConnectOptions::from_str(&database_url)
         .context("invalid worker database URL")?;
     connect_options = connect_options.ssl_mode(if production { PgSslMode::VerifyFull } else { PgSslMode::Prefer });
@@ -150,10 +159,10 @@ async fn main() -> anyhow::Result<()> {
         let worker_id = format!("{worker_prefix}-{}-{index}", Uuid::new_v4());
         let job_types = job_types.clone();
         let shutdown = shutdown_rx.clone();
-        workers.spawn(worker_loop(pool, worker_id, job_types, poll_interval, shutdown));
+        workers.spawn(worker_loop(pool, worker_id, job_types, poll_interval, lease_seconds, Duration::from_millis(test_pause_ms as u64), shutdown));
     }
 
-    info!(concurrency, poll_ms, job_types = ?job_types, "USH worker supervisor started; provider execution is disabled");
+    info!(concurrency, poll_ms, lease_seconds, job_types = ?job_types, "USH worker supervisor started; provider execution is disabled");
     shutdown_signal().await.context("failed to listen for shutdown signal")?;
     let _ = shutdown_tx.send(true);
     while workers.join_next().await.is_some() {}
