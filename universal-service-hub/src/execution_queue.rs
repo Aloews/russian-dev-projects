@@ -60,6 +60,8 @@ pub struct Job {
 #[derive(Debug, Clone)]
 pub struct Lease {
     pub job: Job,
+    pub payload: Value,
+    pub checkpoint: Value,
     pub worker_id: String,
     pub lease_token: Uuid,
     pub lease_expires_at: DateTime<Utc>,
@@ -153,6 +155,8 @@ pub async fn claim(pool: &PgPool, project_id: &str, worker_id: &str, lease_secon
 
     let Some(row) = row else { tx.commit().await.map_err(|_| QueueError::Database)?; return Ok(None); };
     let job = row_to_job(&row)?;
+    let payload: Value = row.try_get("payload").map_err(|_| QueueError::Database)?;
+    let checkpoint: Value = row.try_get("checkpoint").map_err(|_| QueueError::Database)?;
     sqlx::query(
         "INSERT INTO execution_attempts (project_id,job_id,attempt_number,worker_id,lease_token,status) \
          VALUES ($1,$2,$3,$4,$5,'running')"
@@ -160,7 +164,7 @@ pub async fn claim(pool: &PgPool, project_id: &str, worker_id: &str, lease_secon
      .execute(&mut *tx).await.map_err(|_| QueueError::Database)?;
     let lease_expires_at = row.try_get("lease_expires_at").map_err(|_| QueueError::Database)?;
     tx.commit().await.map_err(|_| QueueError::Database)?;
-    Ok(Some(Lease { job, worker_id: worker_id.to_owned(), lease_token: token, lease_expires_at }))
+    Ok(Some(Lease { job, payload, checkpoint, worker_id: worker_id.to_owned(), lease_token: token, lease_expires_at }))
 }
 
 pub async fn heartbeat(pool: &PgPool, project_id: &str, job_id: Uuid, token: Uuid, lease_seconds: i64) -> Result<DateTime<Utc>, QueueError> {
