@@ -109,15 +109,17 @@ pub async fn enqueue(pool: &PgPool, project_id: &str, request: &EnqueueRequest) 
 }
 
 /// Reconciles expired leases transactionally before new work is claimed.
-pub async fn recover_expired_leases(pool: &PgPool) -> Result<u64, QueueError> {
+pub async fn recover_expired_leases(pool: &PgPool, allowed_job_types: &[String]) -> Result<u64, QueueError> {
     let mut tx = pool.begin().await.map_err(|_| QueueError::Database)?;
     let rows = sqlx::query(
         "SELECT project_id, id, attempt_count, lease_token
          FROM execution_jobs
          WHERE status = 'leased' AND lease_expires_at <= NOW()
+           AND ($1::text[] IS NULL OR job_type = ANY($1))
          ORDER BY lease_expires_at
          FOR UPDATE SKIP LOCKED"
-    ).fetch_all(&mut *tx).await.map_err(|_| QueueError::Database)?;
+    ).bind(if allowed_job_types.is_empty() { None::<Vec<String>> } else { Some(allowed_job_types.to_vec()) })
+     .fetch_all(&mut *tx).await.map_err(|_| QueueError::Database)?;
     for row in &rows {
         let project_id: String = row.try_get("project_id").map_err(|_| QueueError::Database)?;
         let job_id: Uuid = row.try_get("id").map_err(|_| QueueError::Database)?;
