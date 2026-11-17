@@ -622,3 +622,14 @@ The cloud coding workflow was not triggered for these checks because it can call
 - Keep both PRs Draft and unmerged until the live acceptance evidence above is collected.
 - Run live provider checks only on an already available, owner-authorized Ollama runtime; do not create paid infrastructure to manufacture a green result.
 - After PR #49 is integrated, rebase PR #50 onto the resulting `main` and rerun exact-head CI before any merge decision.
+
+
+## Durable Execution Core — first persistence increment
+
+- Branch: `feat/ush-durable-execution-schema`, based on the current PR #70 head `1363106e03f474e260c4f6069e2f5093f11629e6`.
+- Added Rust SQLx migration `rust-migrations/0003_durable_execution.sql` for versioned project plans, tenant-scoped tasks/dependencies, project events, durable execution jobs, fenced leases, attempts, checkpoint metadata, artifact references and approvals.
+- Tenant ownership is represented in every project-owned row and composite foreign keys prevent cross-project references. Partial uniqueness enforces at most one active plan per project. Queue rows have bounded retry counts, unique per-project idempotency keys, lease consistency checks and claim/expired-lease indexes.
+- Payload/checkpoint/event metadata is object-only and size-bounded. The schema stores artifact references and hashes, not file bytes. Prompts, generated content, credentials and raw provider transcripts are explicitly out of scope.
+- Added `docs/DURABLE_EXECUTION.md` with the queue fencing/retry contract and acceptance tests.
+- **Status: IMPLEMENTED IN BRANCH; NOT YET VERIFIED.** Exact-head CI and PostgreSQL 16 migration/container smoke are required. No task/job API, worker, lease claimant, heartbeat/checkpoint handler, recovery sweeper, metrics, dashboard, agent dispatch or production migration is included.
+- Next: run exact-head CI; repair migration issues; then implement transactionally safe enqueue/claim/heartbeat/checkpoint/complete operations with tenant authorization and stale-lease fencing. Only after those pass should a worker loop and monitoring be added.
