@@ -122,7 +122,7 @@ pub async fn claim(pool: &PgPool, project_id: &str, worker_id: &str, lease_secon
             ORDER BY priority DESC, available_at, created_at \
             FOR UPDATE SKIP LOCKED LIMIT 1 \
          ) \
-         UPDATE execution_jobs j SET status='leased', lease_owner=$1, lease_token=$2, \
+         UPDATE execution_jobs j SET status='leased', lease_owner=$2, lease_token=$3, \
             lease_expires_at=NOW() + ($4 * INTERVAL '1 second'), heartbeat_at=NOW(), \
             attempt_count=j.attempt_count+1, updated_at=NOW() \
          FROM candidate c WHERE j.id=c.id RETURNING j.*"
@@ -201,7 +201,7 @@ pub async fn fail(pool: &PgPool, project_id: &str, job_id: Uuid, token: Uuid, er
              ELSE available_at END, \
            lease_owner=NULL, lease_token=NULL, lease_expires_at=NULL, heartbeat_at=NULL, \
            last_error_code=$5, finished_at=CASE WHEN NOT ($4 AND attempt_count < max_attempts) THEN NOW() ELSE NULL END, updated_at=NOW() \
-         WHERE id=$1 AND lease_token=$2 AND status='leased' AND lease_expires_at > NOW() \
+         WHERE project_id=$1 AND id=$2 AND lease_token=$3 AND status='leased' AND lease_expires_at > NOW() \
          RETURNING project_id, attempt_count, status"
     ).bind(project_id).bind(job_id).bind(token).bind(retryable).bind(error_code)
      .fetch_optional(&mut *tx).await.map_err(|_| QueueError::Database)?
