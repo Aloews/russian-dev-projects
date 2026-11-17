@@ -63,7 +63,8 @@ jobs:
       TARGET_REPO: ${{ fromJSON(github.event.issue.body || '{}').target_repo || github.event.inputs.target_repo || 'Aloews/full' }}
       TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc4' }}
       BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
-      OBJECTIVE: ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Deliver AUREL Elite Estate as a functional staging MVP: Neon Auth OTP sign-up/login, agency workspace, property submission with immutable evidence, reviewer approval, public search/detail/enquiry. Use the provisioned Neon staging database and Next.js server route handlers in the existing Vercel project; do not depend on an unprovisioned backend host. Preserve RLS and tenant isolation, verify Neon JWTs through JWKS, enforce public enquiry rate limits and data-retention controls, and add regression/integration tests. Never fabricate listings or partner data. Do not merge or deploy production.' }}
+      OBJECTIVE: >-
+        ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Deliver AUREL Elite Estate as a functional staging MVP: Neon Auth OTP sign-up/login, agency workspace, property submission with immutable evidence, reviewer approval, public search/detail/enquiry. Use the provisioned Neon staging database and Next.js server route handlers in the existing Vercel project; do not depend on an unprovisioned backend host. Preserve RLS and tenant isolation, verify Neon JWTs through JWKS, enforce public enquiry rate limits and data-retention controls, and add regression/integration tests. Never fabricate listings or partner data. Do not merge or deploy production.' }}
 
     steps:
       - name: Check out Product Factory control repository
