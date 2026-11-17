@@ -109,7 +109,50 @@ pub async fn enqueue(pool: &PgPool, project_id: &str, request: &EnqueueRequest) 
 }
 
 /// Atomically leases one due job and records its attempt. The lease token fences stale workers.
+
+/// Reconciles expired leases transactionally before new work is claimed.
+pub async fn recover_expired_leases(pool: &PgPool) -> Result<u64, QueueError> {
+    let mut tx = pool.begin().await.map_err(|_| QueueError::Database)?;
+    let rows = sqlx::query(
+        "UPDATE execution_jobs SET
+            status = CASE WHEN attempt_count < max_attempts THEN 'retry_wait' ELSE 'dead_letter' END,
+            available_at = NOW(),
+            lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
+            last_error_code = 'worker_lease_expired',
+            finished_at = CASE WHEN attempt_count < max_attempts THEN NULL ELSE NOW() END,
+            updated_at = NOW()
+         WHERE status = 'leased' AND lease_expires_at <= NOW()
+         RETURNING project_id, id, attempt_count, lease_token"
+    ).fetch_all(&mut *tx).await.map_err(|_| QueueError::Database)?;
+    for row in &rows {
+        let project_id: String = row.try_get("project_id").map_err(|_| QueueError::Database)?;
+        let job_id: Uuid = row.try_get("id").map_err(|_| QueueError::Database)?;
+        let attempt: i32 = row.try_get("attempt_count").map_err(|_| QueueError::Database)?;
+        let token: Uuid = row.try_get("lease_token").map_err(|_| QueueError::Database)?;
+        let updated = sqlx::query(
+            "UPDATE execution_attempts SET status='lease_expired', finished_at=NOW(),
+             duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint),
+             error_code='worker_lease_expired'
+             WHERE project_id=$1 AND job_id=$2 AND attempt_number=$3 AND lease_token=$4 AND status='running'"
+        ).bind(project_id).bind(job_id).bind(attempt).bind(token)
+         .execute(&mut *tx).await.map_err(|_| QueueError::Database)?;
+        if updated.rows_affected() != 1 { return Err(QueueError::Database); }
+    }
+    tx.commit().await.map_err(|_| QueueError::Database)?;
+    Ok(rows.len() as u64)
+}
+
 pub async fn claim(pool: &PgPool, worker_id: &str, lease_seconds: i64) -> Result<Option<Lease>, QueueError> {
+    claim_for_types(pool, worker_id, lease_seconds, &[]).await
+}
+
+/// Claims only explicitly enabled job types. An empty allowlist preserves the legacy all-types behavior.
+pub async fn claim_for_types(
+    pool: &PgPool,
+    worker_id: &str,
+    lease_seconds: i64,
+    allowed_job_types: &[String],
+) -> Result<Option<Lease>, QueueError> {
     if worker_id.is_empty() || worker_id.len() > 160 || !(5..=3600).contains(&lease_seconds) {
         return Err(QueueError::InvalidInput);
     }
@@ -119,6 +162,7 @@ pub async fn claim(pool: &PgPool, worker_id: &str, lease_seconds: i64) -> Result
         "WITH candidate AS ( \
             SELECT id FROM execution_jobs \
             WHERE status IN ('queued','retry_wait') AND available_at <= NOW() AND attempt_count < max_attempts \
+              AND ($4::text[] IS NULL OR job_type = ANY($4)) \
             ORDER BY priority DESC, available_at, created_at \
             FOR UPDATE SKIP LOCKED LIMIT 1 \
          ) \
@@ -127,6 +171,7 @@ pub async fn claim(pool: &PgPool, worker_id: &str, lease_seconds: i64) -> Result
             attempt_count=j.attempt_count+1, updated_at=NOW() \
          FROM candidate c WHERE j.id=c.id RETURNING j.*"
     ).bind(worker_id).bind(token).bind(lease_seconds)
+     .bind(if allowed_job_types.is_empty() { None::<Vec<String>> } else { Some(allowed_job_types.to_vec()) })
      .fetch_optional(&mut *tx).await.map_err(|_| QueueError::Database)?;
 
     let Some(row) = row else { tx.commit().await.map_err(|_| QueueError::Database)?; return Ok(None); };
