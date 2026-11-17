@@ -36,7 +36,7 @@ GRANT UPDATE (status, finished_at, duration_ms, error_code, result_metadata)
   ON execution_attempts TO ush_worker;
 ```
 
-Use a unique strong password, TLS and a connection string stored in the deployment secret manager. The example assumes the database name is `ush`; adapt it to the isolated environment. The worker must not receive project-token, provider-secret or administrator credentials.
+Use a unique strong password, TLS and a connection string stored in the deployment secret manager. The example assumes the database name is `ush`; adapt it to the isolated environment. The worker must not receive project-token, provider-secret or administrator credentials. The current queue-only role can observe bounded queue metadata across projects; it must remain restricted to the `system_noop` capability. Do not enable customer task types until project-scoped worker authorization or PostgreSQL row-level security is implemented and independently tested. The worker query does not select job payloads, checkpoints, prompts or generated content.
 
 ## Configuration
 
