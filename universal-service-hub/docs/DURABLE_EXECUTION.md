@@ -2,7 +2,7 @@
 
 ## Delivery boundary
 
-This increment adds the PostgreSQL persistence contract for project plans and task execution. It does **not** yet expose task CRUD, enqueue jobs, claim leases, run workers, invoke agents/providers, or enable automatic schedule mutation. The schema is intentionally deployed only through the existing Rust SQLx migration path.
+This increment adds the PostgreSQL persistence contract for project plans and task execution. The follow-on queue API now exposes tenant-scoped enqueue/list/claim/heartbeat/checkpoint/complete/fail operations and a bounded expired-lease recovery sweep. It does **not** yet run agent/provider workers, expose task CRUD, or enable automatic schedule mutation. The schema is intentionally deployed only through the existing Rust SQLx migration path.
 
 ## Data model
 
@@ -56,4 +56,16 @@ Every project-owned row carries `project_id`. Composite foreign keys include tha
 
 - Schema migration authored on branch `feat/ush-durable-execution-schema`.
 - CI and PostgreSQL migration execution are pending for the exact branch head.
-- Task/job API, worker claim/heartbeat/checkpoint handlers, recovery sweeper, metrics and dashboards are not implemented in this increment.
+- Queue API handlers are implemented on the follow-on branch `feat/ush-durable-queue-api`; exact-head CI and PostgreSQL-backed API tests are pending.
+- Routes:
+  - `POST /v1/projects/{project_id}/jobs` — enqueue with project-scoped idempotency.
+  - `GET /v1/projects/{project_id}/jobs?limit=50` — list bounded job metadata.
+  - `POST /v1/projects/{project_id}/jobs/claim` — claim one due job; returns a lease token.
+  - `POST /v1/projects/{project_id}/jobs/{job_id}/heartbeat` — renew a live lease.
+  - `POST /v1/projects/{project_id}/jobs/{job_id}/checkpoint` — persist bounded checkpoint metadata.
+  - `POST /v1/projects/{project_id}/jobs/{job_id}/complete` — complete the current attempt.
+  - `POST /v1/projects/{project_id}/jobs/{job_id}/fail` — retry with bounded backoff or dead-letter.
+- Every API operation is authenticated and project-scoped. Job mutation additionally requires owner/operator access; every lease mutation compares project ID, job ID and the current random fencing token.
+- A runtime sweep runs every 15 seconds and recovers at most 100 expired leases per pass. Exhausted attempts move to `dead_letter`; retryable attempts return to `retry_wait`.
+- Payload/checkpoint/result metadata is object-only, size-bounded and rejects common sensitive field names. This is a defense-in-depth filter, not a guarantee that arbitrary strings contain no personal data.
+- Agent/provider worker execution, external provider idempotency, artifact upload, task CRUD, metrics, dashboards and restore rehearsal remain unimplemented release gates.
