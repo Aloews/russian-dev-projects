@@ -30,7 +30,7 @@ SQL
 curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects" -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" -d "{\"id\":\"$project_id\",\"name\":\"Worker runtime smoke $suffix\",\"allowed_capabilities\":[\"ai.chat\"],\"allowed_provider_ids\":[]}" >/dev/null
 curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects/$project_id/jobs" -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" -d "{\"idempotency_key\":\"$idempotency_key\",\"job_type\":\"system_noop\",\"agent_role\":\"integrator\"}" >/dev/null
 
-crash_container=$(compose run -d --no-deps -e "USH_WORKER_DATABASE_URL=postgres://ush_worker:$worker_password@postgres:5432/ush" -e "USH_WORKER_ID=ci-crash-worker" -e "USH_WORKER_CONCURRENCY=1" -e "USH_WORKER_POLL_MS=200" -e "USH_WORKER_LEASE_SECONDS=10" -e "USH_WORKER_TEST_PAUSE_AFTER_CLAIM_MS=30000" -e "USH_WORKER_JOB_TYPES=system_noop" --entrypoint /app/ush-worker hub)
+crash_container=$(compose run -d --no-deps -e "USH_WORKER_DATABASE_URL=postgres://ush_worker:$worker_password@postgres:5432/ush" -e "USH_WORKER_ID=ci-crash-worker" -e "USH_WORKER_CONCURRENCY=1" -e "USH_WORKER_POLL_MS=200" -e "USH_WORKER_LEASE_SECONDS=10" -e "USH_WORKER_TEST_PAUSE_AFTER_CLAIM_MS=30000" -e "USH_WORKER_JOB_TYPES=system_noop" worker)
 
 job_status=""
 for _ in $(seq 1 30); do
@@ -45,7 +45,7 @@ crash_exit=$(docker wait "$crash_container" || true)
 if [[ "$crash_exit" != "137" ]]; then echo "expected SIGKILL exit 137, got $crash_exit" >&2; exit 1; fi
 sleep 11
 
-restart_container=$(compose run -d --no-deps -e "USH_WORKER_DATABASE_URL=postgres://ush_worker:$worker_password@postgres:5432/ush" -e "USH_WORKER_ID=ci-restarted-worker" -e "USH_WORKER_CONCURRENCY=1" -e "USH_WORKER_POLL_MS=200" -e "USH_WORKER_LEASE_SECONDS=10" -e "USH_WORKER_JOB_TYPES=system_noop" --entrypoint /app/ush-worker hub)
+restart_container=$(compose run -d --no-deps -e "USH_WORKER_DATABASE_URL=postgres://ush_worker:$worker_password@postgres:5432/ush" -e "USH_WORKER_ID=ci-restarted-worker" -e "USH_WORKER_CONCURRENCY=1" -e "USH_WORKER_POLL_MS=200" -e "USH_WORKER_LEASE_SECONDS=10" -e "USH_WORKER_JOB_TYPES=system_noop" worker)
 
 verified=false
 for _ in $(seq 1 30); do
