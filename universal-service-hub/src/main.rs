@@ -626,6 +626,9 @@ async fn transition_engineering_task(
     task_project_scope(&state, &principal, &project_id, true).await?;
     let next = task_state::TaskStatus::parse(&body.next_status)
         .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "unknown_task_status"))?;
+    if next == task_state::TaskStatus::Verified {
+        return Err(ApiError(StatusCode::FORBIDDEN, "verification_requires_independent_reviewer"));
+    }
     let row = sqlx::query("SELECT status,version FROM engineering_tasks WHERE id=$1 AND project_id=$2")
         .bind(&task_id).bind(&project_id).fetch_optional(&mut *tx).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "task_lookup_failed"))?;
