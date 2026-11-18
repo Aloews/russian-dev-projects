@@ -526,3 +526,11 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Root cause: the smoke fixture attempted to move a task directly from `planned` to `queued` while setting `queue="test"`. The state machine permits `planned -> queued`, but the test consumer only claims `queued_test`; queue and status were inconsistent, and the fixture skipped the implementation-to-test handoff.
 - Corrected the fixture to use a valid lifecycle: `received -> classified -> planned -> queued`, claim from the implementation queue, transition to `queued_test`, then claim from the test queue. The state machine and queue semantics were not weakened.
 - New workflow fixture commit: `54f1b9a895e9c8c2246f7ff92bb0187baba9c018`. Exact-head CI is still required.
+
+
+### Exact-head verification — 2026-11-18
+
+- PR #64 head `38562a96c4c48006c97fe5a74cd3e1daac60ee71` passed workflow run [#44352404767](https://github.com/Aloews/russian-dev-projects/actions/runs/44352404767) (`universal-service-hub-ci`).
+- The single CI job completed all 47 steps successfully, including Product Factory syntax/safety/contract checks, Rust format/Clippy/tests, restricted-role and migration checks, Python checks, Docker build, Compose startup and container smoke test.
+- The container smoke test passed after correcting the fixture to follow the real implementation-to-test lifecycle. This is exact-head CI evidence only; it does not prove persistent Git worktree execution, a live Railway worker, production deployment, external tenant onboarding or self-hosting.
+- PR #64 remains draft and unmerged. Next: implement the real isolated workspace/worktree executor and connect the existing task API to a resumable worker adapter.
