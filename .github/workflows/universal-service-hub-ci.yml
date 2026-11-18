@@ -632,10 +632,10 @@ jobs:
               echo "Reviewer assignment release HTTP status: $reviewer_assignment_release_status"
               cat /tmp/ush-reviewer-assignment-release.json || true
               test "$reviewer_assignment_release_status" = "204"
+              curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$workspace_id/release" \
+                -H "Authorization: Bearer $worker_token" -H "Content-Type: application/json" \
+                -d "$(jq -nc --arg worker_id "$worker_id" --arg lease_token "$workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
             fi
-            curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$workspace_id/release" \
-              -H "Authorization: Bearer $worker_token" -H "Content-Type: application/json" \
-              -d "$(jq -nc --arg worker_id "$worker_id" --arg lease_token "$workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
           done
 
           curl -fsS -H "Authorization: Bearer $owner_token" \
