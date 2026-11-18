@@ -239,6 +239,11 @@ jobs:
           echo "Runtime DB role visibility for tenant-beta: ${app_visible_tenant:-<not-visible>}"
           test "$app_visible_tenant" = "active"
 
+          verification_evidence_controls=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -Atc "SELECT c.relrowsecurity AND c.relforcerowsecurity AND has_table_privilege('ush_runtime','engineering_task_verification_evidence','SELECT') AND has_table_privilege('ush_runtime','engineering_task_verification_evidence','INSERT') AND NOT has_table_privilege('ush_runtime','engineering_task_verification_evidence','UPDATE') AND NOT has_table_privilege('ush_runtime','engineering_task_verification_evidence','DELETE') FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='engineering_task_verification_evidence'")
+          echo "Trusted verification evidence RLS/runtime grants: $verification_evidence_controls"
+          test "$verification_evidence_controls" = "t"
+
           tenant_beta_http=$(curl -sS -o /tmp/tenant-beta-token-response.json -w "%{http_code}" -X POST http://127.0.0.1:8000/v1/tenants/tenant-beta/tokens \
             -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
             -d '{"name":"beta-owner","role":"tenant_owner"}')
