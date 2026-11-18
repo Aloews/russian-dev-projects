@@ -634,3 +634,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - A regression review found that the helper still allowed `pull_request` source runs whenever the PR base was an allowlisted branch. This is unsafe because a PR can modify its own CI workflow and produce a success result without executing the trusted pipeline.
 - The source-run policy now accepts only `push` and `workflow_dispatch` events on exact configured protected branches. Regression tests explicitly reject a same-repository PR targeting `main`; the post-CI caller skips PR events before requesting OIDC.
 - No production secrets or worker settings changed. Exact-head CI must validate this fail-closed policy before trusted evidence can be enabled.
+
+
+### Attestation hash task-resolution ordering — 2026-11-18
+
+- Moved attestation-hash construction until after the Hub resolves the unique review task by project, candidate SHA, repository and optional issue number. The hash now includes the resolved task ID without referencing an uninitialized local.
+- Added explicit positive coverage for protected-branch `workflow_dispatch` evidence while keeping `pull_request` rejected.
+- Exact-head Rust and container CI must validate this correction; no production changes were made.
