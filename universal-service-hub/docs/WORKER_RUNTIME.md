@@ -91,3 +91,6 @@ This API is a durable artifact primitive, not yet a complete agent handoff: work
 - Uploads require a stable per-job idempotency key. A retry with identical artifact type, media type, size and SHA-256 returns the original artifact ID; conflicting reuse returns HTTP 409.
 - The worker endpoint retains the existing 2 MiB request cap. It does not grant workers access to S3, provider credentials, project tokens or administrator credentials.
 - Verification gate: exact-head Rust tests, PostgreSQL migration smoke and runtime smoke for wrong/valid lease capabilities. Successful end-to-end S3 upload from a worker remains gated on a configured S3-compatible integration service and is not claimed by this increment.
+
+
+**Runtime integration boundary:** this increment adds the Hub-side upload endpoint and validates its lease capability in PostgreSQL. The current `ush-worker` binary still executes only `system_noop` and is not yet wired to call this endpoint. Worker-side HTTP transfer and a successful MinIO/S3 runtime upload remain separate acceptance tasks; do not mark end-to-end artifact handoff operational yet.
