@@ -23,8 +23,8 @@ on:
         description: Exact 40-character commit SHA being verified
         required: true
         type: string
-      artifact_digest:
-        description: SHA-256 digest of the build/test artifact being verified
+      artifact_name:
+        description: Exact artifact name uploaded by this workflow run
         required: true
         type: string
 
@@ -37,6 +37,33 @@ jobs:
       actions: read
       id-token: write
     steps:
+      - name: Resolve trusted artifact digest
+        id: artifact
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_NAME" =~ ^[A-Za-z0-9._-]{1,128}$ ]]
+          artifacts_json=$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts")
+          artifact_digest=$(jq --exit-status --raw-output --arg name "$ARTIFACT_NAME" \
+            '[.artifacts[] | select(.name == $name and .expired == false)] | if length == 1 then .[0].digest else error("expected exactly one unexpired artifact with this name") end' \
+            <<< "$artifacts_json")
+          [[ "$artifact_digest" =~ ^sha256:[a-fA-F0-9]{64}$ ]]
+          echo "digest=$artifact_digest" >> "$GITHUB_OUTPUT"
+          unset artifacts_json
+
+      - name: Download and verify artifact archive
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ runner.temp }}/ush-verification-artifact
+          digest-mismatch: error
+
       - name: Submit signed GitHub Actions evidence to the Hub
         shell: bash
         env:
@@ -45,7 +72,7 @@ jobs:
           PROJECT_ID: ${{ inputs.project_id }}
           TASK_ID: ${{ inputs.task_id }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          ARTIFACT_DIGEST: ${{ inputs.artifact_digest }}
+          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.digest }}
         run: |
           set -euo pipefail
           [[ "$HUB_BASE_URL" =~ ^https://[^/]+(/[^?#]*)?$ ]]
@@ -53,9 +80,10 @@ jobs:
           [[ "$PROJECT_ID" =~ ^[A-Za-z0-9_-]{1,80}$ ]]
           [[ "$TASK_ID" =~ ^[A-Za-z0-9_-]{1,80}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
-          [[ "$ARTIFACT_DIGEST" =~ ^sha256:[a-fA-F0-9]{64}$ ]]
           [[ "$GITHUB_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
           [[ "${GITHUB_SHA,,}" == "${CANDIDATE_SHA,,}" ]]
+          [[ "$ARTIFACT_DIGEST" =~ ^sha256:[a-fA-F0-9]{64}$ ]]
+          test -n "$(find "${{ runner.temp }}/ush-verification-artifact" -type f -print -quit)"
           test -n "$ACTIONS_ID_TOKEN_REQUEST_URL"
           test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
 
