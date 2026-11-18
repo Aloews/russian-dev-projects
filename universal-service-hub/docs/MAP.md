@@ -594,3 +594,11 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Added reusable workflow `.github/workflows/ush-trusted-verify.yml` with least-privilege `id-token: write` and `actions: read`, short-lived token request, exact candidate SHA check and direct evidence submission. Added blank example configuration and operator setup notes. The reusable workflow must be pinned to its merged immutable SHA and exact ref before the server allowlist can be enabled.
 - The evidence record now requires the SHA-256 artifact digest and persists GitHub run start/completion timestamps alongside repository/workflow/ref/SHA/run identity. The reusable workflow requires the digest from the calling build/test pipeline and verifies that the Hub stored the same value.
 - Not yet complete: a real signed-token end-to-end round-trip from a project pipeline, exact-head CI, and adversarial disposable-Postgres tests. Existing fail-closed behavior remains until those gates pass. No production config or workers changed.
+
+
+
+### Repository identity path-segment hardening — 2026-11-18
+
+- Exact-head CI run #44382077304 failed in Rust tests: `valid_github_repository("../russian-dev-projects")` incorrectly returned true because the character allowlist permitted dot-only owner segments.
+- Updated the validator to reject owner/name segments exactly equal to `.` or `..`; added regression assertions for both owner and repository-name positions. This prevents path-segment traversal while retaining normal GitHub owner/repository characters.
+- The new base-head CI is required before stacking further UHS work; no PR is merged and no production configuration changed.
