@@ -679,5 +679,5 @@ The cloud coding workflow was not triggered for these checks because it can call
 ## Worker runtime and artifact storage
 
 - Worker Supervisor v1: `src/bin/ush-worker.rs`, `src/execution_queue.rs`; limited to `system_noop` until project-scoped execution authorization and provider budgets are complete.
-- Artifact adapter: `src/artifact_store.rs`; bounded S3-compatible upload/delete, UUID-derived keys and SHA-256 metadata. Not yet integrated with the execution API or artifact manifest transaction.
+- Artifact adapter/API: `src/artifact_store.rs`, project-scoped upload/download handlers, generated UUID keys, SHA-256 verification, DB manifest/content-type and compensating cleanup. 2 MiB HTTP limit. Worker-to-worker handoff remains not integrated.
 - Workspaces/Git worktrees remain next after durable artifact handoff and specialist dispatcher gates.
