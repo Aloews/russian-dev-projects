@@ -551,3 +551,15 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Updated the container smoke fixture to assert that exact 403/error response and then verify the task remains in `review` with its candidate SHA unchanged. This explicitly tests that an agent cannot self-certify verification.
 - New workflow fixture commit: `95cda9909247c6c4168a8ac4e041c8238b7a026c`. Exact-head CI has been triggered; its result is pending.
 - Positive verification remains intentionally unavailable until Issue #83 implements trusted GitHub Actions OIDC evidence ingestion plus independent review.
+
+
+### Trusted GitHub Actions verification — implementation in progress
+
+- New feature branch `feat/ush-trusted-github-verification-20261118` adds SQL migration `0011_trusted_github_verification.sql`, a dedicated OIDC ingestion endpoint, and a trusted-run verifier.
+- OIDC checks include GitHub JWKS signature, fixed issuer, configured audience, expiry/nbf, subject, repository, branch ref, event, allowlisted `job_workflow_ref` and exact `job_workflow_sha` pin.
+- The Hub independently fetches the Actions run from GitHub's API and requires exact repository, caller workflow path, branch, event, run ID/attempt, completed status, success conclusion and candidate SHA.
+- Evidence receipts are tenant-scoped, append-only for runtime users, unique by repository/run/attempt/task, and bound by a database trigger to the task's repository and candidate SHA. Runtime role has SELECT/INSERT only; RLS is forced.
+- Reviewer completion is re-enabled only behind the persisted trusted evidence lookup, exact candidate pin, empty writer scope and distinct implementation/reviewer identity.
+- Added unit tests for repository/workflow allowlisting, reusable-workflow SHA pinning, exact run metadata, failure/replay mismatch and numeric/string run claims; migration contract tests; container smoke checks for RLS and restricted grants.
+- Required configuration: `USH_GITHUB_OIDC_AUDIENCE`, `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS`, `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA`; optional `USH_GITHUB_API_TOKEN` for API rate limits/private run lookup.
+- Not yet complete: trusted reusable workflow wiring, real signed-token end-to-end test, artifact digest capture, exact-head CI and adversarial disposable-Postgres tests. Existing fail-closed behavior remains until those gates pass. No production config or workers changed.
