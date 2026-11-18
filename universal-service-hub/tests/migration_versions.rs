@@ -53,6 +53,9 @@ fn trusted_github_verification_migration_is_tenant_scoped_and_immutable() {
         "ush_prevent_verification_evidence_update",
         "conclusion = 'success'",
         "job_workflow_sha",
+        "run_started_at",
+        "run_completed_at",
+        "artifact_digest VARCHAR(71) NOT NULL",
     ] {
         assert!(
             migration.contains(required),
