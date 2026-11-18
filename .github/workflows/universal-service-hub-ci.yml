@@ -81,13 +81,20 @@ jobs:
           import subprocess
 
           lines = Path(".github/workflows/ush-trusted-verify.yml").read_text().splitlines()
-          marker = next(i for i, line in enumerate(lines) if line == "        run: |")
-          script = []
-          for line in lines[marker + 1:]:
-              if line and not line.startswith("          "):
-                  break
-              script.append(line[10:] if line.startswith("          ") else "")
-          subprocess.run(["bash", "-n"], input="\n".join(script) + "\n", text=True, check=True)
+          scripts = []
+          for marker, line in enumerate(lines):
+              if line != "        run: |":
+                  continue
+              script = []
+              for body_line in lines[marker + 1:]:
+                  if body_line and not body_line.startswith("          "):
+                      break
+                  script.append(body_line[10:] if body_line.startswith("          ") else "")
+              scripts.append("\n".join(script) + "\n")
+          if not scripts:
+              raise SystemExit("trusted workflow contains no inline run scripts")
+          for script in scripts:
+              subprocess.run(["bash", "-n"], input=script, text=True, check=True)
           PY
       - name: Product Factory Python agent syntax
         working-directory: .
