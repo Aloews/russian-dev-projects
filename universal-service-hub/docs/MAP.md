@@ -558,3 +558,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Exact-head run `44364315855` confirmed the reviewer self-verification rejection assertion passed; the container smoke then failed during cleanup because it tried to release a workspace while its still-live task assignment remained active. The API correctly returned `active_task_workspace_assignment_must_be_released` (HTTP 409).
 - Corrected the smoke cleanup to call the worker-scoped task workspace-assignment DELETE endpoint with both live lease tokens before releasing each workspace. This preserves the runtime's lease/assignment safety invariant; no application behavior was weakened.
 - Workflow fixture commit: `88b22195f05b1711f6113d914d4426b741825770`. Exact-head run pending.
+
+
+### Workspace cleanup follow-up — 2026-11-18
+
+- Exact-head run `44366947192` passed Rust format, lint and unit tests, then failed in container smoke cleanup. The implementation and tester completion paths already release their workspace assignments transactionally; the smoke fixture redundantly tried to DELETE those assignments using task lease tokens that had correctly been cleared at completion, producing HTTP 409.
+- Updated cleanup to issue the explicit assignment DELETE only for the reviewer, whose attempted verification is intentionally rejected and therefore leaves its read-only assignment active. Implementer/tester assignments continue to be released by task completion; all workspaces are then released with their own lease tokens.
+- Workflow fixture commit: `c914e2c51109b921ac9f5e581d3630907102157b`. Exact-head CI pending.
