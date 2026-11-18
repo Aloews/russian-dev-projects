@@ -3562,13 +3562,15 @@ mod integration_security_tests {
         retry["attestation_run_attempt"]=json!(2);
         let source=json!({"id":200,"run_attempt":1,"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc"});
         let digest=format!("sha256:{}", "d".repeat(64));
-        let first=github_verification_receipt_hash(&identity,&source,&digest,"task-1");
-        let second=github_verification_receipt_hash(&retry,&source,&digest,"task-1");
+        let first=github_verification_receipt_hash(&identity,&source,Some(digest.as_str()),"task-1");
+        let second=github_verification_receipt_hash(&retry,&source,Some(digest.as_str()),"task-1");
         assert_eq!(first,second);
-        assert_ne!(first,github_verification_receipt_hash(&retry,&source,&format!("sha256:{}", "e".repeat(64)),"task-1"));
+        let changed_digest=format!("sha256:{}", "e".repeat(64));
+        assert_ne!(first,github_verification_receipt_hash(&retry,&source,Some(changed_digest.as_str()),"task-1"));
+        assert_ne!(first,github_verification_receipt_hash(&retry,&source,None,"task-1"));
         let mut changed_workflow=retry.clone();
         changed_workflow["job_workflow_sha"]=json!("ffffffffffffffffffffffffffffffffffffffff");
-        assert_ne!(first,github_verification_receipt_hash(&changed_workflow,&source,&digest,"task-1"));
+        assert_ne!(first,github_verification_receipt_hash(&changed_workflow,&source,Some(digest.as_str()),"task-1"));
     }
 
     #[test]
