@@ -1741,12 +1741,6 @@ async fn release_engineering_task_path_locks(
     Ok(Json(json!({"task_id":task_id,"released":result.rows_affected()})))
 }
 
-#[derive(Deserialize)]
-struct GithubActionsEvidenceBody {
-    #[serde(default)]
-    artifact_digest: Option<String>,
-}
-
 fn claim_string<'a>(claims: &'a Value, key: &str) -> ApiResult<&'a str> {
     claims.get(key).and_then(Value::as_str)
         .filter(|value| !value.is_empty())
@@ -1782,6 +1776,28 @@ fn github_workflow_path(workflow_ref: &str, repository: &str) -> Option<String> 
         return None;
     }
     Some(path.to_owned())
+}
+
+fn github_actions_run_matches(
+    run: &Value,
+    repository: &str,
+    workflow_path: &str,
+    git_ref: &str,
+    event_name: &str,
+    sha: &str,
+    run_id: u64,
+    run_attempt: u64,
+) -> bool {
+    let expected_branch=git_ref.strip_prefix("refs/heads/").unwrap_or("");
+    run.get("id").and_then(Value::as_u64)==Some(run_id)
+        && run.get("run_attempt").and_then(Value::as_u64)==Some(run_attempt)
+        && run.get("status").and_then(Value::as_str)==Some("completed")
+        && run.get("conclusion").and_then(Value::as_str)==Some("success")
+        && run.get("event").and_then(Value::as_str)==Some(event_name)
+        && run.get("head_sha").and_then(Value::as_str).is_some_and(|value|value.eq_ignore_ascii_case(sha))
+        && run.pointer("/head_repository/full_name").and_then(Value::as_str)==Some(repository)
+        && run.get("path").and_then(Value::as_str)==Some(workflow_path)
+        && run.get("head_branch").and_then(Value::as_str)==Some(expected_branch)
 }
 
 async fn verify_github_actions_run(
@@ -1866,21 +1882,7 @@ async fn verify_github_actions_run(
         .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_lookup_failed"))?
         .json::<Value>().await
         .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_response_invalid"))?;
-    let run_repository=run.pointer("/head_repository/full_name").and_then(Value::as_str);
-    let run_path=run.get("path").and_then(Value::as_str);
-    let run_branch=run.get("head_branch").and_then(Value::as_str);
-    let expected_branch=git_ref.strip_prefix("refs/heads/").unwrap_or("");
-    let run_id_matches=run.get("id").and_then(Value::as_u64)==Some(run_id);
-    let run_attempt_matches=run.get("run_attempt").and_then(Value::as_u64)==Some(run_attempt);
-    if !run_id_matches
-        || !run_attempt_matches
-        || run.get("status").and_then(Value::as_str)!=Some("completed")
-        || run.get("conclusion").and_then(Value::as_str)!=Some("success")
-        || run.get("event").and_then(Value::as_str)!=Some(event_name)
-        || run.get("head_sha").and_then(Value::as_str).is_none_or(|value|!value.eq_ignore_ascii_case(sha))
-        || run_repository!=Some(repository)
-        || run_path!=Some(workflow_path.as_str())
-        || run_branch!=Some(expected_branch) {
+    if !github_actions_run_matches(&run,repository,&workflow_path,git_ref,event_name,sha,run_id,run_attempt) {
         return Err(ApiError(StatusCode::CONFLICT,"github_actions_run_not_successful_or_mismatched"));
     }
     Ok(json!({
@@ -1900,7 +1902,6 @@ async fn ingest_github_actions_evidence(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((project_id,task_id)): Path<(String,String)>,
-    Json(_body): Json<GithubActionsEvidenceBody>,
 ) -> ApiResult<Json<Value>> {
     let token=bearer(&headers)?;
     let attestation=verify_github_actions_run(&state,token).await?;
