@@ -5,6 +5,7 @@ use aws_credential_types::Credentials;
 use aws_sdk_s3::{config::{Builder, Region}, primitives::ByteStream, Client};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+use sqlx::PgPool;
 
 const DEFAULT_MAX_ARTIFACT_BYTES: usize = 20 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES: usize = 100 * 1024 * 1024;
@@ -19,6 +20,7 @@ pub struct ArtifactStore {
 
 #[derive(Debug, Clone)]
 pub struct StoredArtifact {
+    pub artifact_id: Uuid,
     pub object_key: String,
     pub sha256: String,
     pub size_bytes: usize,
@@ -106,14 +108,52 @@ impl ArtifactStore {
             .metadata("sha256", sha256.clone())
             .metadata("project_id", project_id.to_owned())
             .metadata("job_id", job_id.to_string())
+            .server_side_encryption(aws_sdk_s3::types::ServerSideEncryption::Aes256)
             .body(ByteStream::from(bytes.to_vec()))
             .send().await.context("artifact upload failed")?;
         Ok(StoredArtifact {
+            artifact_id,
             object_key,
             sha256,
             size_bytes: bytes.len(),
             content_type: content_type.to_owned(),
         })
+    }
+
+    pub async fn put_and_register(
+        &self,
+        pool: &PgPool,
+        project_id: &str,
+        job_id: Uuid,
+        task_id: Option<Uuid>,
+        artifact_type: &str,
+        content_type: &str,
+        bytes: &[u8],
+    ) -> anyhow::Result<StoredArtifact> {
+        if artifact_type.is_empty() || artifact_type.len() > 48
+            || !artifact_type.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c)) {
+            bail!("invalid artifact type");
+        }
+        let stored = self.put(project_id, job_id, content_type, bytes).await?;
+        let result = sqlx::query(
+            "INSERT INTO execution_artifacts (id, project_id, job_id, task_id, artifact_type, storage_backend, storage_key, content_sha256, size_bytes) VALUES ($1, $2, $3, $4, $5, 's3', $6, $7, $8)"
+        )
+            .bind(stored.artifact_id)
+            .bind(project_id)
+            .bind(job_id)
+            .bind(task_id)
+            .bind(artifact_type)
+            .bind(&stored.object_key)
+            .bind(&stored.sha256)
+            .bind(stored.size_bytes as i64)
+            .execute(pool).await;
+        if let Err(error) = result {
+            if let Err(cleanup_error) = self.delete(&stored.object_key).await {
+                tracing::error!(artifact_id = %stored.artifact_id, error = ?cleanup_error, "artifact cleanup after metadata failure failed");
+            }
+            return Err(error).context("artifact metadata registration failed");
+        }
+        Ok(stored)
     }
 
     pub async fn delete(&self, object_key: &str) -> anyhow::Result<()> {
