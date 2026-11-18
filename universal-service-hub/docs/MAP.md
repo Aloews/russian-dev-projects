@@ -542,3 +542,12 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - The latest code change removes positive completion rights from builder, tester and reviewer worker tokens. They can report `blocked` or `recovery`, but cannot advance a task to a passed-build/test state or `verified`. The ordinary user transition API already rejects `verified`.
 - This is an intentional fail-closed gate, not a completed evidence pipeline. The next implementation must add a separate trusted GitHub Actions identity path (OIDC issuer/audience/repository/workflow validation), bind evidence to the exact candidate SHA and run attempt, persist the workflow conclusion and artifact digest, and only then allow an independent reviewer decision to mark the task verified.
 - Until that trusted evidence path exists, the Hub must not advertise a task as verified based only on agent metadata. Exact-head CI for this hardening change is pending.
+
+
+### Reviewer self-verification smoke correction — 2026-11-18
+
+- Exact-head CI `44360949183` failed only in the container smoke test because the fixture still expected a reviewer worker to transition a task to `verified` using self-reported `decision=approved` JSON.
+- The API correctly returned HTTP 403 with `trusted_verification_evidence_required`; this confirms the new fail-closed control is working. The application was healthy and the failure was an obsolete test expectation, not a runtime startup or database error.
+- Updated the container smoke fixture to assert that exact 403/error response and then verify the task remains in `review` with its candidate SHA unchanged. This explicitly tests that an agent cannot self-certify verification.
+- New workflow fixture commit: `95cda9909247c6c4168a8ac4e041c8238b7a026c`. Exact-head CI has been triggered; its result is pending.
+- Positive verification remains intentionally unavailable until Issue #83 implements trusted GitHub Actions OIDC evidence ingestion plus independent review.
