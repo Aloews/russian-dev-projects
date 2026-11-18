@@ -199,7 +199,7 @@ jobs:
             --data "$(jq -nc --arg digest "${ARTIFACT_DIGEST,,}" \
               --arg sha "${CANDIDATE_SHA,,}" --arg run "$SOURCE_RUN_ID" \
               --arg attempt "$SOURCE_RUN_ATTEMPT" --arg issue "$SOURCE_ISSUE_NUMBER" \
-              '{candidate_sha:$sha,source_run_id:($run|tonumber),source_run_attempt:($attempt|tonumber)} + (if $digest == "" then {} else {artifact_digest:$digest} end) + (if $issue == "" then {} else {source_issue_number:($issue|tonumber)} end)'
+              '{candidate_sha:$sha,source_run_id:($run|tonumber),source_run_attempt:($attempt|tonumber)} + (if $digest == "" then {} else {artifact_digest:$digest} end) + (if $issue == "" then {} else {source_issue_number:($issue|tonumber)} end)')" \
             "$HUB_BASE_URL/v1/projects/$PROJECT_ID/verification/github-actions" \
             | jq --exit-status --arg sha "${CANDIDATE_SHA,,}" \
                 'select(.candidate_sha == $sha and (.conclusion == "success" or .conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "neutral" or .conclusion == "skipped" or .conclusion == "stale" or .conclusion == "startup_failure") and (.evidence_id | type == "string" and length > 0))'
