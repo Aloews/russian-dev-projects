@@ -289,6 +289,7 @@ mod tests {
     async fn test_store(server: &wiremock::MockServer, max_bytes: usize) -> ArtifactStore {
         let credentials = Credentials::new("test-access-key", "test-secret-key", None, None, "ush-test");
         let config = Builder::new()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
             .region(Region::new("us-east-1"))
             .credentials_provider(credentials)
             .endpoint_url(server.uri())
