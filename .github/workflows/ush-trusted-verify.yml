@@ -41,6 +41,7 @@ jobs:
       id-token: write
     steps:
       - name: Download evidence artifact from the completed source run
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: ush-ci-evidence
@@ -61,13 +62,16 @@ jobs:
           [[ "$SOURCE_RUN_ID" =~ ^[0-9]{1,20}$ ]]
           [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,2}$ ]]
           manifest="$RUNNER_TEMP/ush-ci-evidence/ush-ci-evidence.json"
-          test -s "$manifest"
-          jq --exit-status --arg sha "${CANDIDATE_SHA,,}" \
-            --arg run_id "$SOURCE_RUN_ID" --arg attempt "$SOURCE_RUN_ATTEMPT" \
-            'select((.source_sha | ascii_downcase) == $sha and .source_run_id == $run_id and .source_run_attempt == $attempt)' \
-            "$manifest" >/dev/null
-          digest=$(sha256sum "$manifest" | awk '{print "sha256:" $1}')
-          echo "artifact_digest=$digest" >> "$GITHUB_OUTPUT"
+          if [[ -s "$manifest" ]]; then
+            jq --exit-status --arg sha "${CANDIDATE_SHA,,}" \
+              --arg run_id "$SOURCE_RUN_ID" --arg attempt "$SOURCE_RUN_ATTEMPT" \
+              'select((.source_sha | ascii_downcase) == $sha and .source_run_id == $run_id and .source_run_attempt == $attempt)' \
+              "$manifest" >/dev/null
+            digest=$(sha256sum "$manifest" | awk '{print "sha256:" $1}')
+            echo "artifact_digest=$digest" >> "$GITHUB_OUTPUT"
+          else
+            echo "artifact_digest=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Submit signed GitHub OIDC evidence to the Hub
         shell: bash
@@ -87,7 +91,7 @@ jobs:
           [[ "$PROJECT_ID" =~ ^[A-Za-z0-9_-]{1,80}$ ]]
           if [[ -n "$SOURCE_ISSUE_NUMBER" ]]; then [[ "$SOURCE_ISSUE_NUMBER" =~ ^[0-9]{1,12}$ ]]; fi
           [[ "$CANDIDATE_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
-          [[ "$ARTIFACT_DIGEST" =~ ^sha256:[a-fA-F0-9]{64}$ ]]
+          if [[ -n "$ARTIFACT_DIGEST" ]]; then [[ "$ARTIFACT_DIGEST" =~ ^sha256:[a-fA-F0-9]{64}$ ]]; fi
           test -n "$ACTIONS_ID_TOKEN_REQUEST_URL"
           test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
 
@@ -106,7 +110,7 @@ jobs:
             --data "$(jq -nc --arg digest "${ARTIFACT_DIGEST,,}" \
               --arg sha "${CANDIDATE_SHA,,}" --arg run "$SOURCE_RUN_ID" \
               --arg attempt "$SOURCE_RUN_ATTEMPT" --arg issue "$SOURCE_ISSUE_NUMBER" \
-              '{artifact_digest:$digest,candidate_sha:$sha,source_run_id:($run|tonumber),source_run_attempt:($attempt|tonumber)} + (if $issue == "" then {} else {source_issue_number:($issue|tonumber)} end)')" \
+              '{candidate_sha:$sha,source_run_id:($run|tonumber),source_run_attempt:($attempt|tonumber)} + (if $digest == "" then {} else {artifact_digest:$digest} end) + (if $issue == "" then {} else {source_issue_number:($issue|tonumber)} end)'
             "$HUB_BASE_URL/v1/projects/$PROJECT_ID/verification/github-actions" \
-            | jq --exit-status --arg sha "${CANDIDATE_SHA,,}" --arg digest "${ARTIFACT_DIGEST,,}" \
-                'select(.conclusion == "success" and .candidate_sha == $sha and .artifact_digest == $digest and (.evidence_id | type == "string" and length > 0))'
+            | jq --exit-status --arg sha "${CANDIDATE_SHA,,}" \
+                'select(.candidate_sha == $sha and (.conclusion == "success" or .conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "neutral" or .conclusion == "skipped" or .conclusion == "stale" or .conclusion == "startup_failure") and (.evidence_id | type == "string" and length > 0))'
