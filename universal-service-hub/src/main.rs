@@ -1822,7 +1822,7 @@ async fn verify_github_actions_run(
     let audience=env::var("USH_GITHUB_OIDC_AUDIENCE")
         .ok().filter(|value|!value.trim().is_empty())
         .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_oidc_audience_not_configured"))?;
-    let allowed_workflows=env::var("USH_GITHUB_ALLOWED_WORKFLOW_REFS")
+    let allowed_workflows=env::var("USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS")
         .unwrap_or_default().split(',')
         .map(str::trim).filter(|value|!value.is_empty()).map(str::to_owned)
         .collect::<Vec<_>>();
@@ -1853,12 +1853,18 @@ async fn verify_github_actions_run(
 
     let repository=claim_string(&claims,"repository")?;
     let workflow_ref=claim_string(&claims,"workflow_ref")?;
+    let job_workflow_ref=claim_string(&claims,"job_workflow_ref")?;
+    let job_workflow_sha=claim_string(&claims,"job_workflow_sha")?;
     let git_ref=claim_string(&claims,"ref")?;
     let event_name=claim_string(&claims,"event_name")?;
     let sha=claim_string(&claims,"sha")?;
     let subject=claim_string(&claims,"sub")?;
+    let trusted_workflow_sha=env::var("USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA")
+        .ok().filter(|value|value.len()==40 && value.chars().all(|c|c.is_ascii_hexdigit()))
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_trusted_workflow_sha_not_configured"))?;
     if !valid_github_repository(repository)
-        || !allowed_workflows.iter().any(|allowed|allowed==workflow_ref)
+        || !allowed_workflows.iter().any(|allowed|allowed==job_workflow_ref)
+        || !job_workflow_sha.eq_ignore_ascii_case(&trusted_workflow_sha)
         || !git_ref.starts_with("refs/heads/")
         || !["push","workflow_dispatch"].contains(&event_name)
         || sha.len()!=40 || !sha.chars().all(|c|c.is_ascii_hexdigit())
@@ -1867,6 +1873,8 @@ async fn verify_github_actions_run(
     }
     let workflow_path=github_workflow_path(workflow_ref,repository)
         .ok_or(ApiError(StatusCode::FORBIDDEN,"github_oidc_workflow_ref_invalid"))?;
+    github_workflow_path(job_workflow_ref,repository)
+        .ok_or(ApiError(StatusCode::FORBIDDEN,"github_oidc_job_workflow_ref_invalid"))?;
     let run_id=claim_u64(&claims,"run_id")?;
     let run_attempt=claim_u64(&claims,"run_attempt")?;
     if run_attempt>100 || run_id>i64::MAX as u64 {
@@ -1894,6 +1902,8 @@ async fn verify_github_actions_run(
     Ok(json!({
         "repository":repository,
         "workflow_ref":workflow_ref,
+        "job_workflow_ref":job_workflow_ref,
+        "job_workflow_sha":job_workflow_sha,
         "workflow_path":workflow_path,
         "git_ref":git_ref,
         "event_name":event_name,
@@ -1914,6 +1924,8 @@ async fn ingest_github_actions_evidence(
     let repository=attestation["repository"].as_str().unwrap_or_default();
     let candidate_sha=attestation["sha"].as_str().unwrap_or_default();
     let workflow_ref=attestation["workflow_ref"].as_str().unwrap_or_default();
+    let job_workflow_ref=attestation["job_workflow_ref"].as_str().unwrap_or_default();
+    let job_workflow_sha=attestation["job_workflow_sha"].as_str().unwrap_or_default();
     let workflow_path=attestation["workflow_path"].as_str().unwrap_or_default();
     let git_ref=attestation["git_ref"].as_str().unwrap_or_default();
     let event_name=attestation["event_name"].as_str().unwrap_or_default();
@@ -1945,10 +1957,10 @@ async fn ingest_github_actions_evidence(
         return Err(ApiError(StatusCode::CONFLICT,"github_actions_sha_does_not_match_candidate"));
     }
     let evidence_id=Uuid::new_v4().to_string();
-    let inserted=sqlx::query("INSERT INTO engineering_task_verification_evidence (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,workflow_path,git_ref,event_name,run_id,run_attempt,conclusion,attestation_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'success',$13) ON CONFLICT (repository,run_id,run_attempt,task_id) DO NOTHING RETURNING id")
+    let inserted=sqlx::query("INSERT INTO engineering_task_verification_evidence (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,job_workflow_ref,job_workflow_sha,workflow_path,git_ref,event_name,run_id,run_attempt,conclusion,attestation_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'success',$15) ON CONFLICT (repository,run_id,run_attempt,task_id) DO NOTHING RETURNING id")
         .bind(&evidence_id).bind(&tenant_id).bind(&project_id).bind(&task_id).bind(candidate_sha)
-        .bind(repository).bind(workflow_ref).bind(workflow_path).bind(git_ref).bind(event_name)
-        .bind(run_id).bind(run_attempt).bind(&attestation_hash)
+        .bind(repository).bind(workflow_ref).bind(job_workflow_ref).bind(job_workflow_sha)
+        .bind(workflow_path).bind(git_ref).bind(event_name).bind(run_id).bind(run_attempt).bind(&attestation_hash)
         .fetch_optional(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_evidence_persist_failed"))?;
     let (persisted_id,idempotent)=if let Some(row)=inserted {
@@ -1967,7 +1979,7 @@ async fn ingest_github_actions_evidence(
         (existing.try_get("id").unwrap_or_default(),true)
     };
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
-    audit(&state,&format!("github-actions:{repository}:{run_id}:{run_attempt}"),"engineering_task.verification_evidence_ingested","engineering_task",&task_id,json!({"repository":repository,"workflow_ref":workflow_ref,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"conclusion":"success","idempotent":idempotent})).await;
+    audit(&state,&format!("github-actions:{repository}:{run_id}:{run_attempt}"),"engineering_task.verification_evidence_ingested","engineering_task",&task_id,json!({"repository":repository,"workflow_ref":workflow_ref,"job_workflow_ref":job_workflow_ref,"job_workflow_sha":job_workflow_sha,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"conclusion":"success","idempotent":idempotent})).await;
     Ok(Json(json!({"evidence_id":persisted_id,"task_id":task_id,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"conclusion":"success","idempotent":idempotent})))
 }
 
