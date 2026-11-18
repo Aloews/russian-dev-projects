@@ -12,6 +12,7 @@ name: universal-service-hub-ci
       - ".github/product-factory/**"
       - ".github/workflows/universal-service-hub-ci.yml"
       - ".github/workflows/ush-trusted-verify.yml"
+      - ".github/workflows/ush-post-ci-verification.yml"
       - ".github/workflows/product-factory.yml"
       - ".github/workflows/universal-hub-codex-claude.yml"
       - ".github/actions/product-factory-agent/**"
@@ -27,6 +28,7 @@ name: universal-service-hub-ci
       - ".github/product-factory/**"
       - ".github/workflows/universal-service-hub-ci.yml"
       - ".github/workflows/ush-trusted-verify.yml"
+      - ".github/workflows/ush-post-ci-verification.yml"
       - ".github/workflows/product-factory.yml"
       - ".github/workflows/universal-hub-codex-claude.yml"
       - ".github/actions/product-factory-agent/**"
@@ -737,3 +739,24 @@ jobs:
             exit 1
           fi
           grep -q "Infisical backend requires" /tmp/ush-production-guard.log
+      - name: Create completed CI evidence manifest
+        if: success()
+        working-directory: .
+        run: |
+          mkdir -p "$RUNNER_TEMP/ush-ci-evidence"
+          docker image inspect universal-service-hub:test \
+            | jq '.[0] | {Id,RepoTags,RootFS}' > "$RUNNER_TEMP/ush-ci-evidence/container-image.json"
+          jq -n --arg source_sha "$GITHUB_SHA" \
+            --arg source_run_id "$GITHUB_RUN_ID" \
+            --arg source_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --slurpfile image "$RUNNER_TEMP/ush-ci-evidence/container-image.json" \
+            '{schema_version:1,source_sha:$source_sha,source_run_id:$source_run_id,source_run_attempt:$source_run_attempt,container_image:$image[0]}' \
+            > "$RUNNER_TEMP/ush-ci-evidence/ush-ci-evidence.json"
+      - name: Upload completed CI evidence manifest
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ush-ci-evidence
+          path: ${{ runner.temp }}/ush-ci-evidence/ush-ci-evidence.json
+          if-no-files-found: error
+          retention-days: 7
