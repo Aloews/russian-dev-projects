@@ -1760,14 +1760,22 @@ fn claim_u64(claims: &Value, key: &str) -> ApiResult<u64> {
         .ok_or(ApiError(StatusCode::UNAUTHORIZED,"github_oidc_claim_invalid"))
 }
 
+fn valid_github_repository_component(value: &str) -> bool {
+    !value.is_empty()
+        && value.len()<=100
+        && !value.starts_with('.')
+        && !value.ends_with('.')
+        && !value.contains("..")
+        && value.chars().all(|c|c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
 fn valid_github_repository(repository: &str) -> bool {
     let mut parts=repository.split('/');
     let Some(owner)=parts.next() else{return false;};
     let Some(name)=parts.next() else{return false;};
     parts.next().is_none()
-        && !owner.is_empty() && !name.is_empty()
-        && owner.chars().all(|c|c.is_ascii_alphanumeric() || "-_.".contains(c))
-        && name.chars().all(|c|c.is_ascii_alphanumeric() || "-_.".contains(c))
+        && valid_github_repository_component(owner)
+        && valid_github_repository_component(name)
 }
 
 fn github_workflow_path(workflow_ref: &str, repository: &str) -> Option<String> {
@@ -3419,6 +3427,9 @@ mod integration_security_tests {
         assert!(valid_github_repository("Aloews/russian-dev-projects"));
         assert!(!valid_github_repository("Aloews/russian-dev-projects/extra"));
         assert!(!valid_github_repository("../russian-dev-projects"));
+        assert!(!valid_github_repository("owner/.."));
+        assert!(!valid_github_repository("owner/repo..name"));
+        assert!(!valid_github_repository("owner/.repo"));
         assert_eq!(
             github_workflow_path(
                 "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/heads/main",
