@@ -602,3 +602,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Exact-head CI run #44382077304 failed in Rust tests: `valid_github_repository("../russian-dev-projects")` incorrectly returned true because the character allowlist permitted dot-only owner segments.
 - Updated the validator to reject owner/name segments exactly equal to `.` or `..`; added regression assertions for both owner and repository-name positions. This prevents path-segment traversal while retaining normal GitHub owner/repository characters.
 - The new base-head CI is required before stacking further UHS work; no PR is merged and no production configuration changed.
+
+
+### Trusted artifact digest provenance — 2026-11-18
+
+- The reusable trusted-verification workflow no longer accepts a caller-supplied digest. It requires an artifact name, reads the unique unexpired artifact's SHA-256 digest from the current GitHub Actions run metadata using the read-only Actions permission, downloads that artifact with digest mismatch set to error, verifies the downloaded directory is non-empty, and submits the GitHub-reported digest with the OIDC token.
+- The server persists the digest with the signed run identity and includes it in the receipt response. This binds the receipt to the artifact archive GitHub recorded rather than to an arbitrary caller-provided string.
+- No production secrets or workers are configured. A concrete workflow caller and signed-token end-to-end test remain acceptance gates.
