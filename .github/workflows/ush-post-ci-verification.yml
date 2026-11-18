@@ -1,0 +1,27 @@
+name: ush-post-ci-verification
+
+on:
+  workflow_run:
+    workflows: ["universal-service-hub-ci"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  attest:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.head_repository.full_name == github.repository
+          && vars.USH_API_BASE_URL != ''
+          && vars.USH_GITHUB_OIDC_AUDIENCE != ''
+          && vars.USH_PROJECT_ID != ''
+          && vars.USH_TASK_ID != '' }}
+    uses: ./.github/workflows/ush-trusted-verify.yml
+    with:
+      hub_base_url: ${{ vars.USH_API_BASE_URL }}
+      oidc_audience: ${{ vars.USH_GITHUB_OIDC_AUDIENCE }}
+      project_id: ${{ vars.USH_PROJECT_ID }}
+      task_id: ${{ vars.USH_TASK_ID }}
+      source_run_id: ${{ github.event.workflow_run.id }}
+      source_run_attempt: ${{ github.event.workflow_run.run_attempt }}
+      candidate_sha: ${{ github.event.workflow_run.head_sha }}
