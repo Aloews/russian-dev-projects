@@ -1750,7 +1750,7 @@ async fn release_engineering_task_path_locks(
 fn github_verification_receipt_hash(
     identity: &Value,
     source_run: &Value,
-    artifact_digest: &str,
+    artifact_digest: Option<&str>,
     task_id: &str,
 ) -> String {
     let stable_claims=json!({
@@ -1768,6 +1768,11 @@ fn github_verification_receipt_hash(
             "task_id":task_id
         }).to_string().as_bytes()
     ))
+}
+
+fn github_run_conclusion_is_recordable(conclusion: &str) -> bool {
+    ["success","failure","cancelled","timed_out","action_required","neutral","skipped","stale","startup_failure"]
+        .contains(&conclusion)
 }
 
 fn valid_sha256_artifact_digest(value: &str) -> bool {
@@ -1851,7 +1856,6 @@ fn github_actions_run_matches(run: &Value, identity: &GithubRunIdentity<'_>) -> 
     run.get("id").and_then(Value::as_u64)==Some(identity.run_id)
         && run.get("run_attempt").and_then(Value::as_u64)==Some(identity.run_attempt)
         && run.get("status").and_then(Value::as_str)==Some("completed")
-        && run.get("conclusion").and_then(Value::as_str)==Some("success")
         && run.get("event").and_then(Value::as_str)==Some(identity.event_name)
         && run.get("head_sha").and_then(Value::as_str).is_some_and(|value|value.eq_ignore_ascii_case(identity.sha))
         && run.pointer("/head_repository/full_name").and_then(Value::as_str)==Some(identity.repository)
@@ -1979,7 +1983,8 @@ struct GithubActionsEvidenceBody {
     source_run_id: u64,
     source_run_attempt: u64,
     candidate_sha: String,
-    artifact_digest: String,
+    #[serde(default)]
+    artifact_digest: Option<String>,
     #[serde(default)]
     source_issue_number: Option<u64>,
 }
@@ -1994,10 +1999,10 @@ async fn ingest_github_actions_evidence(
         || body.source_run_attempt==0 || body.source_run_attempt>100
         || body.source_issue_number==Some(0)
         || body.candidate_sha.len()!=40 || !body.candidate_sha.chars().all(|c|c.is_ascii_hexdigit())
-        || !valid_sha256_artifact_digest(&body.artifact_digest) {
+        || body.artifact_digest.as_deref().is_some_and(|digest|!valid_sha256_artifact_digest(digest)) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_github_actions_evidence_request"));
     }
-    let artifact_digest=body.artifact_digest.to_ascii_lowercase();
+    let artifact_digest=body.artifact_digest.as_deref().map(str::to_ascii_lowercase);
     let candidate_sha=body.candidate_sha.to_ascii_lowercase();
     let token=bearer(&headers)?;
     let identity=verify_github_actions_identity(&state,token).await?;
@@ -2039,8 +2044,11 @@ async fn ingest_github_actions_evidence(
         run_attempt:body.source_run_attempt
     };
     if !github_actions_run_matches(&source_run,&source_identity) {
-        return Err(ApiError(StatusCode::CONFLICT,"github_source_run_not_successful_or_mismatched"));
+        return Err(ApiError(StatusCode::CONFLICT,"github_source_run_identity_mismatch"));
     }
+    let conclusion=source_run.get("conclusion").and_then(Value::as_str)
+        .filter(|value|github_run_conclusion_is_recordable(value))
+        .ok_or(ApiError(StatusCode::CONFLICT,"github_source_run_conclusion_missing_or_invalid"))?;
     let run_started_at=source_run.get("run_started_at").and_then(Value::as_str)
         .filter(|value|chrono::DateTime::parse_from_rfc3339(value).is_ok())
         .ok_or(ApiError(StatusCode::CONFLICT,"github_actions_run_start_time_missing"))?;
@@ -2078,7 +2086,7 @@ async fn ingest_github_actions_evidence(
     let task_id:String=task.try_get("id")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
     let attestation_hash=github_verification_receipt_hash(
-        &identity,&source_run,&artifact_digest,&task_id
+        &identity,&source_run,artifact_digest.as_deref(),&task_id
     );
     let tenant_id:String=task.try_get("tenant_id")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
