@@ -618,3 +618,12 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - The CI artifact manifest previously recorded `GITHUB_SHA` for every event. On `pull_request`, GitHub's workflow environment SHA can represent the synthetic merge ref, while the Actions run API and `workflow_run.head_sha` identify the source branch head. That would make the later trusted source-run comparison reject otherwise successful PR evidence.
 - The manifest now records `pull_request.head.sha` for pull-request events (validated as a 40-character SHA) and keeps `GITHUB_SHA` for push/workflow_dispatch. This aligns the uploaded evidence with the exact source run head validated by the Hub.
 - Exact-head CI must validate the workflow and container startup after this correction; no production config or worker activation was changed.
+
+
+
+### Trusted evidence source-run policy hardening — 2026-11-18
+
+- Security review found that accepting `pull_request` source runs was unsafe: a same-repository PR can modify its own CI workflow, then a successful `workflow_run` attestation could incorrectly treat that modified workflow as trusted.
+- Changed the source policy to accept only `push` and `workflow_dispatch` runs on an explicit `USH_GITHUB_ALLOWED_SOURCE_BRANCHES` allowlist. Fork-originated and same-repository PR runs are not eligible for trusted evidence. The source SHA must be the run's exact `head_sha`; PR merge/head SHA special-casing was removed.
+- Updated the SQL event constraint, migration contract, tenant/RLS fixture, `.env.example`, README and regression tests. Initial safe configuration should allow only the protected `main` branch.
+- No production variables or secrets were changed. Exact-head CI is required before this security correction can be accepted.
