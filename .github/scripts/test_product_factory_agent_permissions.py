@@ -5,7 +5,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTION = ROOT / ".github" / "actions" / "product-factory-agent" / "action.yml"
-WORKFLOW = ROOT / ".github" / "workflows" / "product-factory.yml"
 
 
 class ProductFactoryAgentPermissionTests(unittest.TestCase):
@@ -47,9 +46,8 @@ class ProductFactoryAgentPermissionTests(unittest.TestCase):
         self.assertIn('"blockWritesOutsideWorkingDirectories": true', settings)
 
     def test_agent_is_started_in_target_product_working_directory(self):
-        workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("CLAUDE_WORKING_DIR: " + "$" + "{{ github.workspace }}/target", workflow)
         action = ACTION.read_text(encoding="utf-8")
+        self.assertIn("CLAUDE_WORKING_DIR: " + "$" + "{{ github.workspace }}/target", action)
         self.assertIn("Verify target workspace source files are readable", action)
         self.assertIn('test -r "target/$path"', action)
 
