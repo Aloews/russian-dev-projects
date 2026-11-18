@@ -705,3 +705,11 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 
 - Added explicit tests that reject a global `*`, embedded wildcards such as `ai/*/task-*`, and suffix text after a wildcard. Only exact branch entries and one terminal-prefix wildcard are accepted.
 - Test commit: `938099159139cb3a9e20e5cc52ab618980030d78`. Exact-head workflow #44410129959 is pending.
+
+
+### Exact-head verification after trusted OIDC shell correction — 2026-11-19
+
+- Current PR #64 head: `6e8c888cf9cf00220321e75b66c7734bd351ec9b`.
+- Exact-head workflow [#44409743514](https://github.com/Aloews/russian-dev-projects/actions/runs/44409743514) passed container initialization, Product Factory shell/Python/safety/contract checks, trusted-workflow shell syntax, Actionlint workflow validation, composite action metadata, Rust format and Rust Clippy. Rust unit tests are still running; migration, Compose startup, API/RLS and container smoke stages have not yet completed.
+- The previous exact-head Actionlint failure was traced to nested jq command-substitution quoting in the OIDC submission step. The workflow now builds the payload in a separate variable and requires the artifact digest before obtaining/submitting the OIDC token.
+- **Status: in progress; no full CI pass is claimed.** Keep PR #64 draft/unmerged until the entire workflow succeeds.
