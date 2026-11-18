@@ -1,3 +1,6 @@
+#[path = "../artifact_store.rs"]
+#[allow(dead_code)]
+mod artifact_store;
 #[path = "../execution_queue.rs"]
 #[allow(dead_code)]
 mod execution_queue;
