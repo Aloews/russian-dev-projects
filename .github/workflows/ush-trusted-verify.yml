@@ -15,9 +15,9 @@ on:
         description: Hub project identifier
         required: true
         type: string
-      task_id:
-        description: Hub task identifier
-        required: true
+      source_issue_number:
+        description: Optional GitHub issue or pull request number used to disambiguate tasks
+        required: false
         type: string
       source_run_id:
         description: Completed source build/test workflow run ID
@@ -75,7 +75,7 @@ jobs:
           HUB_BASE_URL: ${{ inputs.hub_base_url }}
           OIDC_AUDIENCE: ${{ inputs.oidc_audience }}
           PROJECT_ID: ${{ inputs.project_id }}
-          TASK_ID: ${{ inputs.task_id }}
+          SOURCE_ISSUE_NUMBER: ${{ inputs.source_issue_number }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -85,7 +85,7 @@ jobs:
           [[ "$HUB_BASE_URL" =~ ^https://[^/]+(/[^?#]*)?$ ]]
           [[ "$OIDC_AUDIENCE" =~ ^[A-Za-z0-9._:/-]{1,200}$ ]]
           [[ "$PROJECT_ID" =~ ^[A-Za-z0-9_-]{1,80}$ ]]
-          [[ "$TASK_ID" =~ ^[A-Za-z0-9_-]{1,80}$ ]]
+          if [[ -n "$SOURCE_ISSUE_NUMBER" ]]; then [[ "$SOURCE_ISSUE_NUMBER" =~ ^[0-9]{1,12}$ ]]; fi
           [[ "$CANDIDATE_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
           [[ "$ARTIFACT_DIGEST" =~ ^sha256:[a-fA-F0-9]{64}$ ]]
           test -n "$ACTIONS_ID_TOKEN_REQUEST_URL"
@@ -105,8 +105,8 @@ jobs:
             -H "Content-Type: application/json" \
             --data "$(jq -nc --arg digest "${ARTIFACT_DIGEST,,}" \
               --arg sha "${CANDIDATE_SHA,,}" --arg run "$SOURCE_RUN_ID" \
-              --arg attempt "$SOURCE_RUN_ATTEMPT" \
-              '{artifact_digest:$digest,candidate_sha:$sha,source_run_id:($run|tonumber),source_run_attempt:($attempt|tonumber)}')" \
-            "$HUB_BASE_URL/v1/projects/$PROJECT_ID/tasks/$TASK_ID/verification/github-actions" \
+              --arg attempt "$SOURCE_RUN_ATTEMPT" --arg issue "$SOURCE_ISSUE_NUMBER" \
+              '{artifact_digest:$digest,candidate_sha:$sha,source_run_id:($run|tonumber),source_run_attempt:($attempt|tonumber)} + (if $issue == "" then {} else {source_issue_number:($issue|tonumber)} end)')" \
+            "$HUB_BASE_URL/v1/projects/$PROJECT_ID/verification/github-actions" \
             | jq --exit-status --arg sha "${CANDIDATE_SHA,,}" --arg digest "${ARTIFACT_DIGEST,,}" \
                 'select(.conclusion == "success" and .candidate_sha == $sha and .artifact_digest == $digest and (.evidence_id | type == "string" and length > 0))'
