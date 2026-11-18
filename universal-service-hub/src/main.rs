@@ -1399,11 +1399,10 @@ async fn upload_execution_artifact(
             .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task_id"))?),
         None => None,
     };
-    if artifact_type.is_empty() || artifact_type.len() > 48
-        || !artifact_type.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c)) {
+    if !artifact_store::valid_artifact_type(artifact_type) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_artifact_type"));
     }
-    if content_type.is_empty() || content_type.len() > 128 || !content_type.bytes().all(|b| b >= 0x20 && b != 0x7f) {
+    if !artifact_store::valid_content_type(content_type) {
         return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_artifact_content_type"));
     }
 
