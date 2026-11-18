@@ -301,6 +301,30 @@ INSERT INTO api_rate_limits (token_hash,tenant_id,window_started_at,request_coun
 VALUES
  ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aloews',NOW(),1),
  ('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','tenant-beta',NOW(),1);
+
+UPDATE engineering_tasks
+SET candidate_sha=repeat('a',40),
+    metadata=metadata || jsonb_build_object('source_repository','Aloews/russian-dev-projects')
+WHERE id='aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+UPDATE engineering_tasks
+SET candidate_sha=repeat('b',40),
+    metadata=metadata || jsonb_build_object('source_repository','Aloews/russian-dev-projects')
+WHERE id='bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb';
+INSERT INTO engineering_task_verification_evidence
+ (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,
+  job_workflow_ref,job_workflow_sha,workflow_path,git_ref,event_name,
+  run_id,run_attempt,conclusion,attestation_hash)
+VALUES
+ ('aaaa1111-1111-4111-8111-aaaaaaaaaaaa','aloews','rls-alpha-project',
+  'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',repeat('a',40),'Aloews/russian-dev-projects',
+  'Aloews/russian-dev-projects/.github/workflows/ci.yml@refs/heads/main',
+  'Aloews/russian-dev-projects/.github/workflows/ush-trusted-verify.yml@refs/heads/main',
+  repeat('c',40),'.github/workflows/ci.yml','refs/heads/main','push',900001,1,'success',repeat('a',64)),
+ ('bbbb1111-1111-4111-8111-bbbbbbbbbbbb','tenant-beta','rls-beta-project',
+  'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb',repeat('b',40),'Aloews/russian-dev-projects',
+  'Aloews/russian-dev-projects/.github/workflows/ci.yml@refs/heads/main',
+  'Aloews/russian-dev-projects/.github/workflows/ush-trusted-verify.yml@refs/heads/main',
+  repeat('c',40),'.github/workflows/ci.yml','refs/heads/main','push',900002,1,'success',repeat('b',64));
 COMMIT;
 
 SET ROLE ush_runtime;
@@ -311,6 +335,10 @@ BEGIN
  FROM pg_roles WHERE rolname=current_user;
  IF current_user <> 'ush_runtime' OR is_superuser OR bypasses_rls THEN
    RAISE EXCEPTION 'runtime role must be non-superuser and must not bypass RLS';
+ END IF;
+ IF has_table_privilege(current_user,'engineering_task_verification_evidence','UPDATE')
+    OR has_table_privilege(current_user,'engineering_task_verification_evidence','DELETE') THEN
+   RAISE EXCEPTION 'runtime role must not mutate trusted verification receipts';
  END IF;
 END;
 $role_test$;
@@ -326,6 +354,11 @@ BEGIN
  IF (SELECT COUNT(*) FROM engineering_worker_tokens) <> 1
     OR EXISTS (SELECT 1 FROM engineering_worker_tokens WHERE worker_id='rls-beta-worker') THEN
    RAISE EXCEPTION 'tenant alpha can see another tenant worker credential';
+ END IF;
+ IF (SELECT COUNT(*) FROM engineering_task_verification_evidence) <> 1
+    OR NOT EXISTS (SELECT 1 FROM engineering_task_verification_evidence WHERE task_id='aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa')
+    OR EXISTS (SELECT 1 FROM engineering_task_verification_evidence WHERE task_id='bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb') THEN
+   RAISE EXCEPTION 'tenant alpha trusted verification evidence RLS failed';
  END IF;
  IF EXISTS (SELECT 1 FROM projects WHERE id='rls-beta-project')
     OR NOT EXISTS (SELECT 1 FROM projects WHERE id='rls-alpha-project') THEN
@@ -381,6 +414,11 @@ BEGIN
  IF (SELECT COUNT(*) FROM engineering_worker_tokens) <> 1
     OR EXISTS (SELECT 1 FROM engineering_worker_tokens WHERE worker_id='rls-alpha-worker') THEN
    RAISE EXCEPTION 'tenant beta can see another tenant worker credential';
+ END IF;
+ IF (SELECT COUNT(*) FROM engineering_task_verification_evidence) <> 1
+    OR NOT EXISTS (SELECT 1 FROM engineering_task_verification_evidence WHERE task_id='bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb')
+    OR EXISTS (SELECT 1 FROM engineering_task_verification_evidence WHERE task_id='aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa') THEN
+   RAISE EXCEPTION 'tenant beta trusted verification evidence RLS failed';
  END IF;
  IF EXISTS (SELECT 1 FROM projects WHERE id='rls-alpha-project')
     OR NOT EXISTS (SELECT 1 FROM projects WHERE id='rls-beta-project') THEN
@@ -452,6 +490,9 @@ BEGIN
  IF EXISTS (SELECT 1 FROM api_rate_limits) THEN
    RAISE EXCEPTION 'missing tenant context exposed API rate-limit records';
  END IF;
+ IF EXISTS (SELECT 1 FROM engineering_task_verification_evidence) THEN
+   RAISE EXCEPTION 'missing tenant context exposed trusted verification receipts';
+ END IF;
  IF EXISTS (SELECT 1 FROM workspaces) THEN
    RAISE EXCEPTION 'missing tenant context exposed workspace rows';
  END IF;
@@ -468,6 +509,7 @@ COMMIT;
 RESET ROLE;
 DELETE FROM tenant_tokens WHERE id='77777777-7777-4777-8777-777777777777';
 DELETE FROM project_tokens WHERE id='88888888-8888-4888-8888-888888888888';
+DELETE FROM engineering_task_verification_evidence WHERE id IN ('aaaa1111-1111-4111-8111-aaaaaaaaaaaa','bbbb1111-1111-4111-8111-bbbbbbbbbbbb');
 DELETE FROM api_rate_limits WHERE token_hash IN (repeat('a',64),repeat('b',64));
 DELETE FROM tenant_provider_connections WHERE id IN ('aaaa0000-2222-4222-8222-aaaaaaaaaaaa','bbbb0000-2222-4222-8222-bbbbbbbbbbbb');
 DELETE FROM tenant_memberships WHERE id IN ('aaaa0000-1111-4111-8111-aaaaaaaaaaaa','bbbb0000-1111-4111-8111-bbbbbbbbbbbb');
