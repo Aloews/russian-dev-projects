@@ -5,7 +5,10 @@ on:
     workflows: ["universal-service-hub-ci"]
     types: [completed]
 
-permissions: {}
+permissions:
+  actions: read
+  contents: read
+  id-token: write
 
 jobs:
   attest:
