@@ -1760,14 +1760,22 @@ fn claim_u64(claims: &Value, key: &str) -> ApiResult<u64> {
         .ok_or(ApiError(StatusCode::UNAUTHORIZED,"github_oidc_claim_invalid"))
 }
 
+fn valid_github_repository_component(value: &str) -> bool {
+    !value.is_empty()
+        && value.len()<=100
+        && !value.starts_with('.')
+        && !value.ends_with('.')
+        && !value.contains("..")
+        && value.chars().all(|c|c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
 fn valid_github_repository(repository: &str) -> bool {
     let mut parts=repository.split('/');
     let Some(owner)=parts.next() else{return false;};
     let Some(name)=parts.next() else{return false;};
     parts.next().is_none()
-        && !owner.is_empty() && !name.is_empty()
-        && owner.chars().all(|c|c.is_ascii_alphanumeric() || "-_.".contains(c))
-        && name.chars().all(|c|c.is_ascii_alphanumeric() || "-_.".contains(c))
+        && valid_github_repository_component(owner)
+        && valid_github_repository_component(name)
 }
 
 fn github_workflow_path(workflow_ref: &str, repository: &str) -> Option<String> {
@@ -1794,25 +1802,27 @@ fn github_job_workflow_is_trusted(
         && job_workflow_sha.eq_ignore_ascii_case(trusted_workflow_sha)
 }
 
-fn github_actions_run_matches(
-    run: &Value,
-    repository: &str,
-    workflow_path: &str,
-    git_ref: &str,
-    event_name: &str,
-    sha: &str,
+#[derive(Clone, Copy)]
+struct GithubActionsRunIdentity<'a> {
+    repository: &'a str,
+    workflow_path: &'a str,
+    git_ref: &'a str,
+    event_name: &'a str,
+    sha: &'a str,
     run_id: u64,
     run_attempt: u64,
-) -> bool {
-    let expected_branch=git_ref.strip_prefix("refs/heads/").unwrap_or("");
-    run.get("id").and_then(Value::as_u64)==Some(run_id)
-        && run.get("run_attempt").and_then(Value::as_u64)==Some(run_attempt)
+}
+
+fn github_actions_run_matches(run: &Value, identity: &GithubActionsRunIdentity<'_>) -> bool {
+    let expected_branch=identity.git_ref.strip_prefix("refs/heads/").unwrap_or("");
+    run.get("id").and_then(Value::as_u64)==Some(identity.run_id)
+        && run.get("run_attempt").and_then(Value::as_u64)==Some(identity.run_attempt)
         && run.get("status").and_then(Value::as_str)==Some("completed")
         && run.get("conclusion").and_then(Value::as_str)==Some("success")
-        && run.get("event").and_then(Value::as_str)==Some(event_name)
-        && run.get("head_sha").and_then(Value::as_str).is_some_and(|value|value.eq_ignore_ascii_case(sha))
-        && run.pointer("/head_repository/full_name").and_then(Value::as_str)==Some(repository)
-        && run.get("path").and_then(Value::as_str)==Some(workflow_path)
+        && run.get("event").and_then(Value::as_str)==Some(identity.event_name)
+        && run.get("head_sha").and_then(Value::as_str).is_some_and(|value|value.eq_ignore_ascii_case(identity.sha))
+        && run.pointer("/head_repository/full_name").and_then(Value::as_str)==Some(identity.repository)
+        && run.get("path").and_then(Value::as_str)==Some(identity.workflow_path)
         && run.get("head_branch").and_then(Value::as_str)==Some(expected_branch)
 }
 
@@ -1905,7 +1915,16 @@ async fn verify_github_actions_run(
         .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_lookup_failed"))?
         .json::<Value>().await
         .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_response_invalid"))?;
-    if !github_actions_run_matches(&run,repository,&workflow_path,git_ref,event_name,sha,run_id,run_attempt) {
+    let run_identity=GithubActionsRunIdentity {
+        repository,
+        workflow_path:&workflow_path,
+        git_ref,
+        event_name,
+        sha,
+        run_id,
+        run_attempt,
+    };
+    if !github_actions_run_matches(&run,&run_identity) {
         return Err(ApiError(StatusCode::CONFLICT,"github_actions_run_not_successful_or_mismatched"));
     }
     Ok(json!({
@@ -1940,7 +1959,7 @@ async fn ingest_github_actions_evidence(
     let event_name=attestation["event_name"].as_str().unwrap_or_default();
     let run_id=attestation["run_id"].as_u64().unwrap_or_default() as i64;
     let run_attempt=attestation["run_attempt"].as_u64().unwrap_or_default() as i32;
-    let attestation_hash=hex::encode(Sha256::digest(attestation.to_string().as_bytes()));
+    let attestation_hash=hex::encode(Sha256::digest(token.as_bytes()));
 
     let mut tx=begin_platform_transaction(&state).await?;
     let task=sqlx::query("SELECT tenant_id,status,candidate_sha,metadata FROM engineering_tasks WHERE id=$1 AND project_id=$2 FOR UPDATE")
@@ -3408,6 +3427,9 @@ mod integration_security_tests {
         assert!(valid_github_repository("Aloews/russian-dev-projects"));
         assert!(!valid_github_repository("Aloews/russian-dev-projects/extra"));
         assert!(!valid_github_repository("../russian-dev-projects"));
+        assert!(!valid_github_repository("owner/.."));
+        assert!(!valid_github_repository("owner/repo..name"));
+        assert!(!valid_github_repository("owner/.repo"));
         assert_eq!(
             github_workflow_path(
                 "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/heads/main",
@@ -3456,16 +3478,16 @@ mod integration_security_tests {
             "path":".github/workflows/ush-verify.yml",
             "head_repository":{"full_name":"Aloews/russian-dev-projects"}
         });
-        assert!(github_actions_run_matches(
-            &run,
-            "Aloews/russian-dev-projects",
-            ".github/workflows/ush-verify.yml",
-            "refs/heads/main",
-            "push",
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            123456,
-            2
-        ));
+        let identity=GithubActionsRunIdentity {
+            repository:"Aloews/russian-dev-projects",
+            workflow_path:".github/workflows/ush-verify.yml",
+            git_ref:"refs/heads/main",
+            event_name:"push",
+            sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            run_id:123456,
+            run_attempt:2,
+        };
+        assert!(github_actions_run_matches(&run,&identity));
         for (field,value) in [
             ("status",json!("in_progress")),
             ("conclusion",json!("failure")),
@@ -3478,29 +3500,11 @@ mod integration_security_tests {
         ] {
             let mut invalid=run.clone();
             invalid[field]=value;
-            assert!(!github_actions_run_matches(
-                &invalid,
-                "Aloews/russian-dev-projects",
-                ".github/workflows/ush-verify.yml",
-                "refs/heads/main",
-                "push",
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                123456,
-                2
-            ), "unexpected acceptance after mutating {field}");
+            assert!(!github_actions_run_matches(&invalid,&identity), "unexpected acceptance after mutating {field}");
         }
         let mut wrong_repo=run.clone();
         wrong_repo["head_repository"]["full_name"]=json!("Aloews/Novel-forge");
-        assert!(!github_actions_run_matches(
-            &wrong_repo,
-            "Aloews/russian-dev-projects",
-            ".github/workflows/ush-verify.yml",
-            "refs/heads/main",
-            "push",
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            123456,
-            2
-        ));
+        assert!(!github_actions_run_matches(&wrong_repo,&identity));
     }
 
     #[test]
