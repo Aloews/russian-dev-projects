@@ -2107,12 +2107,12 @@ async fn ingest_github_actions_evidence(
         return Err(ApiError(StatusCode::CONFLICT,"github_actions_sha_does_not_match_candidate"));
     }
     let evidence_id=Uuid::new_v4().to_string();
-    let inserted=sqlx::query("INSERT INTO engineering_task_verification_evidence (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,job_workflow_ref,job_workflow_sha,workflow_path,git_ref,event_name,run_id,run_attempt,run_started_at,run_completed_at,artifact_digest,attestation_sha,attestation_run_id,attestation_run_attempt,conclusion,attestation_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16::timestamptz,$17,$18,$19,$20,'success',$21) ON CONFLICT (repository,run_id,run_attempt,task_id) DO NOTHING RETURNING id")
+    let inserted=sqlx::query("INSERT INTO engineering_task_verification_evidence (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,job_workflow_ref,job_workflow_sha,workflow_path,git_ref,event_name,run_id,run_attempt,run_started_at,run_completed_at,artifact_digest,attestation_sha,attestation_run_id,attestation_run_attempt,conclusion,attestation_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16::timestamptz,$17,$18,$19,$20,$21,$22) ON CONFLICT (repository,run_id,run_attempt,task_id) DO NOTHING RETURNING id")
         .bind(&evidence_id).bind(&tenant_id).bind(&project_id).bind(&task_id).bind(&candidate_sha)
         .bind(repository).bind(workflow_ref).bind(job_workflow_ref).bind(job_workflow_sha)
         .bind(source_path).bind(git_ref).bind(event_name).bind(run_id).bind(run_attempt)
         .bind(run_started_at).bind(run_completed_at).bind(&artifact_digest).bind(attestation_sha)
-        .bind(attestation_run_id).bind(attestation_run_attempt).bind(&attestation_hash)
+        .bind(attestation_run_id).bind(attestation_run_attempt).bind(conclusion).bind(&attestation_hash)
         .fetch_optional(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_evidence_persist_failed"))?;
     let (persisted_id,idempotent)=if let Some(row)=inserted {
@@ -2131,8 +2131,8 @@ async fn ingest_github_actions_evidence(
         (existing.try_get("id").unwrap_or_default(),true)
     };
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
-    audit(&state,&format!("github-actions:{repository}:{run_id}:{run_attempt}"),"engineering_task.verification_evidence_ingested","engineering_task",&task_id,json!({"repository":repository,"workflow_ref":workflow_ref,"job_workflow_ref":job_workflow_ref,"job_workflow_sha":job_workflow_sha,"source_workflow_path":source_path,"candidate_sha":candidate_sha,"source_run_id":run_id,"source_run_attempt":run_attempt,"attestation_run_id":attestation_run_id,"attestation_run_attempt":attestation_run_attempt,"artifact_digest":artifact_digest,"run_started_at":run_started_at,"run_completed_at":run_completed_at,"conclusion":"success","idempotent":idempotent})).await;
-    Ok(Json(json!({"evidence_id":persisted_id,"task_id":task_id,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"artifact_digest":artifact_digest,"conclusion":"success","idempotent":idempotent})))
+    audit(&state,&format!("github-actions:{repository}:{run_id}:{run_attempt}"),"engineering_task.verification_evidence_ingested","engineering_task",&task_id,json!({"repository":repository,"workflow_ref":workflow_ref,"job_workflow_ref":job_workflow_ref,"job_workflow_sha":job_workflow_sha,"source_workflow_path":source_path,"candidate_sha":candidate_sha,"source_run_id":run_id,"source_run_attempt":run_attempt,"attestation_run_id":attestation_run_id,"attestation_run_attempt":attestation_run_attempt,"artifact_digest":artifact_digest,"run_started_at":run_started_at,"run_completed_at":run_completed_at,"conclusion":conclusion,"idempotent":idempotent})).await;
+    Ok(Json(json!({"evidence_id":persisted_id,"task_id":task_id,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"artifact_digest":artifact_digest,"conclusion":conclusion,"idempotent":idempotent})))
 }
 
 #[derive(Deserialize)]
