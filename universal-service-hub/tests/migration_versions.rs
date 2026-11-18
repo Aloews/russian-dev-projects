@@ -60,6 +60,7 @@ fn trusted_github_verification_migration_is_tenant_scoped_and_immutable() {
         "attestation_run_attempt INTEGER NOT NULL",
         "attestation_sha VARCHAR(40) NOT NULL",
         "run_completed_at >= run_started_at",
+        "event_name VARCHAR(40) NOT NULL CHECK (event_name IN ('push','workflow_dispatch'))",
     ] {
         assert!(
             migration.contains(required),
