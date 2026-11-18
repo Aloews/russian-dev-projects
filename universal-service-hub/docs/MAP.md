@@ -587,3 +587,11 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 
 
 - First exact-head container startup exposed a migration syntax defect: the `job_workflow_sha` CHECK expression was truncated before its closing quote/parenthesis. PostgreSQL rejected the migration at the next `push` literal, so the Hub never opened port 18000. Replaced it with a length check plus a negated non-hex character class, avoiding the malformed expression. The fix is committed as `5fc30875d1c2c1856c6957d38f74ff53a81591f7`; exact-head CI is pending.
+
+
+### Trusted verification migration correction — 2026-11-18
+
+- PR #88 run #44369854642 failed at Compose startup after Rust format/lint/tests, Python/Ruff, migration smoke, Docker build and Compose configuration checks had passed.
+- Root cause was a truncated SQL CHECK expression in migration `0011_trusted_github_verification.sql`: the `job_workflow_sha` regex literal lacked its closing delimiter and closing CHECK parentheses. PostgreSQL then reported a syntax error at the subsequent `'push'` value. This was a real migration defect, not a Docker/Compose readiness issue.
+- Corrected the constraint to a delimiter-safe length/character check: `length(job_workflow_sha) = 40 AND job_workflow_sha !~ '[^0-9a-fA-F]'`. The current PR #88 head contains the corrected migration, but **no GitHub Actions run exists yet for that exact head**; re-verification is still required.
+- PR #64's current head `46d9758b4b8a94d63480722096ffa719372a2ac6` completed CI successfully (run #44369359083).
