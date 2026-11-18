@@ -3639,7 +3639,7 @@ mod integration_security_tests {
     }
 
     #[test]
-    fn pull_request_source_run_binds_to_exact_head_sha_and_trusted_base_branch() {
+    fn pull_request_source_run_is_not_eligible_for_trusted_evidence() {
         let run=json!({
             "id":123456,
             "run_attempt":1,
@@ -3662,14 +3662,7 @@ mod integration_security_tests {
             run_attempt:1
         };
         assert!(!github_source_run_is_allowed("pull_request",&run,&["main".to_owned()]));
-        assert!(github_actions_run_matches(&run,&identity));
-        assert!(!github_source_run_is_allowed("pull_request",&run,&["develop".to_owned()]));
-        let mut wrong_candidate=identity;
-        wrong_candidate.sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        assert!(!github_actions_run_matches(&run,&wrong_candidate));
-        let mut fork=run.clone();
-        fork["head_repository"]["full_name"]=json!("untrusted/fork");
-        assert!(!github_actions_run_matches(&fork,&identity));
+        assert!(!github_actions_run_matches(&run,&identity));
     }
 
     #[test]
