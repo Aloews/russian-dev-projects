@@ -685,3 +685,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Exact-head Rust test run #44408123072 caught a real policy regression: the source-run identity matcher checked `status=completed` but did not require `conclusion=success`, despite the security regression test explicitly mutating the conclusion.
 - Restored the mandatory `conclusion == success` condition in `github_actions_run_matches`. This prevents completed-but-failed/cancelled source runs from being treated as successful evidence; reviewer gating still independently requires a success receipt.
 - Correction commit: `aca721e48995a7755d38f7e458b6b4485f8f305c`. Exact-head CI is pending.
+
+
+### Trusted OIDC submission shellcheck correction — 2026-11-19
+
+- Exact-head run #44409369585 passed the new trusted workflow's initial Bash syntax extraction but actionlint/ShellCheck found malformed nested command-substitution quoting in the OIDC POST payload. The same step also treated the artifact digest as optional even though the API contract requires it.
+- Split payload construction into a separate `payload=$(jq ...)` assignment and made the SHA-256 digest check mandatory before token acquisition/submission. This keeps OIDC token retrieval after the independent candidate-verification job and avoids running candidate code in the OIDC-enabled job.
+- Correction commit: `6edc2714b0d951dbbac8a9bade324d78e7e0eb78`. New exact-head CI is pending.
