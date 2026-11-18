@@ -81,6 +81,7 @@ runs:
           --max-turns ${{ inputs.max_turns }}
           --max-budget-usd ${{ inputs.max_budget_usd }}
           --permission-mode dontAsk
+          --add-dir "${{ github.workspace }}/target"
           --allowedTools "Read,Write,Edit,Glob,Grep,Agent(pf-architect),Agent(pf-security),Agent(pf-product),Agent(pf-reviewer)"
         plugin_marketplaces: ${{ runner.temp }}/caveman
         plugins: caveman@caveman
@@ -155,6 +156,7 @@ runs:
                 "Edit(./.github/workflows/**)",
                 "Edit(./.github/actions/**)"
               ],
+              "additionalDirectories": ["${{ github.workspace }}/target"],
               "blockReadsOutsideWorkingDirectories": true,
               "blockWritesOutsideWorkingDirectories": true
             }

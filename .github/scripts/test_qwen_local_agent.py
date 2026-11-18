@@ -168,5 +168,38 @@ class QwenEditSafetyTests(unittest.TestCase):
                 agent.ROOT = previous_root
 
 
+class ProductFactoryRecoveryTests(unittest.TestCase):
+    def test_ollama_length_termination_is_reported_as_incomplete(self):
+        with self.assertRaisesRegex(agent.IncompleteOllamaResponse, "num_predict limit"):
+            agent.parse_ollama_response({
+                "message": {"content": '{"review":"partial'},
+                "done_reason": "length",
+            })
+
+    def test_ollama_complete_response_is_accepted(self):
+        self.assertEqual(
+            agent.parse_ollama_response({
+                "message": {"content": '{"review":"complete"}'},
+                "done_reason": "stop",
+            }),
+            '{"review":"complete"}',
+        )
+
+    def test_retry_generation_budget_increases_instead_of_shrinking(self):
+        self.assertEqual(agent.generation_budget(0), 3072)
+        self.assertEqual(agent.generation_budget(1), 4096)
+        self.assertGreater(agent.generation_budget(1), agent.generation_budget(0))
+
+    def test_qwen_output_limits_are_bounded(self):
+        self.assertEqual(agent.MAX_FILES, 3)
+        self.assertEqual(agent.EDIT_SCHEMA["properties"]["review"]["maxLength"], 1800)
+
+    def test_agent_session_explicitly_adds_target_workspace(self):
+        action_path = SCRIPT.parents[1] / "actions" / "product-factory-agent" / "action.yml"
+        action = action_path.read_text(encoding="utf-8")
+        self.assertIn('--add-dir "${{ github.workspace }}/target"', action)
+        self.assertIn('"additionalDirectories": ["${{ github.workspace }}/target"]', action)
+
+
 if __name__ == "__main__":
     unittest.main()
