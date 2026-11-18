@@ -1394,9 +1394,18 @@ async fn upload_execution_artifact(
         .ok_or(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "artifact_content_type_required"))?;
     let artifact_type = headers.get("x-artifact-type").and_then(|v| v.to_str().ok())
         .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "artifact_type_required"))?;
-    let task_id = headers.get("x-task-id").and_then(|v| v.to_str().ok())
-        .map(Uuid::parse_str).transpose()
-        .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task_id"))?;
+    let task_id = match headers.get("x-task-id") {
+        Some(value) => Some(Uuid::parse_str(value.to_str().map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task_id"))?)
+            .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task_id"))?),
+        None => None,
+    };
+    if artifact_type.is_empty() || artifact_type.len() > 48
+        || !artifact_type.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c)) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_artifact_type"));
+    }
+    if content_type.is_empty() || content_type.len() > 128 || !content_type.bytes().all(|b| b >= 0x20 && b != 0x7f) {
+        return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_artifact_content_type"));
+    }
 
     let job_exists = sqlx::query("SELECT 1 FROM execution_jobs WHERE project_id=$1 AND id=$2")
         .bind(&project_id).bind(job_id).fetch_optional(&state.db).await
@@ -1463,6 +1472,7 @@ async fn download_execution_artifact(
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_size"))?);
     response.headers_mut().insert("content-disposition", HeaderValue::from_static("attachment; filename=artifact"));
     response.headers_mut().insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    response.headers_mut().insert("cache-control", HeaderValue::from_static("private, no-store"));
     Ok(response)
 }
 
@@ -1854,7 +1864,7 @@ async fn main() -> anyhow::Result<()> {
         ((None, None, None, None), "env") if runtime_environment != "production" => None,
         _ => anyhow::bail!("Infisical backend requires client ID, client secret, project ID and environment"),
     };
-    let artifact_configured = ["USH_ARTIFACT_BUCKET", "USH_ARTIFACT_REGION", "USH_ARTIFACT_ENDPOINT", "USH_ARTIFACT_ACCESS_KEY_ID", "USH_ARTIFACT_SECRET_ACCESS_KEY", "USH_ARTIFACT_PREFIX", "USH_ARTIFACT_MAX_BYTES"]
+    let artifact_configured = ["USH_ARTIFACT_BUCKET", "USH_ARTIFACT_REGION", "USH_ARTIFACT_ACCESS_KEY_ID", "USH_ARTIFACT_SECRET_ACCESS_KEY"]
         .iter().any(|name| env::var(name).ok().is_some_and(|value| !value.trim().is_empty()));
     let artifact_store = if artifact_configured { Some(artifact_store::ArtifactStore::from_env()?) } else { None };
     let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical, artifact_store, rate_limit_per_minute };
