@@ -1795,9 +1795,16 @@ fn github_caller_workflow_is_allowed(workflow_ref: &str, allowed_workflows: &[St
     allowed_workflows.iter().any(|allowed|allowed==workflow_ref)
 }
 
-fn github_source_run_is_allowed(event_name: &str, branch: &str, allowed_branches: &[String]) -> bool {
-    ["push","workflow_dispatch"].contains(&event_name)
-        && allowed_branches.iter().any(|allowed|allowed==branch)
+fn github_source_run_is_allowed(event_name: &str, run: &Value, allowed_branches: &[String]) -> bool {
+    if !["push","pull_request","workflow_dispatch"].contains(&event_name) {
+        return false;
+    }
+    let policy_branch=if event_name=="pull_request" {
+        run.pointer("/pull_requests/0/base/ref").and_then(Value::as_str)
+    } else {
+        run.get("head_branch").and_then(Value::as_str)
+    };
+    policy_branch.is_some_and(|branch|allowed_branches.iter().any(|allowed|allowed==branch))
 }
 
 fn github_job_workflow_is_trusted(
@@ -2000,7 +2007,7 @@ async fn ingest_github_actions_evidence(
         .ok_or(ApiError(StatusCode::CONFLICT,"github_source_branch_missing"))?;
     let source_git_ref=format!("refs/heads/{source_branch}");
     if !allowed_source_paths.iter().any(|path|path==source_path)
-        || !github_source_run_is_allowed(source_event,source_branch,&allowed_source_branches) {
+        || !github_source_run_is_allowed(source_event,&source_run,&allowed_source_branches) {
         return Err(ApiError(StatusCode::FORBIDDEN,"github_source_workflow_not_allowed"));
     }
     let source_identity=GithubRunIdentity {
@@ -3548,13 +3555,17 @@ mod integration_security_tests {
     }
 
     #[test]
-    fn github_source_run_policy_allows_only_exact_events_and_branches() {
+    fn github_source_run_policy_allows_only_exact_events_and_target_branches() {
         let allowed=vec!["main".to_owned(),"release/stable".to_owned()];
-        assert!(github_source_run_is_allowed("push","main",&allowed));
-        assert!(!github_source_run_is_allowed("pull_request","release/stable",&allowed));
-        assert!(!github_source_run_is_allowed("pull_request","feature/task",&allowed));
-        assert!(!github_source_run_is_allowed("workflow_dispatch","release/*",&allowed));
-        assert!(!github_source_run_is_allowed("schedule","main",&allowed));
+        assert!(github_source_run_is_allowed("push",&json!({"head_branch":"main"}),&allowed));
+        assert!(github_source_run_is_allowed("pull_request",&json!({
+            "head_branch":"feature/task","pull_requests":[{"base":{"ref":"main"}}]
+        }),&allowed));
+        assert!(!github_source_run_is_allowed("pull_request",&json!({
+            "head_branch":"feature/task","pull_requests":[{"base":{"ref":"develop"}}]
+        }),&allowed));
+        assert!(!github_source_run_is_allowed("workflow_dispatch",&json!({"head_branch":"release/*"}),&allowed));
+        assert!(!github_source_run_is_allowed("schedule",&json!({"head_branch":"main"}),&allowed));
     }
 
     #[test]
