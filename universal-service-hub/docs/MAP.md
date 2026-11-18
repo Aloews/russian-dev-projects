@@ -609,3 +609,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - The reusable trusted-verification workflow no longer accepts a caller-supplied digest. It requires an artifact name, reads the unique unexpired artifact's SHA-256 digest from the current GitHub Actions run metadata using the read-only Actions permission, downloads that artifact with digest mismatch set to error, verifies the downloaded directory is non-empty, and submits the GitHub-reported digest with the OIDC token.
 - The server persists the digest with the signed run identity and includes it in the receipt response. This binds the receipt to the artifact archive GitHub recorded rather than to an arbitrary caller-provided string.
 - No production secrets or workers are configured. A concrete workflow caller and signed-token end-to-end test remain acceptance gates.
+
+
+### Pull-request artifact identity alignment — 2026-11-18
+
+- The CI artifact manifest previously recorded `GITHUB_SHA` for every event. On `pull_request`, GitHub's workflow environment SHA can represent the synthetic merge ref, while the Actions run API and `workflow_run.head_sha` identify the source branch head. That would make the later trusted source-run comparison reject otherwise successful PR evidence.
+- The manifest now records `pull_request.head.sha` for pull-request events (validated as a 40-character SHA) and keeps `GITHUB_SHA` for push/workflow_dispatch. This aligns the uploaded evidence with the exact source run head validated by the Hub.
+- Exact-head CI must validate the workflow and container startup after this correction; no production config or worker activation was changed.
