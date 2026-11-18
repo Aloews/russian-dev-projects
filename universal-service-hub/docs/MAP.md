@@ -628,3 +628,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - The branch policy test covers allowed and unapproved PR base branches. The SQL event constraint and migration contract include `pull_request` only as a source event; the initial safe configuration should allow only protected `main`.
 - The post-CI workflow resolves exactly one task by project, source repository, candidate SHA and optional PR/issue number. Static task IDs are no longer required; zero or multiple matches fail closed.
 - No production variables or secrets were changed. Exact-head CI and a signed OIDC round-trip remain required.
+
+
+### Pull-request source evidence rejection — 2026-11-18
+
+- A regression review found that the helper still allowed `pull_request` source runs whenever the PR base was an allowlisted branch. This is unsafe because a PR can modify its own CI workflow and produce a success result without executing the trusted pipeline.
+- The source-run policy now accepts only `push` and `workflow_dispatch` events on exact configured protected branches. Regression tests explicitly reject a same-repository PR targeting `main`; the post-CI caller skips PR events before requesting OIDC.
+- No production secrets or worker settings changed. Exact-head CI must validate this fail-closed policy before trusted evidence can be enabled.
