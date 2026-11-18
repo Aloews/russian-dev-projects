@@ -1795,6 +1795,11 @@ fn github_caller_workflow_is_allowed(workflow_ref: &str, allowed_workflows: &[St
     allowed_workflows.iter().any(|allowed|allowed==workflow_ref)
 }
 
+fn github_source_run_is_allowed(event_name: &str, branch: &str, allowed_branches: &[String]) -> bool {
+    ["push","workflow_dispatch"].contains(&event_name)
+        && allowed_branches.iter().any(|allowed|allowed==branch)
+}
+
 fn github_job_workflow_is_trusted(
     job_workflow_ref: &str,
     job_workflow_sha: &str,
@@ -1822,11 +1827,7 @@ fn github_actions_run_matches(run: &Value, identity: &GithubRunIdentity<'_>) -> 
         && run.get("status").and_then(Value::as_str)==Some("completed")
         && run.get("conclusion").and_then(Value::as_str)==Some("success")
         && run.get("event").and_then(Value::as_str)==Some(identity.event_name)
-        && (if identity.event_name=="pull_request" {
-            run.pointer("/pull_requests/0/head/sha").and_then(Value::as_str)
-        } else {
-            run.get("head_sha").and_then(Value::as_str)
-        }).is_some_and(|value|value.eq_ignore_ascii_case(identity.sha))
+        && run.get("head_sha").and_then(Value::as_str).is_some_and(|value|value.eq_ignore_ascii_case(identity.sha))
         && run.pointer("/head_repository/full_name").and_then(Value::as_str)==Some(identity.repository)
         && run.get("path").and_then(Value::as_str)==Some(identity.workflow_path)
         && run.get("head_branch").and_then(Value::as_str)==Some(expected_branch)
@@ -1980,6 +1981,13 @@ async fn ingest_github_actions_evidence(
     if allowed_source_paths.is_empty() {
         return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_source_workflow_allowlist_not_configured"));
     }
+    let allowed_source_branches=env::var("USH_GITHUB_ALLOWED_SOURCE_BRANCHES")
+        .unwrap_or_default().split(',')
+        .map(str::trim).filter(|value|!value.is_empty()).map(str::to_owned)
+        .collect::<Vec<_>>();
+    if allowed_source_branches.is_empty() {
+        return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_source_branch_allowlist_not_configured"));
+    }
     let source_path=source_run.get("path").and_then(Value::as_str)
         .ok_or(ApiError(StatusCode::CONFLICT,"github_source_workflow_path_missing"))?;
     let source_event=source_run.get("event").and_then(Value::as_str)
@@ -1989,7 +1997,7 @@ async fn ingest_github_actions_evidence(
         .ok_or(ApiError(StatusCode::CONFLICT,"github_source_branch_missing"))?;
     let source_git_ref=format!("refs/heads/{source_branch}");
     if !allowed_source_paths.iter().any(|path|path==source_path)
-        || !["push","pull_request","workflow_dispatch"].contains(&source_event) {
+        || !github_source_run_is_allowed(source_event,source_branch,&allowed_source_branches) {
         return Err(ApiError(StatusCode::FORBIDDEN,"github_source_workflow_not_allowed"));
     }
     let source_identity=GithubRunIdentity {
@@ -3600,32 +3608,13 @@ mod integration_security_tests {
     }
 
     #[test]
-    fn pull_request_source_run_binds_candidate_to_head_commit_not_merge_sha() {
-        let run=json!({
-            "id":123456,
-            "run_attempt":1,
-            "status":"completed",
-            "conclusion":"success",
-            "event":"pull_request",
-            "head_sha":"cccccccccccccccccccccccccccccccccccccccc",
-            "head_branch":"feature/task",
-            "path":".github/workflows/ci.yml",
-            "head_repository":{"full_name":"Aloews/russian-dev-projects"},
-            "pull_requests":[{"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]
-        });
-        let identity=GithubRunIdentity {
-            repository:"Aloews/russian-dev-projects",
-            workflow_path:".github/workflows/ci.yml",
-            git_ref:"refs/heads/feature/task",
-            event_name:"pull_request",
-            sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            run_id:123456,
-            run_attempt:1
-        };
-        assert!(github_actions_run_matches(&run,&identity));
-        let mut wrong_candidate=identity;
-        wrong_candidate.sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        assert!(!github_actions_run_matches(&run,&wrong_candidate));
+    fn trusted_source_runs_require_an_allowlisted_branch_and_non_pr_event() {
+        let allowed=vec!["main".to_owned(),"release".to_owned()];
+        assert!(github_source_run_is_allowed("push","main",&allowed));
+        assert!(github_source_run_is_allowed("workflow_dispatch","release",&allowed));
+        assert!(!github_source_run_is_allowed("pull_request","main",&allowed));
+        assert!(!github_source_run_is_allowed("push","feature/untrusted",&allowed));
+        assert!(!github_source_run_is_allowed("workflow_run","main",&allowed));
     }
 
     #[test]
