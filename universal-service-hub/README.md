@@ -165,3 +165,8 @@ Rate-limit fingerprint rows idle for 24 hours are pruned at startup and hourly. 
 ## Worker supervisor (initial, non-billable scope)
 
 The image also contains a separately runnable `/app/ush-worker` binary. It uses a dedicated `USH_WORKER_DATABASE_URL` with queue-table-only grants, bounded concurrency, allowlisted job claims, lease recovery and graceful SIGINT shutdown. Production connections require TLS certificate and hostname verification. The current capability allowlist intentionally permits only `system_noop`; the worker makes no model-provider calls and does not yet dispatch specialist agents. See [docs/WORKER_RUNTIME.md](docs/WORKER_RUNTIME.md) for grants, configuration and acceptance gates.
+
+
+### Artifact storage
+
+The API supports private S3-compatible artifacts with generated object keys, SHA-256 verification, project-scoped upload/download authorization and a 2 MiB request limit. Configure `USH_ARTIFACT_BUCKET`, `USH_ARTIFACT_REGION`, `USH_ARTIFACT_ACCESS_KEY_ID`, `USH_ARTIFACT_SECRET_ACCESS_KEY`, optionally `USH_ARTIFACT_ENDPOINT`, `USH_ARTIFACT_PREFIX` and `USH_ARTIFACT_MAX_BYTES`. Bucket encryption, private access and lifecycle retention must be configured at the storage provider. Agent-to-agent handoff is not yet wired to this API.
