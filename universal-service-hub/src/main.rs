@@ -786,8 +786,7 @@ struct TaskCheckpointBody {
     base_sha: Option<String>,
     #[serde(default)]
     candidate_sha: Option<String>,
-    #[serde(default)]
-    artifact_digest: Option<String>,
+    artifact_digest: String,
     #[serde(default)]
     workspace_id: Option<String>,
     #[serde(default)]
@@ -1750,7 +1749,7 @@ async fn release_engineering_task_path_locks(
 fn github_verification_receipt_hash(
     identity: &Value,
     source_run: &Value,
-    artifact_digest: Option<&str>,
+    artifact_digest: &str,
     task_id: &str,
 ) -> String {
     let stable_claims=json!({
@@ -1764,7 +1763,7 @@ fn github_verification_receipt_hash(
         json!({
             "identity":stable_claims,
             "source_run":source_run,
-            "artifact_digest":artifact_digest,
+            "task_id":task_id
             "task_id":task_id
         }).to_string().as_bytes()
     ))
@@ -1999,10 +1998,10 @@ async fn ingest_github_actions_evidence(
         || body.source_run_attempt==0 || body.source_run_attempt>100
         || body.source_issue_number==Some(0)
         || body.candidate_sha.len()!=40 || !body.candidate_sha.chars().all(|c|c.is_ascii_hexdigit())
-        || body.artifact_digest.as_deref().is_some_and(|digest|!valid_sha256_artifact_digest(digest)) {
+        || !valid_sha256_artifact_digest(&body.artifact_digest) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_github_actions_evidence_request"));
     }
-    let artifact_digest=body.artifact_digest.as_deref().map(str::to_ascii_lowercase);
+    let artifact_digest=body.artifact_digest.to_ascii_lowercase();
     let candidate_sha=body.candidate_sha.to_ascii_lowercase();
     let token=bearer(&headers)?;
     let identity=verify_github_actions_identity(&state,token).await?;
@@ -2086,7 +2085,7 @@ async fn ingest_github_actions_evidence(
     let task_id:String=task.try_get("id")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
     let attestation_hash=github_verification_receipt_hash(
-        &identity,&source_run,artifact_digest.as_deref(),&task_id
+        &identity,&source_run,&artifact_digest,&task_id
     );
     let tenant_id:String=task.try_get("tenant_id")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
@@ -3562,15 +3561,14 @@ mod integration_security_tests {
         retry["attestation_run_attempt"]=json!(2);
         let source=json!({"id":200,"run_attempt":1,"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc"});
         let digest=format!("sha256:{}", "d".repeat(64));
-        let first=github_verification_receipt_hash(&identity,&source,Some(digest.as_str()),"task-1");
-        let second=github_verification_receipt_hash(&retry,&source,Some(digest.as_str()),"task-1");
+        let first=github_verification_receipt_hash(&identity,&source,digest.as_str(),"task-1");
+        let second=github_verification_receipt_hash(&retry,&source,digest.as_str(),"task-1");
         assert_eq!(first,second);
         let changed_digest=format!("sha256:{}", "e".repeat(64));
-        assert_ne!(first,github_verification_receipt_hash(&retry,&source,Some(changed_digest.as_str()),"task-1"));
-        assert_ne!(first,github_verification_receipt_hash(&retry,&source,None,"task-1"));
+        assert_ne!(first,github_verification_receipt_hash(&retry,&source,changed_digest.as_str(),"task-1"));
         let mut changed_workflow=retry.clone();
         changed_workflow["job_workflow_sha"]=json!("ffffffffffffffffffffffffffffffffffffffff");
-        assert_ne!(first,github_verification_receipt_hash(&changed_workflow,&source,Some(digest.as_str()),"task-1"));
+        assert_ne!(first,github_verification_receipt_hash(&changed_workflow,&source,digest.as_str(),"task-1"));
     }
 
     #[test]
