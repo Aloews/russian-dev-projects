@@ -1570,6 +1570,12 @@ fn worker_can_complete_status(role: &str, next_status: &str) -> bool {
     }
 }
 
+fn reviewer_decision_valid(candidate_sha: Option<&str>, evidence: &Value) -> bool {
+    evidence.get("decision").and_then(Value::as_str)==Some("approved")
+        && candidate_sha.is_some_and(|sha|evidence.get("reviewed_sha").and_then(Value::as_str)==Some(sha))
+        && evidence.get("findings").and_then(Value::as_array).is_some()
+}
+
 fn worker_completion_evidence_valid(
     role: &str,
     next_status: &str,
@@ -1992,9 +1998,7 @@ async fn complete_engineering_task(
     }
     let allowed=worker_can_complete_status(role,&body.next_status);
     let completion_evidence_valid=if body.next_status=="verified" {
-        body.evidence.get("decision").and_then(Value::as_str)==Some("approved")
-            && body.candidate_sha.as_deref().is_some_and(|sha|body.evidence.get("reviewed_sha").and_then(Value::as_str)==Some(sha))
-            && body.evidence.get("findings").and_then(Value::as_array).is_some()
+        reviewer_decision_valid(body.candidate_sha.as_deref(),&body.evidence)
     } else {
         worker_completion_evidence_valid(role,&body.next_status,body.candidate_sha.as_deref(),&body.evidence)
     };
@@ -3353,11 +3357,21 @@ mod integration_security_tests {
         assert!(!worker_completion_evidence_valid("reviewer","verified",Some(sha),&json!({
             "decision":"approved","reviewed_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","findings":[]
         })));
-        for role in ["builder", "tester", "reviewer"] {
+        for role in ["builder", "tester"] {
             assert!(!worker_can_complete_status(role, "verified"));
             assert!(worker_can_complete_status(role, "blocked"));
             assert!(worker_can_complete_status(role, "recovery"));
         }
+        assert!(worker_can_complete_status("reviewer", "verified"));
+        assert!(reviewer_decision_valid(Some(sha),&json!({
+            "decision":"approved","reviewed_sha":sha,"findings":[]
+        })));
+        assert!(!reviewer_decision_valid(Some(sha),&json!({
+            "decision":"approved","reviewed_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","findings":[]
+        })));
+        assert!(!reviewer_decision_valid(Some(sha),&json!({
+            "decision":"rejected","reviewed_sha":sha,"findings":[]
+        })));
         assert!(!worker_can_complete_status("builder", "queued_test"));
         assert!(!worker_can_complete_status("tester", "review"));
         assert!(worker_completion_evidence_valid("architect","queued",None,&json!({
