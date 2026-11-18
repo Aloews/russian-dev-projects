@@ -14,6 +14,7 @@ jobs:
   attest:
     if: >-
       ${{ github.event.workflow_run.conclusion == 'success'
+          && contains(fromJSON('["push","workflow_dispatch"]'), github.event.workflow_run.event)
           && github.event.workflow_run.head_repository.full_name == github.repository
           && vars.USH_API_BASE_URL != ''
           && vars.USH_GITHUB_OIDC_AUDIENCE != ''
