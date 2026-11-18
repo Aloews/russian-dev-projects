@@ -1,4 +1,5 @@
--- Immutable receipts from a completed, successful, trusted GitHub Actions run.
+-- Trusted GitHub Actions evidence. Rows are immutable receipts tied to the exact
+-- task candidate and a completed successful run fetched from GitHub's API.
 CREATE TABLE engineering_task_verification_evidence (
     id VARCHAR(36) PRIMARY KEY,
     tenant_id VARCHAR(80) NOT NULL,
@@ -49,7 +50,6 @@ BEGIN
     RETURN NEW;
 END;
 $function$;
-
 CREATE TRIGGER trg_verification_evidence_parent
     BEFORE INSERT ON engineering_task_verification_evidence
     FOR EACH ROW EXECUTE FUNCTION ush_validate_verification_evidence_parent();
@@ -59,14 +59,12 @@ BEGIN
     RAISE EXCEPTION 'verification evidence is immutable';
 END;
 $function$;
-
 CREATE TRIGGER trg_verification_evidence_immutable
     BEFORE UPDATE ON engineering_task_verification_evidence
     FOR EACH ROW EXECUTE FUNCTION ush_prevent_verification_evidence_update();
 
 ALTER TABLE engineering_task_verification_evidence ENABLE ROW LEVEL SECURITY;
 ALTER TABLE engineering_task_verification_evidence FORCE ROW LEVEL SECURITY;
-
 CREATE POLICY tenant_execution_isolation ON engineering_task_verification_evidence
     USING (
         COALESCE(current_setting('app.is_admin', true), 'false') = 'true'
