@@ -742,6 +742,8 @@ jobs:
       - name: Create completed CI evidence manifest
         if: success()
         working-directory: .
+        env:
+          SOURCE_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           mkdir -p "$RUNNER_TEMP/ush-ci-evidence"
           docker image inspect universal-service-hub:test \
