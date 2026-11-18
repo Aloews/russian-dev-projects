@@ -319,6 +319,7 @@ jobs:
             -d '{"capability":"ai.chat"}')
           test "$deleted_token" = "401"
 
+          docker stop ush-smoke >/dev/null
           if docker run --rm --network host \
             -e USH_API_TOKEN="$USH_API_TOKEN" \
             -e USH_DATABASE_URL="postgres://ush:ush-test-password@127.0.0.1:5432/ush_test" \
