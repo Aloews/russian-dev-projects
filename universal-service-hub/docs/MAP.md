@@ -584,3 +584,6 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Added unit tests for repository/workflow allowlisting, reusable-workflow SHA pinning, exact run metadata, failure/replay mismatch and numeric/string run claims; migration contract tests; container smoke checks for RLS and restricted grants.
 - Required configuration: `USH_GITHUB_OIDC_AUDIENCE`, `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS`, `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA`; optional `USH_GITHUB_API_TOKEN` for API rate limits/private run lookup.
 - Not yet complete: trusted reusable workflow wiring, real signed-token end-to-end test, artifact digest capture, exact-head CI and adversarial disposable-Postgres tests. Existing fail-closed behavior remains until those gates pass. No production config or workers changed.
+
+
+- First exact-head container startup exposed a migration syntax defect: the `job_workflow_sha` CHECK expression was truncated before its closing quote/parenthesis. PostgreSQL rejected the migration at the next `push` literal, so the Hub never opened port 18000. Replaced it with a length check plus a negated non-hex character class, avoiding the malformed expression. The fix is committed as `5fc30875d1c2c1856c6957d38f74ff53a81591f7`; exact-head CI is pending.
