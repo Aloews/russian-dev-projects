@@ -1799,13 +1799,11 @@ async fn complete_engineering_task(
         .bind(&body.workspace_id).bind(tenant_id).bind(project_id).bind(worker_id).bind(&workspace_hash)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_workspace_check_failed"))?;
     if workspace.is_none(){return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));}
-    let assignment=sqlx::query("SELECT worker_role,writer_scope,candidate_sha FROM engineering_task_workspace_assignments WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND workspace_id=$4 AND released_at IS NULL FOR UPDATE")
+    let assignment=sqlx::query("SELECT worker_role FROM engineering_task_workspace_assignments WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND workspace_id=$4 AND released_at IS NULL FOR UPDATE")
         .bind(tenant_id).bind(project_id).bind(&task_id).bind(&body.workspace_id)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
     let Some(assignment)=assignment else{return Err(ApiError(StatusCode::CONFLICT,"active_task_workspace_assignment_required"));};
     let assigned_role:String=assignment.try_get("worker_role").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
-    let assigned_scope:Value=assignment.try_get("writer_scope").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
-    let assigned_candidate:Option<String>=assignment.try_get("candidate_sha").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
     if assigned_role!=role{return Err(ApiError(StatusCode::FORBIDDEN,"workspace_assignment_role_mismatch"));}
     if body.candidate_sha.is_some() && existing_candidate.as_deref().is_some_and(|existing|body.candidate_sha.as_deref()!=Some(existing)) && role!="implementer" {
         return Err(ApiError(StatusCode::CONFLICT,"candidate_sha_change_requires_implementer"));
