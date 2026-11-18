@@ -607,13 +607,20 @@ jobs:
           printf '%s' "$final_tasks" | jq -e --arg id "$task_id" --arg sha "$candidate_sha" \
             'any(.[]; .id == $id and .status == "review" and .candidate_sha == $sha and .metadata.source_issue_number == 63)' >/dev/null
 
-          for pair in "$implementer_workspace_id:$implementer_workspace_lease:implementer-smoke:$implementer_token" \
-                      "$tester_workspace_id:$tester_workspace_lease:tester-smoke:$tester_token" \
-                      "$reviewer_workspace_id:$reviewer_workspace_lease:reviewer-smoke:$reviewer_token"; do
+          for pair in "$implementer_workspace_id:$implementer_workspace_lease:implementer-smoke:$implementer_token:$task_id:$task_lease" \
+                      "$tester_workspace_id:$tester_workspace_lease:tester-smoke:$tester_token:$second_task_id:$second_task_lease" \
+                      "$reviewer_workspace_id:$reviewer_workspace_lease:reviewer-smoke:$reviewer_token:$task_id:$reviewer_task_lease"; do
             workspace_id=$(printf '%s' "$pair" | cut -d: -f1)
             workspace_lease=$(printf '%s' "$pair" | cut -d: -f2)
             worker_id=$(printf '%s' "$pair" | cut -d: -f3)
             worker_token=$(printf '%s' "$pair" | cut -d: -f4)
+            assigned_task_id=$(printf '%s' "$pair" | cut -d: -f5)
+            assigned_task_lease=$(printf '%s' "$pair" | cut -d: -f6)
+            curl -fsS -X DELETE "http://127.0.0.1:8000/v1/tasks/$assigned_task_id/workspace-assignment" \
+              -H "Authorization: Bearer $worker_token" -H "Content-Type: application/json" \
+              -d "$(jq -nc --arg worker_id "$worker_id" --arg task_lease_token "$assigned_task_lease" \
+                --arg workspace_id "$workspace_id" --arg workspace_lease_token "$workspace_lease" \
+                '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token}')" >/dev/null
             curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$workspace_id/release" \
               -H "Authorization: Bearer $worker_token" -H "Content-Type: application/json" \
               -d "$(jq -nc --arg worker_id "$worker_id" --arg lease_token "$workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
