@@ -216,6 +216,8 @@ Configure these server-side variables only after reviewing and pinning the reusa
 - `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA`: exact 40-character `job_workflow_sha` of the approved reusable workflow.
 - `USH_GITHUB_API_TOKEN`: optional read-only Actions token for private repositories or increased API rate limits.
 
+The reusable workflow requires an artifact digest in `sha256:<64 hex characters>` form. The calling build/test workflow must calculate it from the exact artifact it wants reviewed (for example, `sha256sum build-artifact.tar.gz`) and pass it as `artifact_digest`. The Hub persists that digest with the GitHub run start/completion timestamps and signed identity claims.
+
 Projects call `.github/workflows/ush-trusted-verify.yml` only after their own build/test workflow succeeds, passing the Hub URL, audience, project ID, task ID and exact candidate SHA. The reusable workflow requests a short-lived GitHub OIDC token and posts it directly to the Hub; it does not expose a long-lived Hub credential. The API additionally verifies the completed run's repository, caller workflow path, branch, event, run ID/attempt, conclusion and SHA.
 
 Do not enable the endpoint in production until the reusable workflow is merged and its immutable SHA/ref are configured, exact-head CI passes, and a real OIDC round-trip is tested. The example values above are intentionally blank.
