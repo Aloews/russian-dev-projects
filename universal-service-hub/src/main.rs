@@ -1796,15 +1796,11 @@ fn github_caller_workflow_is_allowed(workflow_ref: &str, allowed_workflows: &[St
 }
 
 fn github_source_run_is_allowed(event_name: &str, run: &Value, allowed_branches: &[String]) -> bool {
-    if !["push","pull_request","workflow_dispatch"].contains(&event_name) {
+    if !["push","workflow_dispatch"].contains(&event_name) {
         return false;
     }
-    let policy_branch=if event_name=="pull_request" {
-        run.pointer("/pull_requests/0/base/ref").and_then(Value::as_str)
-    } else {
-        run.get("head_branch").and_then(Value::as_str)
-    };
-    policy_branch.is_some_and(|branch|allowed_branches.iter().any(|allowed|allowed==branch))
+    run.get("head_branch").and_then(Value::as_str)
+        .is_some_and(|branch|allowed_branches.iter().any(|allowed|allowed==branch))
 }
 
 fn github_job_workflow_is_trusted(
