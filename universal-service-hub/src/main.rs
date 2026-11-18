@@ -1940,7 +1940,7 @@ async fn ingest_github_actions_evidence(
     let event_name=attestation["event_name"].as_str().unwrap_or_default();
     let run_id=attestation["run_id"].as_u64().unwrap_or_default() as i64;
     let run_attempt=attestation["run_attempt"].as_u64().unwrap_or_default() as i32;
-    let attestation_hash=hex::encode(Sha256::digest(token.as_bytes()));
+    let attestation_hash=hex::encode(Sha256::digest(attestation.to_string().as_bytes()));
 
     let mut tx=begin_platform_transaction(&state).await?;
     let task=sqlx::query("SELECT tenant_id,status,candidate_sha,metadata FROM engineering_tasks WHERE id=$1 AND project_id=$2 FOR UPDATE")
