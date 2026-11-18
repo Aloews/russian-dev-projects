@@ -1531,14 +1531,23 @@ async fn upload_worker_execution_artifact(
 
     // The row lock prevents lease replacement; re-check wall-clock expiry after
     // the remote write so a slow upload cannot register output after lease expiry.
-    let lease_still_valid = sqlx::query(
-        "SELECT 1 FROM execution_jobs WHERE project_id=$1 AND id=$2 AND status='leased' \
+    let lease_recheck = sqlx::query(
+        "SELECT 1 FROM execution_jobs WHERE project_id=$1 AND id=$2 AND status='leased' \\
          AND lease_owner=$3 AND lease_token=$4 AND lease_expires_at > clock_timestamp()"
     )
         .bind(&project_id).bind(job_id).bind(&worker_id).bind(lease_token)
-        .fetch_optional(&mut *tx).await
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "worker_lease_recheck_failed"))?
-        .is_some();
+        .fetch_optional(&mut *tx).await;
+    let lease_still_valid = match lease_recheck {
+        Ok(row) => row.is_some(),
+        Err(error) => {
+            let _ = tx.rollback().await;
+            if let Err(cleanup_error) = store.delete(&stored.object_key).await {
+                tracing::error!(artifact_id = %stored.artifact_id, error = ?cleanup_error, "worker artifact cleanup after lease recheck error failed");
+            }
+            tracing::error!(project_id, job_id = %job_id, error = ?error, "worker artifact lease recheck failed");
+            return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "worker_lease_recheck_failed"));
+        }
+    };
     if !lease_still_valid {
         let _ = tx.rollback().await;
         if let Err(error) = store.delete(&stored.object_key).await {
