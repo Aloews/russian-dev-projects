@@ -55,7 +55,7 @@ fn trusted_github_verification_migration_is_tenant_scoped_and_immutable() {
         "job_workflow_sha",
         "run_started_at",
         "run_completed_at",
-        "artifact_digest VARCHAR(71) CHECK (artifact_digest IS NULL OR",
+        "artifact_digest VARCHAR(71) NOT NULL CHECK",
         "length(artifact_digest)=71",
         "attestation_run_id BIGINT NOT NULL",
         "attestation_run_attempt INTEGER NOT NULL",
