@@ -136,7 +136,7 @@ impl ArtifactStore {
         }
         let stored = self.put(project_id, job_id, content_type, bytes).await?;
         let result = sqlx::query(
-            "INSERT INTO execution_artifacts (id, project_id, job_id, task_id, artifact_type, storage_backend, storage_key, content_sha256, size_bytes) VALUES ($1, $2, $3, $4, $5, 's3', $6, $7, $8)"
+            "INSERT INTO execution_artifacts (id, project_id, job_id, task_id, artifact_type, storage_backend, storage_key, content_sha256, size_bytes, content_type) VALUES ($1, $2, $3, $4, $5, 's3', $6, $7, $8, $9)"
         )
             .bind(stored.artifact_id)
             .bind(project_id)
@@ -146,6 +146,7 @@ impl ArtifactStore {
             .bind(&stored.object_key)
             .bind(&stored.sha256)
             .bind(stored.size_bytes as i64)
+            .bind(&stored.content_type)
             .execute(pool).await;
         if let Err(error) = result {
             if let Err(cleanup_error) = self.delete(&stored.object_key).await {
