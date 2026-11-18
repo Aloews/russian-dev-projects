@@ -74,6 +74,33 @@ AI:
 
 Project tokens have `owner`, `operator` or `viewer` roles. The Rust runtime enforces project capability/provider allowlists and role boundaries: owner/operator tokens can invoke AI; all project roles can perform read-only provider selection. Project owners can list, issue and revoke operator/viewer tokens only within their own project; only the root administrator can issue owner tokens or change/delete project policy. Tokens are generated once, stored as SHA-256 hashes and revocable.
 
+## Trusted GitHub Actions verification
+
+The execution API now has a dedicated evidence-ingestion route:
+
+`POST /v1/projects/{project_id}/tasks/{task_id}/verification/github-actions`
+
+Send the GitHub Actions OIDC JWT as a Bearer token. The request body is not accepted as proof. The Hub:
+
+- Verifies the JWT signature using GitHub's published JWKS, and validates issuer, configured audience, expiry and subject.
+- Requires the caller repository to match the task's `metadata.source_repository`.
+- Requires an allowlisted reusable workflow reference (`job_workflow_ref`) and its exact pinned `job_workflow_sha`.
+- Rejects pull-request refs and accepts only `push` or `workflow_dispatch` events on branch refs.
+- Fetches the run directly from GitHub's Actions API and checks repository, workflow path, branch, event, run ID, run attempt, completion status, successful conclusion and exact head SHA.
+- Persists an append-only, tenant-scoped receipt bound to the task's current candidate SHA. Duplicate delivery of the same attestation is idempotent; conflicting reuse is rejected.
+- Allows a separate read-only reviewer to mark the task verified only when a matching successful receipt exists and the reviewer differs from the latest implementation/build/test worker.
+
+Configure these variables before enabling the integration:
+
+- `USH_GITHUB_OIDC_AUDIENCE` — exact audience requested by the trusted workflow.
+- `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS` — comma-separated exact reusable workflow refs, including repository, file path and ref.
+- `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA` — 40-character commit SHA of the approved reusable workflow implementation.
+- `USH_GITHUB_API_TOKEN` — optional GitHub API token for higher API rate limits; required if the target repository's Actions API is not publicly readable.
+
+The trusted caller workflow must request `id-token: write`, invoke the allowlisted reusable workflow pinned to the approved ref, and run the evidence submission only after its test/build dependencies succeed. The task must already be in `review`, have a pinned candidate SHA, and identify its repository in `metadata.source_repository`.
+
+The receipt stores the OIDC token hash, not the raw token. Artifact digest capture and full adversarial end-to-end tests remain outstanding; this endpoint is not a production activation signal by itself. Do not enable worker completion or production verification until the exact-head CI, trusted workflow wiring, API credentials/rate limits and operational acceptance gates have passed.
+
 ## Secret manager
 
 Infisical Universal Auth is supported for provider credentials. Configure:
