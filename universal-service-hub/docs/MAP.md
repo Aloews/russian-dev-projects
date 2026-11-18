@@ -674,3 +674,10 @@ The cloud coding workflow was not triggered for these checks because it can call
 - Worker uses a dedicated `USH_WORKER_DATABASE_URL`; production requires TLS `verify-full`; worker does not run migrations or receive the Hub API/admin token.
 - Capability is intentionally limited to non-billable `system_noop`. No provider invocation, specialist dispatch, artifact bytes or production service is claimed.
 - Required next evidence: exact-head Rust CI, PostgreSQL concurrency/recovery tests, container smoke, and a process-kill/restart test.
+
+
+## Worker runtime and artifact storage
+
+- Worker Supervisor v1: `src/bin/ush-worker.rs`, `src/execution_queue.rs`; limited to `system_noop` until project-scoped execution authorization and provider budgets are complete.
+- Artifact adapter: `src/artifact_store.rs`; bounded S3-compatible upload/delete, UUID-derived keys and SHA-256 metadata. Not yet integrated with the execution API or artifact manifest transaction.
+- Workspaces/Git worktrees remain next after durable artifact handoff and specialist dispatcher gates.
