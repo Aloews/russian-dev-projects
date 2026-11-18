@@ -809,7 +809,7 @@ async fn create_engineering_checkpoint(
         || body.workspace_id.as_ref().is_some_and(|v| Uuid::parse_str(v).is_err())
         || body.git_ref.as_ref().is_some_and(|v| v.is_empty() || v.len()>240 || v.chars().any(char::is_control))
         || body.worktree_path.as_ref().is_some_and(|v| v.is_empty() || v.len()>1000 || v.contains('\0'))
-        || body.artifact_digest.as_ref().is_some_and(|v| v.len()>128 || !v.chars().all(|c| c.is_ascii_hexdigit()))
+        || body.artifact_digest.len()>128 || !body.artifact_digest.chars().all(|c| c.is_ascii_hexdigit())
         || body.metadata.to_string().len()>8192 {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_checkpoint"));
     }
@@ -1763,6 +1763,7 @@ fn github_verification_receipt_hash(
         json!({
             "identity":stable_claims,
             "source_run":source_run,
+            "artifact_digest":artifact_digest,
             "task_id":task_id,
         }).to_string().as_bytes()
     ))
