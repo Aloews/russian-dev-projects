@@ -47,7 +47,27 @@ pub fn valid_content_type(value: &str) -> bool {
     }
     let media = value.split(';').next().unwrap_or("").trim();
     let Some((kind, subtype)) = media.split_once('/') else { return false; };
-    let valid_token = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#fn safe_component(value: &str) -> bool {^_.+-".contains(&b));
+    let valid_token = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#fn valid_bucket(value: &str) -> bool {
+    (3..=63).contains(&value.len())
+        && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+        && !value.starts_with('.') && !value.ends_with('.')
+        && !value.starts_with('-') && !value.ends_with('-')
+        && !value.contains("..")
+}
+
+fn validate_endpoint(value: &str, production: bool) -> anyhow::Result<String> {
+    let parsed = url::Url::parse(value).context("invalid artifact endpoint URL")?;
+    if parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some()
+        || parsed.query().is_some() || parsed.fragment().is_some()
+        || (production && parsed.scheme() != "https")
+        || (!production && !["http", "https"].contains(&parsed.scheme()))
+    {
+        bail!("artifact endpoint must be an HTTPS URL without credentials, query or fragment in production");
+    }
+    Ok(parsed.to_string().trim_end_matches('/').to_owned())
+}
+
+fn safe_component(value: &str) -> bool {^_.+-".contains(&b));
     valid_token(kind) && valid_token(subtype)
 }
 
@@ -66,16 +86,19 @@ fn artifact_key(prefix: &str, project_id: &str, job_id: Uuid, artifact_id: Uuid)
 impl ArtifactStore {
     pub fn from_env() -> anyhow::Result<Self> {
         let bucket = env::var("USH_ARTIFACT_BUCKET").context("USH_ARTIFACT_BUCKET is required")?;
-        if bucket.is_empty() || bucket.len() > 255 || bucket.contains('/') || bucket.contains('\\') {
+        if !valid_bucket(&bucket) {
             bail!("invalid USH_ARTIFACT_BUCKET");
         }
         let region = env::var("USH_ARTIFACT_REGION").context("USH_ARTIFACT_REGION is required")?;
+        if region.trim().is_empty() { bail!("USH_ARTIFACT_REGION must not be empty"); }
         let access_key = env::var("USH_ARTIFACT_ACCESS_KEY_ID").context("USH_ARTIFACT_ACCESS_KEY_ID is required")?;
         let secret_key = env::var("USH_ARTIFACT_SECRET_ACCESS_KEY").context("USH_ARTIFACT_SECRET_ACCESS_KEY is required")?;
         if access_key.is_empty() || secret_key.is_empty() {
             bail!("artifact storage credentials must not be empty");
         }
-        let endpoint = env::var("USH_ARTIFACT_ENDPOINT").ok().filter(|v| !v.trim().is_empty());
+        let production = env::var("USH_ENVIRONMENT").unwrap_or_default() == "production";
+        let endpoint = env::var("USH_ARTIFACT_ENDPOINT").ok().filter(|v| !v.trim().is_empty())
+            .map(|value| validate_endpoint(&value, production)).transpose()?;
         let prefix = env::var("USH_ARTIFACT_PREFIX").unwrap_or_else(|_| "ush-artifacts-v1".into());
         if !safe_component(&prefix) { bail!("USH_ARTIFACT_PREFIX must be a safe component"); }
         let max_bytes = bounded_size(env::var("USH_ARTIFACT_MAX_BYTES").ok())?;
@@ -89,9 +112,6 @@ impl ArtifactStore {
                 .build())
             .force_path_style(true);
         if let Some(endpoint) = endpoint {
-            if !endpoint.starts_with("https://") && env::var("USH_ENVIRONMENT").unwrap_or_default() == "production" {
-                bail!("artifact endpoint must use HTTPS in production");
-            }
             builder = builder.endpoint_url(endpoint);
         }
         let client = Client::from_conf(builder.build());
@@ -224,6 +244,18 @@ mod tests {
         assert!(bounded_size(Some("0".into())).is_err());
         assert!(bounded_size(Some(MAX_ARTIFACT_BYTES.to_string())).is_ok());
         assert!(bounded_size(Some((MAX_ARTIFACT_BYTES + 1).to_string())).is_err());
+    }
+
+    #[test]
+    fn bucket_and_endpoint_validation_reject_unsafe_values() {
+        assert!(valid_bucket("private-artifacts-123"));
+        assert!(!valid_bucket("UPPER"));
+        assert!(!valid_bucket("ab"));
+        assert!(!valid_bucket("../bucket"));
+        assert!(validate_endpoint("https://s3.example.test", true).is_ok());
+        assert!(validate_endpoint("http://s3.example.test", true).is_err());
+        assert!(validate_endpoint("https://user:pass@s3.example.test", false).is_err());
+        assert!(validate_endpoint("http://minio.local:9000", false).is_ok());
     }
 
     #[test]
