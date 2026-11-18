@@ -641,3 +641,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Moved attestation-hash construction until after the Hub resolves the unique review task by project, candidate SHA, repository and optional issue number. The hash now includes the resolved task ID without referencing an uninitialized local.
 - Added explicit positive coverage for protected-branch `workflow_dispatch` evidence while keeping `pull_request` rejected.
 - Exact-head Rust and container CI must validate this correction; no production changes were made.
+
+
+### Trusted evidence artifact is mandatory — 2026-11-18
+
+- The trusted attestation workflow previously treated a missing evidence artifact as an empty digest and allowed the API/database to persist a receipt without an artifact hash. That did not meet the evidence lifecycle's artifact-digest requirement.
+- The workflow now fails closed if the source-run manifest is absent, empty, or does not match the exact source SHA/run ID/attempt. The Hub request requires a valid SHA-256 digest; the evidence table column is `NOT NULL`; the receipt hash includes the digest.
+- Added a deserialization regression proving that evidence without `artifact_digest` is rejected and updated the migration contract test. Exact-head CI is pending; no production migration, secret, worker or deployment was changed.
