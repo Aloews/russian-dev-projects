@@ -2038,10 +2038,6 @@ async fn ingest_github_actions_evidence(
     if attestation_run_id==run_id && attestation_run_attempt==run_attempt {
         return Err(ApiError(StatusCode::CONFLICT,"attestation_and_source_run_must_differ"));
     }
-    let attestation_hash=hex::encode(Sha256::digest(
-        format!("{}:{}:{}:{}",identity,source_run,artifact_digest,task_id).as_bytes()
-    ));
-
     let mut tx=begin_platform_transaction(&state).await?;
     let source_issue_number=body.source_issue_number.map(|number|number.to_string());
     let matching_tasks=sqlx::query("SELECT id,tenant_id,status,candidate_sha,metadata FROM engineering_tasks WHERE project_id=$1 AND status='review' AND candidate_sha=$2 AND metadata->>'source_repository'=$3 AND ($4::text IS NULL OR metadata->>'source_issue_number'=$4) FOR UPDATE")
@@ -2058,6 +2054,9 @@ async fn ingest_github_actions_evidence(
         .ok_or(ApiError(StatusCode::NOT_FOUND,"verification_task_not_found_for_candidate"))?;
     let task_id:String=task.try_get("id")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
+    let attestation_hash=hex::encode(Sha256::digest(
+        format!("{}:{}:{}:{}",identity,source_run,artifact_digest,task_id).as_bytes()
+    ));
     let tenant_id:String=task.try_get("tenant_id")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
     let status:String=task.try_get("status")
