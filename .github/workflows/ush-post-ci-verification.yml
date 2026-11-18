@@ -17,8 +17,7 @@ jobs:
           && github.event.workflow_run.head_repository.full_name == github.repository
           && vars.USH_API_BASE_URL != ''
           && vars.USH_GITHUB_OIDC_AUDIENCE != ''
-          && vars.USH_PROJECT_ID != ''
-          && vars.USH_TASK_ID != '' }}
+          && vars.USH_PROJECT_ID != '' }}
     uses: ./.github/workflows/ush-trusted-verify.yml
     with:
       hub_base_url: ${{ vars.USH_API_BASE_URL }}
