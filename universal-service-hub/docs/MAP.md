@@ -648,3 +648,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - The trusted attestation workflow previously treated a missing evidence artifact as an empty digest and allowed the API/database to persist a receipt without an artifact hash. That did not meet the evidence lifecycle's artifact-digest requirement.
 - The workflow now fails closed if the source-run manifest is absent, empty, or does not match the exact source SHA/run ID/attempt. The Hub request requires a valid SHA-256 digest; the evidence table column is `NOT NULL`; the receipt hash includes the digest.
 - Added a deserialization regression proving that evidence without `artifact_digest` is rejected and updated the migration contract test. Exact-head CI is pending; no production migration, secret, worker or deployment was changed.
+
+
+### Exact-head Rust lint correction — 2026-11-18
+
+- Exact-head CI run #44390802937 failed in Rust lint/compile at `src/main.rs:1766`: the attestation hash JSON object contained a duplicated `"task_id": task_id` entry and the first entry lacked its separating comma.
+- Removed the duplicated key and restored valid JSON macro syntax in commit `4e9e5443bdb28a2db0be472a68e2aa56eaab9332`.
+- This is a compile-level correction only; it does not change attestation claims, trust policy, database schema, or production configuration. The new exact-head CI run must pass before this increment is considered verified.
