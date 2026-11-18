@@ -1557,6 +1557,17 @@ fn evidence_has_nonempty_string(evidence: &Value, key: &str) -> bool {
     evidence.get(key).and_then(Value::as_str).is_some_and(|value|!value.trim().is_empty())
 }
 
+fn worker_can_complete_status(role: &str, next_status: &str) -> bool {
+    match role {
+        "architect" => ["queued", "blocked", "recovery"].contains(&next_status),
+        "implementer" => ["queued_build", "queued_test", "review", "blocked", "recovery"].contains(&next_status),
+        // Positive build/test/review transitions require trusted external evidence.
+        "builder" | "tester" | "reviewer" => ["blocked", "recovery"].contains(&next_status),
+        "recovery" => ["queued", "failed", "blocked"].contains(&next_status),
+        _ => false,
+    }
+}
+
 fn worker_completion_evidence_valid(
     role: &str,
     next_status: &str,
@@ -1571,18 +1582,6 @@ fn worker_completion_evidence_valid(
             candidate_matches("commit_sha")
             && evidence.get("changed_files").and_then(Value::as_array).is_some_and(|files|!files.is_empty())
             && evidence.get("validation").and_then(Value::as_object).is_some(),
-        ("builder","queued_test" | "review") =>
-            evidence.get("build_status").and_then(Value::as_str)==Some("passed")
-            && evidence_has_nonempty_string(evidence,"build_run_id")
-            && candidate_matches("candidate_sha"),
-        ("tester","review") =>
-            evidence.get("test_status").and_then(Value::as_str)==Some("passed")
-            && evidence_has_nonempty_string(evidence,"test_run_id")
-            && candidate_matches("candidate_sha"),
-        ("reviewer","verified") =>
-            evidence.get("decision").and_then(Value::as_str)==Some("approved")
-            && candidate_matches("reviewed_sha")
-            && evidence.get("findings").and_then(Value::as_array).is_some(),
         ("recovery","queued" | "failed" | "blocked") =>
             evidence_has_nonempty_string(evidence,"recovery_reason")
             && evidence_has_nonempty_string(evidence,"recovery_action"),
@@ -1762,15 +1761,7 @@ async fn complete_engineering_task(
     let role=principal.worker_role.as_deref().unwrap_or("");
     let project_id=principal.project_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_project_scope_required"))?;
     let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
-    let allowed=match role {
-        "architect" => ["queued","blocked","recovery"].contains(&body.next_status.as_str()),
-        "implementer" => ["queued_build","queued_test","review","blocked","recovery"].contains(&body.next_status.as_str()),
-        "builder" => ["queued_test","review","blocked","recovery"].contains(&body.next_status.as_str()),
-        "tester" => ["review","blocked","recovery"].contains(&body.next_status.as_str()),
-        "reviewer" => ["verified","blocked","recovery"].contains(&body.next_status.as_str()),
-        "recovery" => ["queued","failed","blocked"].contains(&body.next_status.as_str()),
-        _ => false,
-    };
+    let allowed=worker_can_complete_status(role,&body.next_status);
     if !allowed || body.worker_id!=worker_id || body.task_lease_token.len()<32
         || body.workspace_lease_token.len()<32 || Uuid::parse_str(&body.workspace_id).is_err()
         || !body.evidence.is_object() || body.evidence.to_string().len()>16_384
@@ -3108,18 +3099,26 @@ mod integration_security_tests {
             "commit_sha":sha,"changed_files":["universal-service-hub/src/main.rs"],"validation":{"rustfmt":"passed"}
         })));
         assert!(!worker_completion_evidence_valid("implementer","review",Some(sha),&json!({"commit_sha":sha})));
-        assert!(worker_completion_evidence_valid("builder","queued_test",Some(sha),&json!({
+        // A worker-supplied run ID or approval JSON is not trusted CI evidence.
+        assert!(!worker_completion_evidence_valid("builder","queued_test",Some(sha),&json!({
             "build_status":"passed","build_run_id":"run-123","candidate_sha":sha
         })));
-        assert!(worker_completion_evidence_valid("tester","review",Some(sha),&json!({
+        assert!(!worker_completion_evidence_valid("tester","review",Some(sha),&json!({
             "test_status":"passed","test_run_id":"run-456","candidate_sha":sha
         })));
-        assert!(worker_completion_evidence_valid("reviewer","verified",Some(sha),&json!({
+        assert!(!worker_completion_evidence_valid("reviewer","verified",Some(sha),&json!({
             "decision":"approved","reviewed_sha":sha,"findings":[]
         })));
         assert!(!worker_completion_evidence_valid("reviewer","verified",Some(sha),&json!({
             "decision":"approved","reviewed_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","findings":[]
         })));
+        for role in ["builder", "tester", "reviewer"] {
+            assert!(!worker_can_complete_status(role, "verified"));
+            assert!(worker_can_complete_status(role, "blocked"));
+            assert!(worker_can_complete_status(role, "recovery"));
+        }
+        assert!(!worker_can_complete_status("builder", "queued_test"));
+        assert!(!worker_can_complete_status("tester", "review"));
         assert!(worker_completion_evidence_valid("architect","queued",None,&json!({
             "plan":{"tasks":[{"title":"Implement API"}]}
         })));
