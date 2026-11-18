@@ -55,7 +55,7 @@ jobs:
 
           oidc_response=$(curl --fail --silent --show-error --get \
             --data-urlencode "audience=$OIDC_AUDIENCE" \
-            -H "Authorization: Bearer $OIDC_REQUEST_TOKEN" \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL")
           oidc_token=$(jq --exit-status --raw-output '.value | select(type == "string" and length > 100)' <<< "$oidc_response")
           unset oidc_response ACTIONS_ID_TOKEN_REQUEST_TOKEN
