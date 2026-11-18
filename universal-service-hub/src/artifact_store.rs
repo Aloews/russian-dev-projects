@@ -2,7 +2,7 @@ use std::{env, time::Duration};
 
 use anyhow::{Context, bail};
 use aws_credential_types::Credentials;
-use aws_sdk_s3::{config::{Builder, Region}, primitives::ByteStream, Client};
+use aws_sdk_s3::{config::{BehaviorVersion, Builder, Region}, primitives::ByteStream, Client};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use sqlx::PgPool;
@@ -116,6 +116,7 @@ impl ArtifactStore {
 
         let credentials = Credentials::new(access_key, secret_key, None, None, "ush-artifact-store");
         let mut builder = Builder::new()
+            .behavior_version(BehaviorVersion::latest())
             .region(Region::new(region))
             .credentials_provider(credentials)
             .timeout_config(aws_sdk_s3::config::timeout::TimeoutConfig::builder()
