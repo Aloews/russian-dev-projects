@@ -6,6 +6,7 @@ use aws_sdk_s3::{config::{Builder, Region}, primitives::ByteStream, Client};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use sqlx::PgPool;
+use tokio::io::AsyncReadExt;
 
 const DEFAULT_MAX_ARTIFACT_BYTES: usize = 20 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES: usize = 100 * 1024 * 1024;
@@ -179,7 +180,10 @@ impl ArtifactStore {
             bail!("stored artifact exceeds configured size limit");
         }
         let content_type = response.content_type().map(str::to_owned);
-        let bytes = response.body.collect().await.context("artifact body read failed")?.into_bytes().to_vec();
+        let initial_capacity = response.content_length().unwrap_or(0).max(0).min(self.max_bytes as i64) as usize;
+        let mut bytes = Vec::with_capacity(initial_capacity);
+        let mut limited_body = response.body.into_async_read().take((self.max_bytes + 1) as u64);
+        limited_body.read_to_end(&mut bytes).await.context("artifact body read failed")?;
         if bytes.len() > self.max_bytes {
             bail!("stored artifact exceeds configured size limit");
         }
