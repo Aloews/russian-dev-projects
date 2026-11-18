@@ -1828,7 +1828,7 @@ fn github_actions_run_matches(run: &Value, identity: &GithubRunIdentity<'_>) -> 
         && run.get("head_branch").and_then(Value::as_str)==Some(expected_branch)
 }
 
-async fn verify_github_actions_run(
+async fn verify_github_actions_identity(
     state: &AppState,
     token: &str,
 ) -> ApiResult<Value> {
@@ -1892,7 +1892,7 @@ async fn verify_github_actions_run(
         || !github_caller_workflow_is_allowed(workflow_ref,&allowed_callers)
         || !github_job_workflow_is_trusted(job_workflow_ref,job_workflow_sha,&allowed_workflows,&trusted_workflow_sha)
         || !git_ref.starts_with("refs/heads/")
-        || !["push","workflow_dispatch"].contains(&event_name)
+        || event_name!="workflow_run"
         || sha.len()!=40 || !sha.chars().all(|c|c.is_ascii_hexdigit())
         || subject!=format!("repo:{repository}:ref:{git_ref}") {
         return Err(ApiError(StatusCode::FORBIDDEN,"github_oidc_identity_not_allowed"));
@@ -1901,12 +1901,31 @@ async fn verify_github_actions_run(
         .ok_or(ApiError(StatusCode::FORBIDDEN,"github_oidc_workflow_ref_invalid"))?;
     github_workflow_path(job_workflow_ref,repository)
         .ok_or(ApiError(StatusCode::FORBIDDEN,"github_oidc_job_workflow_ref_invalid"))?;
-    let run_id=claim_u64(&claims,"run_id")?;
-    let run_attempt=claim_u64(&claims,"run_attempt")?;
-    if run_attempt>100 || run_id>i64::MAX as u64 {
+    let attestation_run_id=claim_u64(&claims,"run_id")?;
+    let attestation_run_attempt=claim_u64(&claims,"run_attempt")?;
+    if attestation_run_attempt>100 || attestation_run_id>i64::MAX as u64 {
         return Err(ApiError(StatusCode::UNAUTHORIZED,"github_oidc_run_identity_invalid"));
     }
+    Ok(json!({
+        "repository":repository,
+        "workflow_ref":workflow_ref,
+        "job_workflow_ref":job_workflow_ref,
+        "job_workflow_sha":job_workflow_sha,
+        "workflow_path":workflow_path,
+        "git_ref":git_ref,
+        "event_name":event_name,
+        "attestation_sha":sha.to_ascii_lowercase(),
+        "attestation_run_id":attestation_run_id,
+        "attestation_run_attempt":attestation_run_attempt,
+        "conclusion":"trusted_workflow_identity"
+    }))
+}
 
+async fn fetch_github_actions_run(
+    state: &AppState,
+    repository: &str,
+    run_id: u64,
+) -> ApiResult<Value> {
     let url=format!("https://api.github.com/repos/{repository}/actions/runs/{run_id}");
     let mut request=state.http.get(url)
         .header("User-Agent","universal-service-hub")
@@ -1916,43 +1935,19 @@ async fn verify_github_actions_run(
         && !api_token.trim().is_empty() {
         request=request.bearer_auth(api_token);
     }
-    let run=request.send().await
+    request.send().await
         .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_lookup_failed"))?
         .error_for_status()
         .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_lookup_failed"))?
         .json::<Value>().await
-        .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_response_invalid"))?;
-    let run_identity=GithubRunIdentity {
-        repository, workflow_path:&workflow_path, git_ref, event_name, sha, run_id, run_attempt
-    };
-    if !github_actions_run_matches(&run,&run_identity) {
-        return Err(ApiError(StatusCode::CONFLICT,"github_actions_run_not_successful_or_mismatched"));
-    }
-    let run_started_at=run.get("run_started_at").and_then(Value::as_str)
-        .filter(|value|chrono::DateTime::parse_from_rfc3339(value).is_ok())
-        .ok_or(ApiError(StatusCode::CONFLICT,"github_actions_run_start_time_missing"))?;
-    let run_completed_at=run.get("updated_at").and_then(Value::as_str)
-        .filter(|value|chrono::DateTime::parse_from_rfc3339(value).is_ok())
-        .ok_or(ApiError(StatusCode::CONFLICT,"github_actions_run_completion_time_missing"))?;
-    Ok(json!({
-        "repository":repository,
-        "workflow_ref":workflow_ref,
-        "job_workflow_ref":job_workflow_ref,
-        "job_workflow_sha":job_workflow_sha,
-        "workflow_path":workflow_path,
-        "git_ref":git_ref,
-        "event_name":event_name,
-        "sha":sha.to_ascii_lowercase(),
-        "run_id":run_id,
-        "run_attempt":run_attempt,
-        "run_started_at":run_started_at,
-        "run_completed_at":run_completed_at,
-        "conclusion":"success"
-    }))
+        .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_response_invalid"))
 }
 
 #[derive(Deserialize)]
 struct GithubActionsEvidenceBody {
+    source_run_id: u64,
+    source_run_attempt: u64,
+    candidate_sha: String,
     artifact_digest: String,
 }
 
@@ -1962,26 +1957,72 @@ async fn ingest_github_actions_evidence(
     Path((project_id,task_id)): Path<(String,String)>,
     Json(body): Json<GithubActionsEvidenceBody>,
 ) -> ApiResult<Json<Value>> {
-    if !valid_sha256_artifact_digest(&body.artifact_digest) {
-        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_artifact_digest"));
+    if body.source_run_id==0 || body.source_run_id>i64::MAX as u64
+        || body.source_run_attempt==0 || body.source_run_attempt>100
+        || body.candidate_sha.len()!=40 || !body.candidate_sha.chars().all(|c|c.is_ascii_hexdigit())
+        || !valid_sha256_artifact_digest(&body.artifact_digest) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_github_actions_evidence_request"));
     }
     let artifact_digest=body.artifact_digest.to_ascii_lowercase();
+    let candidate_sha=body.candidate_sha.to_ascii_lowercase();
     let token=bearer(&headers)?;
-    let attestation=verify_github_actions_run(&state,token).await?;
-    let repository=attestation["repository"].as_str().unwrap_or_default();
-    let candidate_sha=attestation["sha"].as_str().unwrap_or_default();
-    let workflow_ref=attestation["workflow_ref"].as_str().unwrap_or_default();
-    let job_workflow_ref=attestation["job_workflow_ref"].as_str().unwrap_or_default();
-    let job_workflow_sha=attestation["job_workflow_sha"].as_str().unwrap_or_default();
-    let workflow_path=attestation["workflow_path"].as_str().unwrap_or_default();
-    let git_ref=attestation["git_ref"].as_str().unwrap_or_default();
-    let event_name=attestation["event_name"].as_str().unwrap_or_default();
-    let run_id=attestation["run_id"].as_u64().unwrap_or_default() as i64;
-    let run_attempt=attestation["run_attempt"].as_u64().unwrap_or_default() as i32;
-    let run_started_at=attestation["run_started_at"].as_str().unwrap_or_default();
-    let run_completed_at=attestation["run_completed_at"].as_str().unwrap_or_default();
+    let identity=verify_github_actions_identity(&state,token).await?;
+    let repository=identity["repository"].as_str().unwrap_or_default();
+    let source_run=fetch_github_actions_run(&state,repository,body.source_run_id).await?;
+    let allowed_source_paths=env::var("USH_GITHUB_ALLOWED_SOURCE_WORKFLOW_PATHS")
+        .unwrap_or_default().split(',')
+        .map(str::trim).filter(|value|!value.is_empty()).map(str::to_owned)
+        .collect::<Vec<_>>();
+    if allowed_source_paths.is_empty() {
+        return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_source_workflow_allowlist_not_configured"));
+    }
+    let source_path=source_run.get("path").and_then(Value::as_str)
+        .ok_or(ApiError(StatusCode::CONFLICT,"github_source_workflow_path_missing"))?;
+    let source_event=source_run.get("event").and_then(Value::as_str)
+        .ok_or(ApiError(StatusCode::CONFLICT,"github_source_event_missing"))?;
+    let source_branch=source_run.get("head_branch").and_then(Value::as_str)
+        .filter(|value|!value.is_empty() && value.len()<=240)
+        .ok_or(ApiError(StatusCode::CONFLICT,"github_source_branch_missing"))?;
+    let source_git_ref=format!("refs/heads/{source_branch}");
+    if !allowed_source_paths.iter().any(|path|path==source_path)
+        || !["push","pull_request","workflow_dispatch"].contains(&source_event) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"github_source_workflow_not_allowed"));
+    }
+    let source_identity=GithubRunIdentity {
+        repository,
+        workflow_path:source_path,
+        git_ref:&source_git_ref,
+        event_name:source_event,
+        sha:&candidate_sha,
+        run_id:body.source_run_id,
+        run_attempt:body.source_run_attempt
+    };
+    if !github_actions_run_matches(&source_run,&source_identity) {
+        return Err(ApiError(StatusCode::CONFLICT,"github_source_run_not_successful_or_mismatched"));
+    }
+    let run_started_at=source_run.get("run_started_at").and_then(Value::as_str)
+        .filter(|value|chrono::DateTime::parse_from_rfc3339(value).is_ok())
+        .ok_or(ApiError(StatusCode::CONFLICT,"github_actions_run_start_time_missing"))?;
+    let run_completed_at=source_run.get("updated_at").and_then(Value::as_str)
+        .filter(|value|chrono::DateTime::parse_from_rfc3339(value).is_ok())
+        .ok_or(ApiError(StatusCode::CONFLICT,"github_actions_run_completion_time_missing"))?;
+
+    let workflow_ref=identity["workflow_ref"].as_str().unwrap_or_default();
+    let job_workflow_ref=identity["job_workflow_ref"].as_str().unwrap_or_default();
+    let job_workflow_sha=identity["job_workflow_sha"].as_str().unwrap_or_default();
+    let workflow_path=identity["workflow_path"].as_str().unwrap_or_default();
+    let git_ref=source_git_ref.as_str();
+    let event_name=source_event;
+    let attestation_sha=identity["attestation_sha"].as_str().unwrap_or_default();
+    let attestation_run_id=identity["attestation_run_id"].as_u64().unwrap_or_default() as i64;
+    let attestation_run_attempt=identity["attestation_run_attempt"].as_u64().unwrap_or_default() as i32;
+    let run_id=body.source_run_id as i64;
+    let run_attempt=body.source_run_attempt as i32;
+    if attestation_run_id==run_id && attestation_run_attempt==run_attempt {
+        return Err(ApiError(StatusCode::CONFLICT,"attestation_and_source_run_must_differ"));
+    }
     let attestation_hash=hex::encode(Sha256::digest(
-        format!("{}:{artifact_digest}",attestation).as_bytes()
+        format!("{}:{}:{}:{}",identity,source_run,artifact_digest,task_id).as_bytes()
     ));
 
     let mut tx=begin_platform_transaction(&state).await?;
@@ -2004,15 +2045,16 @@ async fn ingest_github_actions_evidence(
     if status!="review" {
         return Err(ApiError(StatusCode::CONFLICT,"task_not_ready_for_verification_evidence"));
     }
-    if task_sha.as_deref()!=Some(candidate_sha) {
+    if task_sha.as_deref()!=Some(candidate_sha.as_str()) {
         return Err(ApiError(StatusCode::CONFLICT,"github_actions_sha_does_not_match_candidate"));
     }
     let evidence_id=Uuid::new_v4().to_string();
-    let inserted=sqlx::query("INSERT INTO engineering_task_verification_evidence (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,job_workflow_ref,job_workflow_sha,workflow_path,git_ref,event_name,run_id,run_attempt,run_started_at,run_completed_at,artifact_digest,conclusion,attestation_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16::timestamptz,$17,'success',$18) ON CONFLICT (repository,run_id,run_attempt,task_id) DO NOTHING RETURNING id")
-        .bind(&evidence_id).bind(&tenant_id).bind(&project_id).bind(&task_id).bind(candidate_sha)
+    let inserted=sqlx::query("INSERT INTO engineering_task_verification_evidence (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,job_workflow_ref,job_workflow_sha,workflow_path,git_ref,event_name,run_id,run_attempt,run_started_at,run_completed_at,artifact_digest,attestation_sha,attestation_run_id,attestation_run_attempt,conclusion,attestation_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16::timestamptz,$17,$18,$19,$20,'success',$21) ON CONFLICT (repository,run_id,run_attempt,task_id) DO NOTHING RETURNING id")
+        .bind(&evidence_id).bind(&tenant_id).bind(&project_id).bind(&task_id).bind(&candidate_sha)
         .bind(repository).bind(workflow_ref).bind(job_workflow_ref).bind(job_workflow_sha)
-        .bind(workflow_path).bind(git_ref).bind(event_name).bind(run_id).bind(run_attempt)
-        .bind(run_started_at).bind(run_completed_at).bind(&artifact_digest).bind(&attestation_hash)
+        .bind(source_path).bind(git_ref).bind(event_name).bind(run_id).bind(run_attempt)
+        .bind(run_started_at).bind(run_completed_at).bind(&artifact_digest).bind(attestation_sha)
+        .bind(attestation_run_id).bind(attestation_run_attempt).bind(&attestation_hash)
         .fetch_optional(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_evidence_persist_failed"))?;
     let (persisted_id,idempotent)=if let Some(row)=inserted {
@@ -2031,7 +2073,7 @@ async fn ingest_github_actions_evidence(
         (existing.try_get("id").unwrap_or_default(),true)
     };
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
-    audit(&state,&format!("github-actions:{repository}:{run_id}:{run_attempt}"),"engineering_task.verification_evidence_ingested","engineering_task",&task_id,json!({"repository":repository,"workflow_ref":workflow_ref,"job_workflow_ref":job_workflow_ref,"job_workflow_sha":job_workflow_sha,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"artifact_digest":artifact_digest,"run_started_at":run_started_at,"run_completed_at":run_completed_at,"conclusion":"success","idempotent":idempotent})).await;
+    audit(&state,&format!("github-actions:{repository}:{run_id}:{run_attempt}"),"engineering_task.verification_evidence_ingested","engineering_task",&task_id,json!({"repository":repository,"workflow_ref":workflow_ref,"job_workflow_ref":job_workflow_ref,"job_workflow_sha":job_workflow_sha,"source_workflow_path":source_path,"candidate_sha":candidate_sha,"source_run_id":run_id,"source_run_attempt":run_attempt,"attestation_run_id":attestation_run_id,"attestation_run_attempt":attestation_run_attempt,"artifact_digest":artifact_digest,"run_started_at":run_started_at,"run_completed_at":run_completed_at,"conclusion":"success","idempotent":idempotent})).await;
     Ok(Json(json!({"evidence_id":persisted_id,"task_id":task_id,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"artifact_digest":artifact_digest,"conclusion":"success","idempotent":idempotent})))
 }
 
