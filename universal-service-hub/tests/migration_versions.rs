@@ -51,7 +51,7 @@ fn trusted_github_verification_migration_is_tenant_scoped_and_immutable() {
         "REVOKE UPDATE, DELETE ON engineering_task_verification_evidence FROM ush_runtime",
         "ush_validate_verification_evidence_parent",
         "ush_prevent_verification_evidence_update",
-        "conclusion = 'success'",
+        "conclusion IN ('success','failure','cancelled'",
         "job_workflow_sha",
         "run_started_at",
         "run_completed_at",
