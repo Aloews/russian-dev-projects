@@ -699,3 +699,9 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - A review of the workflow test harness found it syntax-checked only the first inline `run: |` block in `ush-trusted-verify.yml`, which was insufficient after the reusable workflow gained multiple jobs.
 - Updated the CI syntax test to extract and run `bash -n` against every inline shell block in the trusted workflow. This covers candidate validation, DB/migration checks, manifest generation and OIDC submission.
 - Correction commit: `deb9b5734bd015df19312ceb5bee7fc0e5bb6ac8`. Exact-head CI is pending.
+
+
+### Branch wildcard deny-case regression tests — 2026-11-19
+
+- Added explicit tests that reject a global `*`, embedded wildcards such as `ai/*/task-*`, and suffix text after a wildcard. Only exact branch entries and one terminal-prefix wildcard are accepted.
+- Test commit: `938099159139cb3a9e20e5cc52ab618980030d78`. Exact-head workflow #44410129959 is pending.
