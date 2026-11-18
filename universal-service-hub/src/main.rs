@@ -1794,25 +1794,26 @@ fn github_job_workflow_is_trusted(
         && job_workflow_sha.eq_ignore_ascii_case(trusted_workflow_sha)
 }
 
-fn github_actions_run_matches(
-    run: &Value,
-    repository: &str,
-    workflow_path: &str,
-    git_ref: &str,
-    event_name: &str,
-    sha: &str,
+struct GithubRunIdentity<'a> {
+    repository: &'a str,
+    workflow_path: &'a str,
+    git_ref: &'a str,
+    event_name: &'a str,
+    sha: &'a str,
     run_id: u64,
     run_attempt: u64,
-) -> bool {
-    let expected_branch=git_ref.strip_prefix("refs/heads/").unwrap_or("");
-    run.get("id").and_then(Value::as_u64)==Some(run_id)
-        && run.get("run_attempt").and_then(Value::as_u64)==Some(run_attempt)
+}
+
+fn github_actions_run_matches(run: &Value, identity: &GithubRunIdentity<'_>) -> bool {
+    let expected_branch=identity.git_ref.strip_prefix("refs/heads/").unwrap_or("");
+    run.get("id").and_then(Value::as_u64)==Some(identity.run_id)
+        && run.get("run_attempt").and_then(Value::as_u64)==Some(identity.run_attempt)
         && run.get("status").and_then(Value::as_str)==Some("completed")
         && run.get("conclusion").and_then(Value::as_str)==Some("success")
-        && run.get("event").and_then(Value::as_str)==Some(event_name)
-        && run.get("head_sha").and_then(Value::as_str).is_some_and(|value|value.eq_ignore_ascii_case(sha))
-        && run.pointer("/head_repository/full_name").and_then(Value::as_str)==Some(repository)
-        && run.get("path").and_then(Value::as_str)==Some(workflow_path)
+        && run.get("event").and_then(Value::as_str)==Some(identity.event_name)
+        && run.get("head_sha").and_then(Value::as_str).is_some_and(|value|value.eq_ignore_ascii_case(identity.sha))
+        && run.pointer("/head_repository/full_name").and_then(Value::as_str)==Some(identity.repository)
+        && run.get("path").and_then(Value::as_str)==Some(identity.workflow_path)
         && run.get("head_branch").and_then(Value::as_str)==Some(expected_branch)
 }
 
@@ -1905,7 +1906,10 @@ async fn verify_github_actions_run(
         .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_lookup_failed"))?
         .json::<Value>().await
         .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_response_invalid"))?;
-    if !github_actions_run_matches(&run,repository,&workflow_path,git_ref,event_name,sha,run_id,run_attempt) {
+    let run_identity=GithubRunIdentity {
+        repository, workflow_path:&workflow_path, git_ref, event_name, sha, run_id, run_attempt
+    };
+    if !github_actions_run_matches(&run,&run_identity) {
         return Err(ApiError(StatusCode::CONFLICT,"github_actions_run_not_successful_or_mismatched"));
     }
     Ok(json!({
@@ -3456,16 +3460,16 @@ mod integration_security_tests {
             "path":".github/workflows/ush-verify.yml",
             "head_repository":{"full_name":"Aloews/russian-dev-projects"}
         });
-        assert!(github_actions_run_matches(
-            &run,
-            "Aloews/russian-dev-projects",
-            ".github/workflows/ush-verify.yml",
-            "refs/heads/main",
-            "push",
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            123456,
-            2
-        ));
+        let identity=GithubRunIdentity {
+            repository:"Aloews/russian-dev-projects",
+            workflow_path:".github/workflows/ush-verify.yml",
+            git_ref:"refs/heads/main",
+            event_name:"push",
+            sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            run_id:123456,
+            run_attempt:2
+        };
+        assert!(github_actions_run_matches(&run,&identity));
         for (field,value) in [
             ("status",json!("in_progress")),
             ("conclusion",json!("failure")),
@@ -3478,29 +3482,11 @@ mod integration_security_tests {
         ] {
             let mut invalid=run.clone();
             invalid[field]=value;
-            assert!(!github_actions_run_matches(
-                &invalid,
-                "Aloews/russian-dev-projects",
-                ".github/workflows/ush-verify.yml",
-                "refs/heads/main",
-                "push",
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                123456,
-                2
-            ), "unexpected acceptance after mutating {field}");
+            assert!(!github_actions_run_matches(&invalid,&identity), "unexpected acceptance after mutating {field}");
         }
         let mut wrong_repo=run.clone();
         wrong_repo["head_repository"]["full_name"]=json!("Aloews/Novel-forge");
-        assert!(!github_actions_run_matches(
-            &wrong_repo,
-            "Aloews/russian-dev-projects",
-            ".github/workflows/ush-verify.yml",
-            "refs/heads/main",
-            "push",
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            123456,
-            2
-        ));
+        assert!(!github_actions_run_matches(&wrong_repo,&identity));
     }
 
     #[test]
