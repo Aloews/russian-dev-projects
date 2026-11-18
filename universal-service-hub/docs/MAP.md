@@ -643,3 +643,15 @@ The cloud coding workflow was not triggered for these checks because it can call
 - Explicit approval remains mandatory for paid providers/resources, secrets/permissions, production data/migrations/deployments, merge/release, destructive changes and scope expansion.
 - A successful CI run on an older SHA is never evidence for a newer head. Required checks must all succeed; skipped/cancelled/missing/pending checks do not pass.
 - **Status: IMPLEMENTED IN BRANCH; CI PENDING.** This repository skill does not itself create a continuously running agent. Background status checks require a separate scheduled/event automation.
+
+
+## Durable execution queue API — implementation in progress
+
+- Branch: `feat/ush-durable-queue-api` (stacked on the verified schema and autonomous-continuation PR chain).
+- Added project-scoped job enqueue/list/claim/heartbeat/checkpoint/complete/fail routes in the Rust runtime.
+- Queue claims use PostgreSQL `FOR UPDATE SKIP LOCKED`, random lease fencing tokens and an atomic attempt record.
+- Every mutation scopes by `project_id`, `job_id` and current lease token; owner/operator authorization is required for mutations.
+- A bounded 15-second recovery sweep requeues expired leases with exponential backoff and dead-letters exhausted jobs.
+- Metadata rejects common sensitive field names and is bounded by size; this filter is defense-in-depth and does not replace data classification/redaction.
+- **Not yet verified:** exact-head CI, PostgreSQL-backed endpoint/concurrency tests, and runtime execution against a live database.
+- **Still out of scope:** agent/provider worker dispatch, external side-effect idempotency, task CRUD, artifacts, metrics and production rollout.

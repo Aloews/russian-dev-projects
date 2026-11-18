@@ -189,6 +189,69 @@ jobs:
           viewer_token=$(printf '%s' "$viewer_response" | jq -r '.token')
           echo "::add-mask::$viewer_token"
 
+          # Durable queue API: idempotency, project roles, lease fencing and checkpoints.
+          enqueue_payload='{"job_type":"smoke.queue","idempotency_key":"queue-smoke-1","priority":100,"max_attempts":2,"payload":{"stage":"ci-smoke"}}'
+          enqueue_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/jobs \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d "$enqueue_payload")
+          job_id=$(printf '%s' "$enqueue_response" | jq -r '.job.id')
+          test "$(printf '%s' "$enqueue_response" | jq -r '.created')" = "true"
+          duplicate_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/jobs \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d "$enqueue_payload")
+          test "$(printf '%s' "$duplicate_response" | jq -r '.created')" = "false"
+          conflict_status=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/projects/smoke-project/jobs \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"job_type":"other","idempotency_key":"queue-smoke-1","priority":100,"max_attempts":2,"payload":{"stage":"ci-smoke"}}')
+          test "$conflict_status" = "409"
+          curl -fsS -H "Authorization: Bearer $viewer_token" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/jobs | jq -e '.jobs | length == 1' >/dev/null
+          viewer_claim=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/projects/smoke-project/jobs/claim \
+            -H "Authorization: Bearer $viewer_token" -H "Content-Type: application/json" -d '{"lease_seconds":60}')
+          test "$viewer_claim" = "403"
+          lease_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/jobs/claim \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" -d '{"lease_seconds":60}')
+          lease_token=$(printf '%s' "$lease_response" | jq -r '.lease.lease_token')
+          test "$(printf '%s' "$lease_response" | jq -r '.lease.job.id')" = "$job_id"
+          test "$(printf '%s' "$lease_response" | jq -r '.lease.payload.stage')" = "ci-smoke"
+          test "$(printf '%s' "$lease_response" | jq -r '.lease.checkpoint | length')" = "0"
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/jobs/$job_id/heartbeat" \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d "{\"lease_token\":\"$lease_token\",\"lease_seconds\":60}" | jq -e '.lease_expires_at != null' >/dev/null
+          checkpoint_rejected=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/jobs/$job_id/checkpoint" \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d "{\"lease_token\":\"$lease_token\",\"checkpoint\":{\"prompt\":\"must-not-persist\"}}")
+          test "$checkpoint_rejected" = "422"
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/jobs/$job_id/checkpoint" \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d "{\"lease_token\":\"$lease_token\",\"checkpoint\":{\"stage\":\"verified\",\"progress\":1}}" | jq -e '.saved == true' >/dev/null
+          stale_lease=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/jobs/$job_id/complete" \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d '{"lease_token":"00000000-0000-0000-0000-000000000000","result_metadata":{}}')
+          test "$stale_lease" = "409"
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/jobs/$job_id/complete" \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d "{\"lease_token\":\"$lease_token\",\"result_metadata\":{\"stage\":\"done\"}}" | jq -e '.completed == true' >/dev/null
+
+          # Exhausted retryable work must be dead-lettered.
+          curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/jobs \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"job_type":"smoke.retry","idempotency_key":"queue-smoke-2","max_attempts":1,"payload":{"stage":"retry-test"}}' >/dev/null
+          retry_lease=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/jobs/claim \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" -d '{"lease_seconds":60}')
+          retry_job_id=$(printf '%s' "$retry_lease" | jq -r '.lease.job.id')
+          retry_token=$(printf '%s' "$retry_lease" | jq -r '.lease.lease_token')
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/jobs/$retry_job_id/fail" \
+            -H "Authorization: Bearer $operator_token" -H "Content-Type: application/json" \
+            -d "{\"lease_token\":\"$retry_token\",\"error_code\":\"provider_unavailable\",\"retryable\":true}" | jq -e '.failed == true' >/dev/null
+          curl -fsS -H "Authorization: Bearer $owner_token" \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/jobs?limit=10" | \
+            jq -e --arg id "$retry_job_id" '.jobs[] | select(.id == $id and .status == "dead_letter")' >/dev/null
+
           curl -fsS -H "Authorization: Bearer $owner_token" \
             http://127.0.0.1:8000/v1/projects/smoke-project/tokens | jq -e 'length == 3' >/dev/null
 
@@ -256,6 +319,7 @@ jobs:
             -d '{"capability":"ai.chat"}')
           test "$deleted_token" = "401"
 
+          docker stop ush-smoke >/dev/null
           if docker run --rm --network host \
             -e USH_API_TOKEN="$USH_API_TOKEN" \
             -e USH_DATABASE_URL="postgres://ush:ush-test-password@127.0.0.1:5432/ush_test" \
