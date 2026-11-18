@@ -558,3 +558,15 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Exact-head run `44364315855` confirmed the reviewer self-verification rejection assertion passed; the container smoke then failed during cleanup because it tried to release a workspace while its still-live task assignment remained active. The API correctly returned `active_task_workspace_assignment_must_be_released` (HTTP 409).
 - Corrected the smoke cleanup to call the worker-scoped task workspace-assignment DELETE endpoint with both live lease tokens before releasing each workspace. This preserves the runtime's lease/assignment safety invariant; no application behavior was weakened.
 - Workflow fixture commit: `88b22195f05b1711f6113d914d4426b741825770`. Exact-head run pending.
+
+
+### Trusted GitHub Actions evidence — implementation slice — 2026-11-18
+
+- Added a dedicated OIDC evidence-ingestion route scoped to project + task. It validates GitHub's JWT signature against the published JWKS, issuer, configured audience, exact reusable-workflow reference, pinned reusable-workflow SHA, repository identity, branch ref, event type, run ID and attempt.
+- The runtime independently fetches the GitHub Actions run and accepts only a completed `success` run whose repository, workflow path, branch, candidate SHA, run ID and attempt match the signed claims.
+- Added an immutable, tenant-RLS-protected evidence table. The database trigger binds each receipt to the task's current candidate SHA and configured source repository. Duplicate delivery is idempotent; a conflicting replay is rejected.
+- A reviewer can no longer self-verify with approval JSON alone. Verification requires trusted evidence for the exact candidate, a read-only workspace assignment and a reviewer worker distinct from the latest implementation/build/test worker.
+- Added unit coverage for workflow allowlisting, pinned reusable-workflow SHA, repository/ref validation, run completion/conclusion, SHA, run ID/attempt and numeric/string OIDC claim parsing.
+- Required runtime configuration: `USH_GITHUB_OIDC_AUDIENCE`, `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS`, and `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA`; optional `USH_GITHUB_API_TOKEN` supports private-repository run lookup.
+- This is an implementation slice, not a completed end-to-end release. The reusable GitHub workflow/caller wiring, disposable-PostgreSQL adversarial integration tests, and deployment-side configuration are still required. The API currently accepts `push` and `workflow_dispatch` evidence only; it does not treat ordinary `pull_request` events as trusted evidence.
+- PR is intentionally draft and stacked on PR #64. No production secrets, deployment, merge, or automatic task verification were changed.
