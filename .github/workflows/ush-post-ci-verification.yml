@@ -24,7 +24,7 @@ jobs:
       hub_base_url: ${{ vars.USH_API_BASE_URL }}
       oidc_audience: ${{ vars.USH_GITHUB_OIDC_AUDIENCE }}
       project_id: ${{ vars.USH_PROJECT_ID }}
-      task_id: ${{ vars.USH_TASK_ID }}
+      source_issue_number: ${{ github.event.workflow_run.pull_requests[0].number || '' }}
       source_run_id: ${{ github.event.workflow_run.id }}
       source_run_attempt: ${{ github.event.workflow_run.run_attempt }}
       candidate_sha: ${{ github.event.workflow_run.pull_requests[0].head.sha || github.event.workflow_run.head_sha }}
