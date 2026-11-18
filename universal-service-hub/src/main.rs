@@ -1459,8 +1459,10 @@ async fn download_execution_artifact(
     response.headers_mut().insert("content-type", content_type_header);
     response.headers_mut().insert("x-artifact-sha256", HeaderValue::from_str(&expected_sha)
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_hash"))?);
-    response.headers_mut().insert("x-content-length", HeaderValue::from_str(&expected_size.to_string())
+    response.headers_mut().insert("content-length", HeaderValue::from_str(&expected_size.to_string())
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_size"))?);
+    response.headers_mut().insert("content-disposition", HeaderValue::from_static("attachment; filename=artifact"));
+    response.headers_mut().insert("x-content-type-options", HeaderValue::from_static("nosniff"));
     Ok(response)
 }
 
@@ -1852,8 +1854,8 @@ async fn main() -> anyhow::Result<()> {
         ((None, None, None, None), "env") if runtime_environment != "production" => None,
         _ => anyhow::bail!("Infisical backend requires client ID, client secret, project ID and environment"),
     };
-    let artifact_configured = ["USH_ARTIFACT_BUCKET", "USH_ARTIFACT_REGION", "USH_ARTIFACT_ACCESS_KEY_ID", "USH_ARTIFACT_SECRET_ACCESS_KEY"]
-        .iter().any(|name| env::var(name).is_ok());
+    let artifact_configured = ["USH_ARTIFACT_BUCKET", "USH_ARTIFACT_REGION", "USH_ARTIFACT_ENDPOINT", "USH_ARTIFACT_ACCESS_KEY_ID", "USH_ARTIFACT_SECRET_ACCESS_KEY", "USH_ARTIFACT_PREFIX", "USH_ARTIFACT_MAX_BYTES"]
+        .iter().any(|name| env::var(name).ok().is_some_and(|value| !value.trim().is_empty()));
     let artifact_store = if artifact_configured { Some(artifact_store::ArtifactStore::from_env()?) } else { None };
     let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical, artifact_store, rate_limit_per_minute };
     let app = Router::new()
