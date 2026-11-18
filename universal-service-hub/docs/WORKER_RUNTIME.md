@@ -62,3 +62,10 @@ The Compose file defines an opt-in `worker` profile. Start it with `USH_WORKER_D
 5. A production worker test proves TLS verification and database grants reject DDL and unrelated table access.
 
 Until gates 2–5 have exact-head evidence, report the worker binary as implemented but the end-to-end worker service as unverified. Specialist provider execution remains a separate gated milestone.
+
+
+## Durable artifact storage adapter (next gated increment)
+
+An S3-compatible storage adapter is added with explicit bucket/region/endpoint credentials and bounded uploads. It generates object keys from validated project IDs and UUIDs; callers cannot supply paths. Upload metadata includes SHA-256, project and job identifiers. Upload size is bounded (20 MiB default; hard cap 100 MiB). The adapter does not create public URLs or expose credentials. Production custom endpoints must use HTTPS.
+
+This adapter is not yet wired into the job completion API or artifact metadata transaction. Do not claim artifacts are durably handed off between agents until an upload, metadata row, project-scoped authorization, read/download path and retention/deletion test are integrated. S3 lifecycle retention and bucket encryption/access policy must be configured out-of-band before production use.
