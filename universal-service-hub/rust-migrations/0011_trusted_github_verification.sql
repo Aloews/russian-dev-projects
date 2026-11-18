@@ -11,7 +11,7 @@ CREATE TABLE engineering_task_verification_evidence (
     job_workflow_sha VARCHAR(40) NOT NULL CHECK (job_workflow_sha ~ '^[0-9a-fA-F]{40}$'),
     workflow_path VARCHAR(300) NOT NULL,
     git_ref VARCHAR(240) NOT NULL,
-    event_name VARCHAR(40) NOT NULL CHECK (event_name IN ('push','workflow_dispatch')),
+    event_name VARCHAR(40) NOT NULL CHECK (event_name IN ('push','pull_request','workflow_dispatch')),
     run_id BIGINT NOT NULL CHECK (run_id > 0),
     run_attempt INTEGER NOT NULL CHECK (run_attempt BETWEEN 1 AND 100),
     run_started_at TIMESTAMPTZ NOT NULL,
@@ -19,7 +19,9 @@ CREATE TABLE engineering_task_verification_evidence (
     artifact_digest VARCHAR(71) NOT NULL CHECK (artifact_digest ~ '^sha256:[0-9a-f]{64}
     attestation_hash VARCHAR(64) NOT NULL CHECK (attestation_hash ~ '^[0-9a-f]{64}$'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (run_completed_at >= run_started_at),
     UNIQUE (repository, run_id, run_attempt, task_id),
+    UNIQUE (repository, attestation_run_id, attestation_run_attempt, task_id),
     CONSTRAINT fk_verification_evidence_tenant_task
         FOREIGN KEY (tenant_id, task_id) REFERENCES engineering_tasks(tenant_id, id) ON DELETE CASCADE,
     CONSTRAINT fk_verification_evidence_tenant_project
