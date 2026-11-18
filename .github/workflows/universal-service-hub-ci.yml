@@ -466,15 +466,20 @@ jobs:
             -d '{"idempotency_key":"smoke-task-2","title":"Concurrent QA task","objective":"Prove independent tester workspace and path locks","acceptance_criteria":["Reject overlapping writer scope"],"dependencies":[]}')
           second_task_id=$(printf '%s' "$second_task" | jq -r '.id')
           second_version=$(printf '%s' "$second_task" | jq -r '.version')
-          for next_status in classified planned; do
+          for next_status in classified planned queued; do
             second_transition=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$second_task_id/transition" \
               -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
               -d "$(jq -nc --arg next_status "$next_status" --argjson expected_version "$second_version" '{next_status:$next_status,expected_version:$expected_version}')")
             second_version=$(printf '%s' "$second_transition" | jq -r '.version')
           done
+          second_implementation_claim=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d '{"queue":"implementation","worker_id":"implementer-smoke"}')
+          test "$(printf '%s' "$second_implementation_claim" | jq -r '.task.id')" = "$second_task_id"
+          second_version=$(printf '%s' "$second_implementation_claim" | jq -r '.task.version')
           second_transition=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$second_task_id/transition" \
             -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
-            -d "$(jq -nc --argjson expected_version "$second_version" '{next_status:"queued",expected_version:$expected_version,queue:"test"}')")
+            -d "$(jq -nc --argjson expected_version "$second_version" '{next_status:"queued_test",expected_version:$expected_version,queue:"test"}')")
           second_claim=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tasks/claim \
             -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
             -d '{"queue":"test","worker_id":"tester-smoke"}')
