@@ -681,3 +681,13 @@ The cloud coding workflow was not triggered for these checks because it can call
 - Worker Supervisor v1: `src/bin/ush-worker.rs`, `src/execution_queue.rs`; limited to `system_noop` until project-scoped execution authorization and provider budgets are complete.
 - Artifact adapter/API: `src/artifact_store.rs`, project-scoped upload/download handlers, generated UUID keys, SHA-256 verification, DB manifest/content-type and compensating cleanup. 2 MiB HTTP limit. Worker-to-worker handoff remains not integrated.
 - Workspaces/Git worktrees remain next after durable artifact handoff and specialist dispatcher gates.
+
+
+## Worker artifact handoff — implementation increment
+
+- Branch: `feat/ush-worker-artifact-handoff`, stacked on the exact CI-green S3 adapter test head `5df6f8cf8525efd0cb05552176df8edb14c88527`.
+- Added a worker-only upload capability scoped to project, job, worker ID and the current unexpired lease token. The worker does not receive project/admin API tokens or S3 credentials.
+- The Hub API holds a row lock across upload, rechecks wall-clock lease expiry after the S3 write, registers SHA-256/content type/size metadata and deletes an orphaned object if registration fails.
+- Added per-job idempotency keys; exact retries reuse the existing artifact ID, while different content under the same key conflicts.
+- Acceptance: Rust contract tests; migration smoke; runtime smoke rejects a stale/wrong lease and fails closed when storage is unconfigured. Real worker-to-MinIO/S3 upload is a separate required integration gate before marking the handoff fully verified.
+- Status: implementation in PR; exact-head CI pending. No production migration, deployment, or merge.
