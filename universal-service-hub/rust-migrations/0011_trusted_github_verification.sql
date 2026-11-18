@@ -12,7 +12,7 @@ CREATE TABLE engineering_task_verification_evidence (
     job_workflow_sha VARCHAR(40) NOT NULL CHECK (job_workflow_sha ~ '^[0-9a-fA-F]{40}$'),
     workflow_path VARCHAR(300) NOT NULL,
     git_ref VARCHAR(240) NOT NULL,
-    event_name VARCHAR(40) NOT NULL CHECK (event_name IN ('push','workflow_dispatch')),
+    event_name VARCHAR(40) NOT NULL CHECK (event_name IN ('push','pull_request','workflow_dispatch')),
     run_id BIGINT NOT NULL CHECK (run_id > 0),
     run_attempt INTEGER NOT NULL CHECK (run_attempt BETWEEN 1 AND 100),
     run_started_at TIMESTAMPTZ NOT NULL,
