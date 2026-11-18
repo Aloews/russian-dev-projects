@@ -1982,8 +1982,7 @@ struct GithubActionsEvidenceBody {
     source_run_id: u64,
     source_run_attempt: u64,
     candidate_sha: String,
-    #[serde(default)]
-    artifact_digest: Option<String>,
+    artifact_digest: String,
     #[serde(default)]
     source_issue_number: Option<u64>,
 }
