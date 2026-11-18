@@ -1825,17 +1825,12 @@ struct GithubRunIdentity<'a> {
 
 fn github_actions_run_matches(run: &Value, identity: &GithubRunIdentity<'_>) -> bool {
     let expected_branch=identity.git_ref.strip_prefix("refs/heads/").unwrap_or("");
-    let source_sha=if identity.event_name=="pull_request" {
-        run.pointer("/pull_requests/0/head/sha").and_then(Value::as_str)
-    } else {
-        run.get("head_sha").and_then(Value::as_str)
-    };
     run.get("id").and_then(Value::as_u64)==Some(identity.run_id)
         && run.get("run_attempt").and_then(Value::as_u64)==Some(identity.run_attempt)
         && run.get("status").and_then(Value::as_str)==Some("completed")
         && run.get("conclusion").and_then(Value::as_str)==Some("success")
         && run.get("event").and_then(Value::as_str)==Some(identity.event_name)
-        && source_sha.is_some_and(|value|value.eq_ignore_ascii_case(identity.sha))
+        && run.get("head_sha").and_then(Value::as_str).is_some_and(|value|value.eq_ignore_ascii_case(identity.sha))
         && run.pointer("/head_repository/full_name").and_then(Value::as_str)==Some(identity.repository)
         && run.get("path").and_then(Value::as_str)==Some(identity.workflow_path)
         && run.get("head_branch").and_then(Value::as_str)==Some(expected_branch)
