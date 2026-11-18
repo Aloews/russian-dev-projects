@@ -35,6 +35,21 @@ fn bounded_size(raw: Option<String>) -> anyhow::Result<usize> {
     Ok(value)
 }
 
+pub fn valid_artifact_type(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 48
+        && value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c))
+}
+
+pub fn valid_content_type(value: &str) -> bool {
+    if value.is_empty() || value.len() > 128 || !value.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
+        return false;
+    }
+    let media = value.split(';').next().unwrap_or("").trim();
+    let Some((kind, subtype)) = media.split_once('/') else { return false; };
+    let valid_token = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#fn safe_component(value: &str) -> bool {^_.+-".contains(&b));
+    valid_token(kind) && valid_token(subtype)
+}
+
 fn safe_component(value: &str) -> bool {
     !value.is_empty() && value.len() <= 80
         && value.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c))
@@ -95,7 +110,7 @@ impl ArtifactStore {
         if bytes.is_empty() || bytes.len() > self.max_bytes {
             bail!("artifact size must be between 1 and {} bytes", self.max_bytes);
         }
-        if content_type.is_empty() || content_type.len() > 128 || !content_type.bytes().all(|b| b >= 0x20 && b != 0x7f) {
+        if !valid_content_type(content_type) {
             bail!("invalid artifact content type");
         }
         let artifact_id = Uuid::new_v4();
@@ -130,10 +145,7 @@ impl ArtifactStore {
         content_type: &str,
         bytes: &[u8],
     ) -> anyhow::Result<StoredArtifact> {
-        if artifact_type.is_empty() || artifact_type.len() > 48
-            || !artifact_type.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c)) {
-            bail!("invalid artifact type");
-        }
+        if !valid_artifact_type(artifact_type) { bail!("invalid artifact type"); }
         let stored = self.put(project_id, job_id, content_type, bytes).await?;
         let result = sqlx::query(
             "INSERT INTO execution_artifacts (id, project_id, job_id, task_id, artifact_type, storage_backend, storage_key, content_sha256, size_bytes, content_type) VALUES ($1, $2, $3, $4, $5, 's3', $6, $7, $8, $9)"
@@ -208,6 +220,19 @@ mod tests {
         assert!(bounded_size(Some("0".into())).is_err());
         assert!(bounded_size(Some(MAX_ARTIFACT_BYTES.to_string())).is_ok());
         assert!(bounded_size(Some((MAX_ARTIFACT_BYTES + 1).to_string())).is_err());
+    }
+
+    #[test]
+    fn artifact_type_and_content_type_are_validated() {
+        assert!(valid_artifact_type("source_code"));
+        assert!(valid_artifact_type("test-logs"));
+        assert!(!valid_artifact_type("UPPER"));
+        assert!(!valid_artifact_type("../path"));
+        assert!(valid_content_type("application/json"));
+        assert!(valid_content_type("text/plain; charset=utf-8"));
+        assert!(!valid_content_type("invalid"));
+        assert!(!valid_content_type("application/\u{7f}bad"));
+        assert!(!valid_content_type("application/"));
     }
 
     #[test]
