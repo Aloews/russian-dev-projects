@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+mod artifact_store;
 mod schedule_recovery;
 
 use std::{env, net::{IpAddr, SocketAddr}, str::FromStr, sync::Arc, time::{Duration, Instant}};
