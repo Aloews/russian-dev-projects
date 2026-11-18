@@ -204,3 +204,18 @@ The separate Autonomous Product Factory workflow orchestrates work in target pro
 The Rust runtime enforces a PostgreSQL-backed fixed-window rate limit per authenticated bearer token. Default: 120 requests per minute. Configure `USH_RATE_LIMIT_PER_MINUTE` between 1 and 10000. Exceeded limits return HTTP 429 and `Retry-After: 60`. This does not replace unauthenticated IP-level throttling at the edge.
 
 Rate-limit fingerprint rows idle for 24 hours are pruned at startup and hourly. This keeps the limiter's metadata table from retaining inactive token fingerprints indefinitely.
+
+## Trusted GitHub Actions verification
+
+Tasks can enter `verified` only after the Hub accepts a signed GitHub Actions OIDC token and independently confirms the referenced workflow run through the GitHub Actions API. The runtime stores an immutable, tenant-scoped evidence receipt tied to the task's exact repository and candidate SHA. Worker-supplied JSON alone cannot certify a task.
+
+Configure these server-side variables only after reviewing and pinning the reusable workflow:
+
+- `USH_GITHUB_OIDC_AUDIENCE`: exact audience requested by the reusable workflow.
+- `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS`: comma-separated exact `job_workflow_ref` values; no wildcard matching.
+- `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA`: exact 40-character `job_workflow_sha` of the approved reusable workflow.
+- `USH_GITHUB_API_TOKEN`: optional read-only Actions token for private repositories or increased API rate limits.
+
+Projects call `.github/workflows/ush-trusted-verify.yml` only after their own build/test workflow succeeds, passing the Hub URL, audience, project ID, task ID and exact candidate SHA. The reusable workflow requests a short-lived GitHub OIDC token and posts it directly to the Hub; it does not expose a long-lived Hub credential. The API additionally verifies the completed run's repository, caller workflow path, branch, event, run ID/attempt, conclusion and SHA.
+
+Do not enable the endpoint in production until the reusable workflow is merged and its immutable SHA/ref are configured, exact-head CI passes, and a real OIDC round-trip is tested. The example values above are intentionally blank.
