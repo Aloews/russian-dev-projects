@@ -1421,7 +1421,14 @@ async fn upload_execution_artifact(
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_task_lookup_failed"))?;
         if task_exists.is_none() { return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_task_integrity_failed")); }
     }
-    let artifact = store.put_and_register(&state.db, &project_id, job_id, task_id, artifact_type, content_type, &body)
+    let artifact = store.put_and_register(&state.db, artifact_store::ArtifactRegistration {
+        project_id: &project_id,
+        job_id,
+        task_id,
+        artifact_type,
+        content_type,
+        bytes: &body,
+    })
         .await.map_err(|error| {
             tracing::error!(project_id, job_id = %job_id, error = ?error, "artifact upload failed");
             ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_upload_failed")
