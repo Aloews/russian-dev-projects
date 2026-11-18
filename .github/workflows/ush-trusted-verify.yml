@@ -41,7 +41,6 @@ jobs:
       id-token: write
     steps:
       - name: Download evidence artifact from the completed source run
-        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: ush-ci-evidence
@@ -62,16 +61,17 @@ jobs:
           [[ "$SOURCE_RUN_ID" =~ ^[0-9]{1,20}$ ]]
           [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,2}$ ]]
           manifest="$RUNNER_TEMP/ush-ci-evidence/ush-ci-evidence.json"
-          if [[ -s "$manifest" ]]; then
-            jq --exit-status --arg sha "${CANDIDATE_SHA,,}" \
-              --arg run_id "$SOURCE_RUN_ID" --arg attempt "$SOURCE_RUN_ATTEMPT" \
-              'select((.source_sha | ascii_downcase) == $sha and .source_run_id == $run_id and .source_run_attempt == $attempt)' \
-              "$manifest" >/dev/null
-            digest=$(sha256sum "$manifest" | awk '{print "sha256:" $1}')
-            echo "artifact_digest=$digest" >> "$GITHUB_OUTPUT"
-          else
-            echo "artifact_digest=" >> "$GITHUB_OUTPUT"
+          if [[ ! -s "$manifest" ]]; then
+            echo "Trusted CI evidence artifact is missing or empty" >&2
+            exit 1
           fi
+          jq --exit-status --arg sha "${CANDIDATE_SHA,,}" \
+            --arg run_id "$SOURCE_RUN_ID" --arg attempt "$SOURCE_RUN_ATTEMPT" \
+            'select((.source_sha | ascii_downcase) == $sha and .source_run_id == $run_id and .source_run_attempt == $attempt)' \
+            "$manifest" >/dev/null
+          digest=$(sha256sum "$manifest" | awk '{print "sha256:" $1}')
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "artifact_digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Submit signed GitHub OIDC evidence to the Hub
         shell: bash
