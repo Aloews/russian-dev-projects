@@ -622,11 +622,13 @@ jobs:
             worker_token=$(printf '%s' "$pair" | cut -d: -f4)
             assigned_task_id=$(printf '%s' "$pair" | cut -d: -f5)
             assigned_task_lease=$(printf '%s' "$pair" | cut -d: -f6)
-            curl -fsS -X DELETE "http://127.0.0.1:8000/v1/tasks/$assigned_task_id/workspace-assignment" \
-              -H "Authorization: Bearer $worker_token" -H "Content-Type: application/json" \
-              -d "$(jq -nc --arg worker_id "$worker_id" --arg task_lease_token "$assigned_task_lease" \
-                --arg workspace_id "$workspace_id" --arg workspace_lease_token "$workspace_lease" \
-                '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token}')" >/dev/null
+            if [ "$worker_id" = "reviewer-smoke" ]; then
+              curl -fsS -X DELETE "http://127.0.0.1:8000/v1/tasks/$assigned_task_id/workspace-assignment" \
+                -H "Authorization: Bearer $worker_token" -H "Content-Type: application/json" \
+                -d "$(jq -nc --arg worker_id "$worker_id" --arg task_lease_token "$assigned_task_lease" \
+                  --arg workspace_id "$workspace_id" --arg workspace_lease_token "$workspace_lease" \
+                  '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token}')" >/dev/null
+            fi
             curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$workspace_id/release" \
               -H "Authorization: Bearer $worker_token" -H "Content-Type: application/json" \
               -d "$(jq -nc --arg worker_id "$worker_id" --arg lease_token "$workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
