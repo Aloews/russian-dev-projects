@@ -584,11 +584,12 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 
 ### Trusted GitHub Actions verification — implementation in progress
 
-- New feature branch `feat/ush-trusted-github-verification-20261118` adds SQL migration `0011_trusted_github_verification.sql`, a dedicated OIDC ingestion endpoint, and a trusted-run verifier.
+- Integrated the trusted verification work onto the current PR #64 branch so it includes the latest durable-runtime and smoke-test fixes. Adds SQL migration `0011_trusted_github_verification.sql`, a dedicated OIDC ingestion endpoint, and a trusted-run verifier.
 - OIDC checks include GitHub JWKS signature, fixed issuer, configured audience, expiry/nbf, subject, repository, branch ref, event, allowlisted `job_workflow_ref` and exact `job_workflow_sha` pin.
 - The Hub independently fetches the Actions run from GitHub's API and requires exact repository, caller workflow path, branch, event, run ID/attempt, completed status, success conclusion and candidate SHA.
 - Evidence receipts are tenant-scoped, append-only for runtime users, unique by repository/run/attempt/task, and bound by a database trigger to the task's repository and candidate SHA. Runtime role has SELECT/INSERT only; RLS is forced.
 - Reviewer completion is re-enabled only behind the persisted trusted evidence lookup, exact candidate pin, empty writer scope and distinct implementation/reviewer identity.
 - Added unit tests for repository/workflow allowlisting, reusable-workflow SHA pinning, exact run metadata, failure/replay mismatch and numeric/string run claims; migration contract tests; container smoke checks for RLS and restricted grants.
 - Required configuration: `USH_GITHUB_OIDC_AUDIENCE`, `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS`, `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA`; optional `USH_GITHUB_API_TOKEN` for API rate limits/private run lookup.
-- Not yet complete: trusted reusable workflow wiring, real signed-token end-to-end test, artifact digest capture, exact-head CI and adversarial disposable-Postgres tests. Existing fail-closed behavior remains until those gates pass. No production config or workers changed.
+- Added reusable workflow `.github/workflows/ush-trusted-verify.yml` with least-privilege `id-token: write` and `actions: read`, short-lived token request, exact candidate SHA check and direct evidence submission. Added blank example configuration and operator setup notes. The reusable workflow must be pinned to its merged immutable SHA and exact ref before the server allowlist can be enabled.
+- Not yet complete: real signed-token end-to-end test, artifact digest capture, exact-head CI and adversarial disposable-Postgres tests. Existing fail-closed behavior remains until those gates pass. No production config or workers changed.
