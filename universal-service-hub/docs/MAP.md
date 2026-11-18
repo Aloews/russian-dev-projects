@@ -601,3 +601,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 
 - Exact-head CI #44369854642 reached Rust format/lint/tests (29 passed), migration contract tests (2 passed), Docker build and Compose startup. The container migration smoke then exposed a duplicated trailing SQL fragment in `0011_trusted_github_verification.sql`; the duplicate began after the intended `REVOKE UPDATE, DELETE` statement and caused PostgreSQL to parse an invalid trailing fragment.
 - Removed the duplicate fragment; the migration now ends after the intended grants/revokes. This is a migration-source correction, not a passing runtime verification. A fresh exact-head CI run is required.
+
+
+### Trusted verification migration repair — 2026-11-19
+
+- Exact-head CI #44369854642 reached Rust formatting/lint/tests, Python checks, migration smoke and Docker build successfully, then failed during Compose startup because migration 0011 contained a malformed SHA check and duplicated trailing SQL fragment. PostgreSQL reported syntax error at `push`, caused by the unterminated preceding regex literal.
+- Replaced migration 0011 with a clean complete definition, using explicit 40-character hexadecimal validation and a valid event constraint. The schema still enforces task/candidate/repository binding, immutable receipts, tenant RLS and SELECT/INSERT-only runtime access.
+- Repair commit: `7458107239e087717bbbc7e47190690ddf33992f`. New exact-head CI is required; migration is not considered verified until Compose smoke passes.
