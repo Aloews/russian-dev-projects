@@ -384,10 +384,16 @@ jobs:
             -d "$(jq -nc --arg worker_id "tester-smoke" --arg lease_token "$implementer_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')")
           test "$wrong_workspace_owner" = "403"
 
-          curl -fsS -X POST \
+          implementer_active_assignments=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -Atc "SELECT count(*) FROM engineering_task_workspace_assignments a JOIN engineering_tasks t ON t.id=a.task_id AND t.tenant_id=a.tenant_id AND t.project_id=a.project_id WHERE a.tenant_id='aloews' AND a.project_id='smoke-project' AND a.workspace_id='$implementer_workspace_id' AND a.released_at IS NULL AND t.lease_expires_at>NOW()")
+          echo "Implementer active task assignments before release: $implementer_active_assignments"
+          implementer_release_status=$(curl -sS -o /tmp/ush-implementer-release.json -w "%{http_code}" -X POST \
             "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/release" \
             -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
-            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$implementer_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$implementer_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')")
+          echo "Implementer workspace release HTTP status: $implementer_release_status"
+          cat /tmp/ush-implementer-release.json || true
+          test "$implementer_release_status" = "204"
           curl -fsS -X POST \
             "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$tester_workspace_id/release" \
             -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
