@@ -313,7 +313,7 @@ mod tests {
         let job_id = Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
 
         Mock::given(method("PUT"))
-            .and(path_regex(r"^/ush-test/ush-artifacts-v1/project-a/jobs/[^/]+$"))
+            .and(path_regex(r"^/ush-test/ush-artifacts-v1/project-a/jobs/[^/]+/[^/]+$"))
             .and(header("x-amz-server-side-encryption", "AES256"))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)
@@ -326,7 +326,7 @@ mod tests {
         assert_eq!(stored.sha256, hex::encode(Sha256::digest(b"artifact-data")));
 
         Mock::given(method("GET"))
-            .and(path_regex(r"^/ush-test/ush-artifacts-v1/project-a/jobs/[^/]+$"))
+            .and(path_regex(r"^/ush-test/ush-artifacts-v1/project-a/jobs/[^/]+/[^/]+$"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("content-type", "text/plain")
@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(content_type.as_deref(), Some("text/plain"));
 
         Mock::given(method("DELETE"))
-            .and(path_regex(r"^/ush-test/ush-artifacts-v1/project-a/jobs/[^/]+$"))
+            .and(path_regex(r"^/ush-test/ush-artifacts-v1/project-a/jobs/[^/]+/[^/]+$"))
             .respond_with(ResponseTemplate::new(204))
             .expect(1)
             .mount(&server)
