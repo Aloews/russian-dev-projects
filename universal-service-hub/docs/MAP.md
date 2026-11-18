@@ -605,11 +605,12 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - The new base-head CI is required before stacking further UHS work; no PR is merged and no production configuration changed.
 
 
-### Trusted artifact digest provenance — 2026-11-18
+### Completed-run artifact provenance — 2026-11-18
 
-- The reusable trusted-verification workflow no longer accepts a caller-supplied digest. It requires an artifact name, reads the unique unexpired artifact's SHA-256 digest from the current GitHub Actions run metadata using the read-only Actions permission, downloads that artifact with digest mismatch set to error, verifies the downloaded directory is non-empty, and submits the GitHub-reported digest with the OIDC token.
-- The server persists the digest with the signed run identity and includes it in the receipt response. This binds the receipt to the artifact archive GitHub recorded rather than to an arbitrary caller-provided string.
-- No production secrets or workers are configured. A concrete workflow caller and signed-token end-to-end test remain acceptance gates.
+- The source CI workflow creates and uploads `ush-ci-evidence.json` only after all checks, container startup and smoke tests succeed. The manifest records the exact candidate SHA, source run ID/attempt and Docker image ID plus root filesystem layer digests.
+- The separate `workflow_run` caller invokes the pinned reusable workflow only after the source run completes. The reusable workflow downloads the artifact from that exact source run, verifies the embedded candidate SHA/run ID/attempt, and calculates SHA-256 over the downloaded manifest. It does not accept a caller-supplied digest.
+- The Hub verifies the OIDC identity of the separate attestation run, fetches the completed source run independently, and compares source repository, allowed workflow path, event, run ID/attempt, branch and exact candidate SHA. The receipt stores both source and attestation run identities, source start/completion times, artifact digest and immutable identity claims.
+- The workflow caller currently requires a configured `USH_TASK_ID` repository variable. This is only a single-task integration hook; dynamic task resolution for concurrent work remains open. No production secrets or workers are configured; the signed-token round-trip remains unverified until merged and configured.
 
 
 ### Pull-request artifact identity alignment — 2026-11-18
