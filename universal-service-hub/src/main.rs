@@ -3636,6 +3636,9 @@ mod integration_security_tests {
         assert!(github_source_run_is_allowed("push",&json!({"head_branch":"ai/task-42-9001"}),&allowed));
         assert!(!github_source_run_is_allowed("push",&json!({"head_branch":"ai/other-42"}),&allowed));
         assert!(!github_source_run_is_allowed("push",&json!({"head_branch":"ai/task-"}),&allowed));
+        assert!(!github_source_branch_is_allowed("anything",&["*".to_owned()]));
+        assert!(!github_source_branch_is_allowed("ai/worker/task-42",&["ai/*/task-*".to_owned()]));
+        assert!(!github_source_branch_is_allowed("ai/task-42",&["ai/task-42*extra".to_owned()]));
         assert!(!github_source_run_is_allowed("pull_request",&json!({
             "head_branch":"feature/task","pull_requests":[{"base":{"ref":"main"}}]
         }),&allowed));
