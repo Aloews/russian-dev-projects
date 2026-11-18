@@ -100,7 +100,7 @@ jobs:
         run: python3 .github/scripts/validate_agent_docs.py
       - name: Product Factory workflow validation
         working-directory: .
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/product-factory.yml .github/workflows/universal-hub-codex-claude.yml
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/product-factory.yml .github/workflows/universal-hub-codex-claude.yml .github/workflows/ush-trusted-verify.yml .github/workflows/ush-post-ci-verification.yml
       - name: Product Factory composite action metadata
         working-directory: .
         run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' .github/actions/product-factory-agent/action.yml .github/actions/product-factory-qwen-agent/action.yml .github/actions/product-factory-verify/action.yml
