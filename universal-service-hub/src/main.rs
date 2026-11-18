@@ -1763,8 +1763,7 @@ fn github_verification_receipt_hash(
         json!({
             "identity":stable_claims,
             "source_run":source_run,
-            "task_id":task_id
-            "task_id":task_id
+            "task_id":task_id,
         }).to_string().as_bytes()
     ))
 }
