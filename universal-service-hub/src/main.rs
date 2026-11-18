@@ -1407,15 +1407,20 @@ async fn upload_execution_artifact(
         return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_artifact_content_type"));
     }
 
-    let job_exists = sqlx::query("SELECT 1 FROM execution_jobs WHERE project_id=$1 AND id=$2")
+    let job_row = sqlx::query("SELECT task_id FROM execution_jobs WHERE project_id=$1 AND id=$2")
         .bind(&project_id).bind(job_id).fetch_optional(&state.db).await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_job_lookup_failed"))?;
-    if job_exists.is_none() { return Err(ApiError(StatusCode::NOT_FOUND, "execution_job_not_found")); }
+    let job_row = job_row.ok_or(ApiError(StatusCode::NOT_FOUND, "execution_job_not_found"))?;
+    let job_task_id: Option<Uuid> = job_row.get("task_id");
+    if task_id.is_some() && task_id != job_task_id {
+        return Err(ApiError(StatusCode::CONFLICT, "artifact_task_mismatch"));
+    }
+    let task_id = job_task_id;
     if let Some(task_id) = task_id {
         let task_exists = sqlx::query("SELECT 1 FROM project_tasks WHERE project_id=$1 AND id=$2")
             .bind(&project_id).bind(task_id).fetch_optional(&state.db).await
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_task_lookup_failed"))?;
-        if task_exists.is_none() { return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "task_not_in_project")); }
+        if task_exists.is_none() { return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_task_integrity_failed")); }
     }
     let artifact = store.put_and_register(&state.db, &project_id, job_id, task_id, artifact_type, content_type, &body)
         .await.map_err(|error| {
