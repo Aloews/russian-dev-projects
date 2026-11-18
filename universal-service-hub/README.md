@@ -212,7 +212,8 @@ Tasks can enter `verified` only after the Hub accepts a signed GitHub Actions OI
 Configure these server-side variables only after reviewing and pinning the reusable workflow:
 
 - `USH_GITHUB_OIDC_AUDIENCE`: exact audience requested by the reusable workflow.
-- `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS`: comma-separated exact `job_workflow_ref` values; no wildcard matching.
+- `USH_GITHUB_ALLOWED_WORKFLOW_REFS`: comma-separated exact caller `workflow_ref` values; no wildcard matching.
+- `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS`: comma-separated exact reusable `job_workflow_ref` values; no wildcard matching.
 - `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA`: exact 40-character `job_workflow_sha` of the approved reusable workflow.
 - `USH_GITHUB_API_TOKEN`: optional read-only Actions token for private repositories or increased API rate limits.
 
