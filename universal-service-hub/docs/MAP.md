@@ -595,3 +595,9 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Root cause was a truncated SQL CHECK expression in migration `0011_trusted_github_verification.sql`: the `job_workflow_sha` regex literal lacked its closing delimiter and closing CHECK parentheses. PostgreSQL then reported a syntax error at the subsequent `'push'` value. This was a real migration defect, not a Docker/Compose readiness issue.
 - Corrected the constraint to a delimiter-safe length/character check: `length(job_workflow_sha) = 40 AND job_workflow_sha !~ '[^0-9a-fA-F]'`. The current PR #88 head contains the corrected migration, but **no GitHub Actions run exists yet for that exact head**; re-verification is still required.
 - PR #64's current head `46d9758b4b8a94d63480722096ffa719372a2ac6` completed CI successfully (run #44369359083).
+
+
+### Trusted evidence migration correction — 2026-11-18
+
+- Exact-head CI #44369854642 reached Rust format/lint/tests (29 passed), migration contract tests (2 passed), Docker build and Compose startup. The container migration smoke then exposed a duplicated trailing SQL fragment in `0011_trusted_github_verification.sql`; the duplicate began after the intended `REVOKE UPDATE, DELETE` statement and caused PostgreSQL to parse an invalid trailing fragment.
+- Removed the duplicate fragment; the migration now ends after the intended grants/revokes. This is a migration-source correction, not a passing runtime verification. A fresh exact-head CI run is required.
