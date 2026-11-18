@@ -156,6 +156,23 @@ impl ArtifactStore {
         Ok(stored)
     }
 
+    pub async fn get(&self, object_key: &str) -> anyhow::Result<(Vec<u8>, Option<String>)> {
+        if !object_key.starts_with(&format!("{}/", self.prefix)) || object_key.contains("..") {
+            bail!("artifact key is outside the configured prefix");
+        }
+        let response = self.client.get_object().bucket(&self.bucket).key(object_key)
+            .send().await.context("artifact download failed")?;
+        if response.content_length().is_some_and(|size| size < 0 || size as usize > self.max_bytes) {
+            bail!("stored artifact exceeds configured size limit");
+        }
+        let content_type = response.content_type().map(str::to_owned);
+        let bytes = response.body.collect().await.context("artifact body read failed")?.into_bytes().to_vec();
+        if bytes.len() > self.max_bytes {
+            bail!("stored artifact exceeds configured size limit");
+        }
+        Ok((bytes, content_type))
+    }
+
     pub async fn delete(&self, object_key: &str) -> anyhow::Result<()> {
         if !object_key.starts_with(&format!("{}/", self.prefix)) || object_key.contains("..") {
             bail!("artifact key is outside the configured prefix");
