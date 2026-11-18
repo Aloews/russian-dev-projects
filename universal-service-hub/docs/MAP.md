@@ -553,30 +553,14 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Positive verification remains intentionally unavailable until Issue #83 implements trusted GitHub Actions OIDC evidence ingestion plus independent review.
 
 
-### Workspace cleanup smoke correction — 2026-11-18
+### Trusted GitHub Actions verification — implementation in progress
 
-- Exact-head run `44364315855` confirmed the reviewer self-verification rejection assertion passed; the container smoke then failed during cleanup because it tried to release a workspace while its still-live task assignment remained active. The API correctly returned `active_task_workspace_assignment_must_be_released` (HTTP 409).
-- Corrected the smoke cleanup to call the worker-scoped task workspace-assignment DELETE endpoint with both live lease tokens before releasing each workspace. This preserves the runtime's lease/assignment safety invariant; no application behavior was weakened.
-- Workflow fixture commit: `88b22195f05b1711f6113d914d4426b741825770`. Exact-head run pending.
-
-
-### Workspace cleanup follow-up — 2026-11-18
-
-- Exact-head run `44366947192` passed Rust format, lint and unit tests, then failed in container smoke cleanup. The implementation and tester completion paths already release their workspace assignments transactionally; the smoke fixture redundantly tried to DELETE those assignments using task lease tokens that had correctly been cleared at completion, producing HTTP 409.
-- Updated cleanup to issue the explicit assignment DELETE only for the reviewer, whose attempted verification is intentionally rejected and therefore leaves its read-only assignment active. Implementer/tester assignments continue to be released by task completion; all workspaces are then released with their own lease tokens.
-- Workflow fixture commit: `c914e2c51109b921ac9f5e581d3630907102157b`. Exact-head CI pending.
-
-
-### Workspace cleanup smoke correction 2 — 2026-11-18
-
-- Exact-head CI #44366947192 passed Rust format/lint/tests, migration and Python checks, Docker build and Compose startup, then failed in container smoke cleanup. The fixture released implementer and tester workspaces earlier, and their task completion had already released those assignments; the final cleanup loop then tried to delete the same assignment/release the same workspace again, receiving HTTP 409.
-- Updated cleanup so only the still-active reviewer assignment and reviewer workspace are released in the final loop. Implementer/tester workspaces are not released a second time. Runtime authorization and lease invariants remain unchanged.
-- Workflow correction commit: `6b6ec0a64084f7b45b197477e25ee7a504c2f49b`. Exact-head CI is pending.
-
-
-### Exact-head workspace cleanup verification — 2026-11-18
-
-- Current PR #64 head `46d9758b4b8a94d63480722096ffa719372a2ac6` passed exact-head CI run [#44369359083](https://github.com/Aloews/russian-dev-projects/actions/runs/44369359083).
-- All 27 workflow steps passed: Product Factory checks, Rust format/Clippy/tests, restricted-role and migration checks, Python/Ruff tests, Docker build, Compose runtime startup and container smoke.
-- The final smoke now releases only the still-active reviewer assignment/workspace. Implementer and tester assignments are released by their successful task completion paths; no duplicate release is attempted.
-- This verifies the durable task API and current lease/cleanup smoke only. It does not verify actual Git worktree provisioning, long-running external worker execution, trusted OIDC evidence ingestion, production deployment, or multi-tenant live operation.
+- New feature branch `feat/ush-trusted-github-verification-20261118` adds SQL migration `0011_trusted_github_verification.sql`, a dedicated OIDC ingestion endpoint, and a trusted-run verifier.
+- OIDC checks include GitHub JWKS signature, fixed issuer, configured audience, expiry/nbf, subject, repository, branch ref, event, allowlisted `job_workflow_ref` and exact `job_workflow_sha` pin.
+- The Hub independently fetches the Actions run from GitHub's API and requires exact repository, caller workflow path, branch, event, run ID/attempt, completed status, success conclusion and candidate SHA.
+- Evidence receipts are tenant-scoped, append-only for runtime users, unique by repository/run/attempt/task, and bound by a database trigger to the task's repository and candidate SHA. Runtime role has SELECT/INSERT only; RLS is forced.
+- Reviewer completion is re-enabled only behind the persisted trusted evidence lookup, exact candidate pin, empty writer scope and distinct implementation/reviewer identity.
+- Added unit tests for repository/workflow allowlisting, reusable-workflow SHA pinning, exact run metadata, failure/replay mismatch and numeric/string run claims; migration contract tests; container smoke checks for RLS and restricted grants.
+- Required configuration: `USH_GITHUB_OIDC_AUDIENCE`, `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS`, `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA`; optional `USH_GITHUB_API_TOKEN` for API rate limits/private run lookup.
+- Exact-head validation found and corrected two implementation defects before release: Clippy's excessive-argument warning was resolved by grouping run identity fields, and the repository validator now rejects traversal-like `..` components. The migration was also corrected to include the pinned reusable-workflow identity and caller workflow path columns.
+- Not yet complete: trusted reusable workflow wiring, real signed-token end-to-end test, artifact digest capture, exact-head CI and adversarial disposable-Postgres tests. Existing fail-closed behavior remains until those gates pass. No production config or workers changed.
