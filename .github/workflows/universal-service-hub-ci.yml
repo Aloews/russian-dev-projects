@@ -592,18 +592,20 @@ jobs:
               '{worker_id:$worker_id,lease_token:$lease_token,model_id:"reviewer-model",strategy:"independent-review",outcome:"succeeded",acceptance_progress:1.0}')")
           printf '%s' "$reviewer_attempt" | jq -e '.outcome == "succeeded"' >/dev/null
 
-          curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/complete" \
+          reviewer_verify_status=$(curl -sS -o /tmp/ush-reviewer-verify-response.json -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/tasks/$task_id/complete" \
             -H "Authorization: Bearer $reviewer_token" -H "Content-Type: application/json" \
             -d "$(jq -nc --arg worker_id "reviewer-smoke" --arg task_lease_token "$reviewer_task_lease" \
               --arg workspace_id "$reviewer_workspace_id" --arg workspace_lease_token "$reviewer_workspace_lease" \
               --arg candidate_sha "$candidate_sha" \
-              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,next_status:"verified",candidate_sha:$candidate_sha,evidence:{decision:"approved",reviewed_sha:$candidate_sha,findings:[]}}')" \
-            | jq -e '.status == "verified" and .candidate_sha != null' >/dev/null
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,next_status:"verified",candidate_sha:$candidate_sha,evidence:{decision:"approved",reviewed_sha:$candidate_sha,findings:[]}}')")
+          test "$reviewer_verify_status" = "403"
+          printf '%s' "$(cat /tmp/ush-reviewer-verify-response.json)" | jq -e '.error == "trusted_verification_evidence_required"' >/dev/null
 
           final_tasks=$(curl -fsS -H "Authorization: Bearer $tenant_alpha_token" \
             http://127.0.0.1:8000/v1/projects/smoke-project/tasks)
           printf '%s' "$final_tasks" | jq -e --arg id "$task_id" --arg sha "$candidate_sha" \
-            'any(.[]; .id == $id and .status == "verified" and .candidate_sha == $sha and .metadata.source_issue_number == 63)' >/dev/null
+            'any(.[]; .id == $id and .status == "review" and .candidate_sha == $sha and .metadata.source_issue_number == 63)' >/dev/null
 
           for pair in "$implementer_workspace_id:$implementer_workspace_lease:implementer-smoke:$implementer_token" \
                       "$tester_workspace_id:$tester_workspace_lease:tester-smoke:$tester_token" \
