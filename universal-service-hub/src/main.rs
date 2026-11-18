@@ -1761,6 +1761,9 @@ async fn complete_engineering_task(
     let role=principal.worker_role.as_deref().unwrap_or("");
     let project_id=principal.project_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_project_scope_required"))?;
     let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
+    if body.next_status=="verified" {
+        return Err(ApiError(StatusCode::FORBIDDEN,"trusted_verification_evidence_required"));
+    }
     let allowed=worker_can_complete_status(role,&body.next_status);
     if !allowed || body.worker_id!=worker_id || body.task_lease_token.len()<32
         || body.workspace_lease_token.len()<32 || Uuid::parse_str(&body.workspace_id).is_err()
@@ -1804,19 +1807,7 @@ async fn complete_engineering_task(
     let assigned_scope:Value=assignment.try_get("writer_scope").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
     let assigned_candidate:Option<String>=assignment.try_get("candidate_sha").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
     if assigned_role!=role{return Err(ApiError(StatusCode::FORBIDDEN,"workspace_assignment_role_mismatch"));}
-    if body.next_status=="verified" {
-        if role!="reviewer" || assigned_scope.as_array().is_none_or(|scope|!scope.is_empty())
-            || body.candidate_sha.as_deref()!=existing_candidate.as_deref()
-            || assigned_candidate.as_deref()!=existing_candidate.as_deref() {
-            return Err(ApiError(StatusCode::FORBIDDEN,"reviewer_candidate_not_pinned_or_read_only"));
-        }
-        let prior=sqlx::query("SELECT worker_id FROM engineering_task_attempts WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND worker_role IN ('implementer','builder','tester') ORDER BY attempt_no DESC LIMIT 1")
-            .bind(tenant_id).bind(project_id).bind(&task_id).fetch_optional(&mut *tx).await
-            .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"reviewer_independence_check_failed"))?;
-        let Some(prior)=prior else{return Err(ApiError(StatusCode::CONFLICT,"independent_implementation_attempt_required"));};
-        let prior_worker:String=prior.try_get("worker_id").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"reviewer_independence_check_failed"))?;
-        if prior_worker==worker_id{return Err(ApiError(StatusCode::FORBIDDEN,"reviewer_must_be_independent"));}
-    } else if body.candidate_sha.is_some() && existing_candidate.as_deref().is_some_and(|existing|body.candidate_sha.as_deref()!=Some(existing)) && role!="implementer" {
+    if body.candidate_sha.is_some() && existing_candidate.as_deref().is_some_and(|existing|body.candidate_sha.as_deref()!=Some(existing)) && role!="implementer" {
         return Err(ApiError(StatusCode::CONFLICT,"candidate_sha_change_requires_implementer"));
     }
     if !["blocked","recovery","failed"].contains(&body.next_status.as_str())
