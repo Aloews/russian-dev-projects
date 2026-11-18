@@ -655,3 +655,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Exact-head CI run #44390802937 failed in Rust lint/compile at `src/main.rs:1766`: the attestation hash JSON object contained a duplicated `"task_id": task_id` entry and the first entry lacked its separating comma.
 - Removed the duplicated key and restored valid JSON macro syntax in commit `4e9e5443bdb28a2db0be472a68e2aa56eaab9332`.
 - This is a compile-level correction only; it does not change attestation claims, trust policy, database schema, or production configuration. The new exact-head CI run must pass before this increment is considered verified.
+
+
+### Artifact-digest Clippy correction — 2026-11-19
+
+- Exact-head CI run #44393555055 compiled the corrected JSON syntax but failed Rust Clippy on two remaining issues: the request field `artifact_digest` is a required `String`, so calling `.as_ref().is_some_and(...)` left the `AsRef` target ambiguous; and `github_verification_receipt_hash` accepted the artifact digest without including it in the hashed claims.
+- Replaced the ambiguous optional-style validation with direct `String` length/character checks and included the validated artifact digest in the receipt-hash payload. This preserves the mandatory SHA-256 digest requirement and binds the receipt hash to the artifact bytes' digest.
+- Correction commit: `6b39d55cb81f5f4fc99ddb352df55c4f3a4e52d9`. The next exact-head CI run must pass before this increment is considered verified. No production configuration, secrets, workers or deployment were changed.
