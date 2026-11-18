@@ -19,12 +19,16 @@ on:
         description: Hub task identifier
         required: true
         type: string
-      candidate_sha:
-        description: Exact 40-character commit SHA being verified
+      source_run_id:
+        description: Completed source build/test workflow run ID
         required: true
         type: string
-      artifact_name:
-        description: Exact artifact name uploaded by this workflow run
+      source_run_attempt:
+        description: Completed source build/test workflow run attempt
+        required: true
+        type: string
+      candidate_sha:
+        description: Exact source workflow commit SHA
         required: true
         type: string
 
@@ -35,44 +39,49 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: read
+      contents: read
       id-token: write
     steps:
-      - name: Resolve trusted artifact digest
+      - name: Download evidence artifact from the completed source run
+        uses: actions/download-artifact@v4
+        with:
+          name: ush-ci-evidence
+          path: ${{ runner.temp }}/ush-ci-evidence
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Calculate exact evidence artifact digest
         id: artifact
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
         run: |
           set -euo pipefail
-          [[ "$ARTIFACT_NAME" =~ ^[A-Za-z0-9._-]{1,128}$ ]]
-          artifacts_json=$(curl --fail --silent --show-error \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts")
-          artifact_digest=$(jq --exit-status --raw-output --arg name "$ARTIFACT_NAME" \
-            '[.artifacts[] | select(.name == $name and .expired == false)] | if length == 1 then .[0].digest else error("expected exactly one unexpired artifact with this name") end' \
-            <<< "$artifacts_json")
-          [[ "$artifact_digest" =~ ^sha256:[a-fA-F0-9]{64}$ ]]
-          echo "digest=$artifact_digest" >> "$GITHUB_OUTPUT"
-          unset artifacts_json
+          [[ "$CANDIDATE_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
+          [[ "$SOURCE_RUN_ID" =~ ^[0-9]{1,20}$ ]]
+          [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,2}$ ]]
+          manifest="$RUNNER_TEMP/ush-ci-evidence/ush-ci-evidence.json"
+          test -s "$manifest"
+          jq --exit-status --arg sha "${CANDIDATE_SHA,,}" \
+            --arg run_id "$SOURCE_RUN_ID" --arg attempt "$SOURCE_RUN_ATTEMPT" \
+            'select((.source_sha | ascii_downcase) == $sha and .source_run_id == $run_id and .source_run_attempt == $attempt)' \
+            "$manifest" >/dev/null
+          digest=$(sha256sum "$manifest" | awk '{print "sha256:" $1}')
+          echo "artifact_digest=$digest" >> "$GITHUB_OUTPUT"
 
-      - name: Download and verify artifact archive
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ inputs.artifact_name }}
-          path: ${{ runner.temp }}/ush-verification-artifact
-          digest-mismatch: error
-
-      - name: Submit signed GitHub Actions evidence to the Hub
+      - name: Submit signed GitHub OIDC evidence to the Hub
         shell: bash
         env:
           HUB_BASE_URL: ${{ inputs.hub_base_url }}
           OIDC_AUDIENCE: ${{ inputs.oidc_audience }}
           PROJECT_ID: ${{ inputs.project_id }}
           TASK_ID: ${{ inputs.task_id }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.digest }}
+          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.artifact_digest }}
         run: |
           set -euo pipefail
           [[ "$HUB_BASE_URL" =~ ^https://[^/]+(/[^?#]*)?$ ]]
@@ -80,10 +89,7 @@ jobs:
           [[ "$PROJECT_ID" =~ ^[A-Za-z0-9_-]{1,80}$ ]]
           [[ "$TASK_ID" =~ ^[A-Za-z0-9_-]{1,80}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
-          [[ "$GITHUB_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
-          [[ "${GITHUB_SHA,,}" == "${CANDIDATE_SHA,,}" ]]
           [[ "$ARTIFACT_DIGEST" =~ ^sha256:[a-fA-F0-9]{64}$ ]]
-          test -n "$(find "${{ runner.temp }}/ush-verification-artifact" -type f -print -quit)"
           test -n "$ACTIONS_ID_TOKEN_REQUEST_URL"
           test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
 
@@ -99,7 +105,10 @@ jobs:
             -H "Authorization: Bearer $oidc_token" \
             -H "Accept: application/json" \
             -H "Content-Type: application/json" \
-            --data "$(jq -nc --arg digest "${ARTIFACT_DIGEST,,}" '{artifact_digest:$digest}')" \
+            --data "$(jq -nc --arg digest "${ARTIFACT_DIGEST,,}" \
+              --arg sha "${CANDIDATE_SHA,,}" --arg run "$SOURCE_RUN_ID" \
+              --arg attempt "$SOURCE_RUN_ATTEMPT" \
+              '{artifact_digest:$digest,candidate_sha:$sha,source_run_id:($run|tonumber),source_run_attempt:($attempt|tonumber)}')" \
             "$HUB_BASE_URL/v1/projects/$PROJECT_ID/tasks/$TASK_ID/verification/github-actions" \
             | jq --exit-status --arg sha "${CANDIDATE_SHA,,}" --arg digest "${ARTIFACT_DIGEST,,}" \
                 'select(.conclusion == "success" and .candidate_sha == $sha and .artifact_digest == $digest and (.evidence_id | type == "string" and length > 0))'
