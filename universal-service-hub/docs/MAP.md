@@ -692,3 +692,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Exact-head run #44409369585 passed the new trusted workflow's initial Bash syntax extraction but actionlint/ShellCheck found malformed nested command-substitution quoting in the OIDC POST payload. The same step also treated the artifact digest as optional even though the API contract requires it.
 - Split payload construction into a separate `payload=$(jq ...)` assignment and made the SHA-256 digest check mandatory before token acquisition/submission. This keeps OIDC token retrieval after the independent candidate-verification job and avoids running candidate code in the OIDC-enabled job.
 - Correction commit: `6edc2714b0d951dbbac8a9bade324d78e7e0eb78`. New exact-head CI is pending.
+
+
+### Trusted workflow shell-test coverage — 2026-11-19
+
+- A review of the workflow test harness found it syntax-checked only the first inline `run: |` block in `ush-trusted-verify.yml`, which was insufficient after the reusable workflow gained multiple jobs.
+- Updated the CI syntax test to extract and run `bash -n` against every inline shell block in the trusted workflow. This covers candidate validation, DB/migration checks, manifest generation and OIDC submission.
+- Correction commit: `deb9b5734bd015df19312ceb5bee7fc0e5bb6ac8`. Exact-head CI is pending.
