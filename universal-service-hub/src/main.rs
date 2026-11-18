@@ -1791,6 +1791,10 @@ fn github_workflow_path(workflow_ref: &str, repository: &str) -> Option<String> 
     Some(path.to_owned())
 }
 
+fn github_caller_workflow_is_allowed(workflow_ref: &str, allowed_workflows: &[String]) -> bool {
+    allowed_workflows.iter().any(|allowed|allowed==workflow_ref)
+}
+
 fn github_job_workflow_is_trusted(
     job_workflow_ref: &str,
     job_workflow_sha: &str,
@@ -1840,11 +1844,15 @@ async fn verify_github_actions_run(
     let audience=env::var("USH_GITHUB_OIDC_AUDIENCE")
         .ok().filter(|value|!value.trim().is_empty())
         .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_oidc_audience_not_configured"))?;
+    let allowed_callers=env::var("USH_GITHUB_ALLOWED_WORKFLOW_REFS")
+        .unwrap_or_default().split(',')
+        .map(str::trim).filter(|value|!value.is_empty()).map(str::to_owned)
+        .collect::<Vec<_>>();
     let allowed_workflows=env::var("USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS")
         .unwrap_or_default().split(',')
         .map(str::trim).filter(|value|!value.is_empty()).map(str::to_owned)
         .collect::<Vec<_>>();
-    if allowed_workflows.is_empty() {
+    if allowed_callers.is_empty() || allowed_workflows.is_empty() {
         return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_oidc_workflow_allowlist_not_configured"));
     }
 
@@ -1881,6 +1889,7 @@ async fn verify_github_actions_run(
         .ok().filter(|value|value.len()==40 && value.chars().all(|c|c.is_ascii_hexdigit()))
         .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_trusted_workflow_sha_not_configured"))?;
     if !valid_github_repository(repository)
+        || !github_caller_workflow_is_allowed(workflow_ref,&allowed_callers)
         || !github_job_workflow_is_trusted(job_workflow_ref,job_workflow_sha,&allowed_workflows,&trusted_workflow_sha)
         || !git_ref.starts_with("refs/heads/")
         || !["push","workflow_dispatch"].contains(&event_name)
@@ -3469,6 +3478,20 @@ mod integration_security_tests {
             "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/pull/12/merge",
             "Aloews/russian-dev-projects"
         ).is_none());
+    }
+
+    #[test]
+    fn github_oidc_requires_exact_allowlisted_caller_workflow_ref() {
+        let allowed=vec![
+            "Aloews/russian-dev-projects/.github/workflows/universal-service-hub-ci.yml@refs/heads/main".to_owned()
+        ];
+        assert!(github_caller_workflow_is_allowed(&allowed[0],&allowed));
+        assert!(!github_caller_workflow_is_allowed(
+            "Aloews/russian-dev-projects/.github/workflows/other.yml@refs/heads/main",&allowed
+        ));
+        assert!(!github_caller_workflow_is_allowed(
+            "Aloews/russian-dev-projects/.github/workflows/universal-service-hub-ci.yml@refs/heads/feature",&allowed
+        ));
     }
 
     #[test]
