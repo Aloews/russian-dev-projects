@@ -41,8 +41,6 @@ jobs:
           PROJECT_ID: ${{ inputs.project_id }}
           TASK_ID: ${{ inputs.task_id }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          OIDC_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-          OIDC_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
         run: |
           set -euo pipefail
           [[ "$HUB_BASE_URL" =~ ^https://[^/]+(/[^?#]*)?$ ]]
@@ -52,15 +50,15 @@ jobs:
           [[ "$CANDIDATE_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
           [[ "$GITHUB_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
           [[ "${GITHUB_SHA,,}" == "${CANDIDATE_SHA,,}" ]]
-          test -n "$OIDC_REQUEST_URL"
-          test -n "$OIDC_REQUEST_TOKEN"
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_URL"
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
 
           oidc_response=$(curl --fail --silent --show-error --get \
             --data-urlencode "audience=$OIDC_AUDIENCE" \
             -H "Authorization: Bearer $OIDC_REQUEST_TOKEN" \
-            "$OIDC_REQUEST_URL")
+            "$ACTIONS_ID_TOKEN_REQUEST_URL")
           oidc_token=$(jq --exit-status --raw-output '.value | select(type == "string" and length > 100)' <<< "$oidc_response")
-          unset oidc_response OIDC_REQUEST_TOKEN
+          unset oidc_response ACTIONS_ID_TOKEN_REQUEST_TOKEN
 
           curl --fail --silent --show-error --retry 2 --retry-all-errors \
             -X POST \
