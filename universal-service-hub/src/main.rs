@@ -1784,6 +1784,16 @@ fn github_workflow_path(workflow_ref: &str, repository: &str) -> Option<String> 
     Some(path.to_owned())
 }
 
+fn github_job_workflow_is_trusted(
+    job_workflow_ref: &str,
+    job_workflow_sha: &str,
+    allowed_workflows: &[String],
+    trusted_workflow_sha: &str,
+) -> bool {
+    allowed_workflows.iter().any(|allowed|allowed==job_workflow_ref)
+        && job_workflow_sha.eq_ignore_ascii_case(trusted_workflow_sha)
+}
+
 fn github_actions_run_matches(
     run: &Value,
     repository: &str,
@@ -1863,8 +1873,7 @@ async fn verify_github_actions_run(
         .ok().filter(|value|value.len()==40 && value.chars().all(|c|c.is_ascii_hexdigit()))
         .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_trusted_workflow_sha_not_configured"))?;
     if !valid_github_repository(repository)
-        || !allowed_workflows.iter().any(|allowed|allowed==job_workflow_ref)
-        || !job_workflow_sha.eq_ignore_ascii_case(&trusted_workflow_sha)
+        || !github_job_workflow_is_trusted(job_workflow_ref,job_workflow_sha,&allowed_workflows,&trusted_workflow_sha)
         || !git_ref.starts_with("refs/heads/")
         || !["push","workflow_dispatch"].contains(&event_name)
         || sha.len()!=40 || !sha.chars().all(|c|c.is_ascii_hexdigit())
@@ -3414,6 +3423,24 @@ mod integration_security_tests {
             "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/pull/12/merge",
             "Aloews/russian-dev-projects"
         ).is_none());
+    }
+
+    #[test]
+    fn github_oidc_requires_allowlisted_reusable_workflow_and_pinned_sha() {
+        let allowed=vec![
+            "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/heads/main".to_owned()
+        ];
+        let trusted_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert!(github_job_workflow_is_trusted(
+            &allowed[0],trusted_sha,&allowed,trusted_sha
+        ));
+        assert!(!github_job_workflow_is_trusted(
+            "Aloews/russian-dev-projects/.github/workflows/untrusted.yml@refs/heads/main",
+            trusted_sha,&allowed,trusted_sha
+        ));
+        assert!(!github_job_workflow_is_trusted(
+            &allowed[0],"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",&allowed,trusted_sha
+        ));
     }
 
     #[test]
