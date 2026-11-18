@@ -39,7 +39,8 @@ BEGIN
     IF owning_tenant IS NULL OR owning_project IS NULL THEN
         RAISE EXCEPTION 'verification evidence task not found';
     END IF;
-    IF NEW.project_id <> owning_project OR NEW.candidate_sha <> lower(owning_sha)
+    IF owning_sha IS NULL OR owning_repository IS NULL
+       OR NEW.project_id <> owning_project OR NEW.candidate_sha <> lower(owning_sha)
        OR NEW.repository <> owning_repository THEN
         RAISE EXCEPTION 'verification evidence does not match task candidate and repository';
     END IF;
