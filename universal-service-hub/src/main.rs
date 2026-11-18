@@ -1822,7 +1822,11 @@ fn github_actions_run_matches(run: &Value, identity: &GithubRunIdentity<'_>) -> 
         && run.get("status").and_then(Value::as_str)==Some("completed")
         && run.get("conclusion").and_then(Value::as_str)==Some("success")
         && run.get("event").and_then(Value::as_str)==Some(identity.event_name)
-        && run.get("head_sha").and_then(Value::as_str).is_some_and(|value|value.eq_ignore_ascii_case(identity.sha))
+        && (if identity.event_name=="pull_request" {
+            run.pointer("/pull_requests/0/head/sha").and_then(Value::as_str)
+        } else {
+            run.get("head_sha").and_then(Value::as_str)
+        }).is_some_and(|value|value.eq_ignore_ascii_case(identity.sha))
         && run.pointer("/head_repository/full_name").and_then(Value::as_str)==Some(identity.repository)
         && run.get("path").and_then(Value::as_str)==Some(identity.workflow_path)
         && run.get("head_branch").and_then(Value::as_str)==Some(expected_branch)
@@ -3593,6 +3597,35 @@ mod integration_security_tests {
         let mut wrong_repo=run.clone();
         wrong_repo["head_repository"]["full_name"]=json!("Aloews/Novel-forge");
         assert!(!github_actions_run_matches(&wrong_repo,&identity));
+    }
+
+    #[test]
+    fn pull_request_source_run_binds_candidate_to_head_commit_not_merge_sha() {
+        let run=json!({
+            "id":123456,
+            "run_attempt":1,
+            "status":"completed",
+            "conclusion":"success",
+            "event":"pull_request",
+            "head_sha":"cccccccccccccccccccccccccccccccccccccccc",
+            "head_branch":"feature/task",
+            "path":".github/workflows/ci.yml",
+            "head_repository":{"full_name":"Aloews/russian-dev-projects"},
+            "pull_requests":[{"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]
+        });
+        let identity=GithubRunIdentity {
+            repository:"Aloews/russian-dev-projects",
+            workflow_path:".github/workflows/ci.yml",
+            git_ref:"refs/heads/feature/task",
+            event_name:"pull_request",
+            sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            run_id:123456,
+            run_attempt:1
+        };
+        assert!(github_actions_run_matches(&run,&identity));
+        let mut wrong_candidate=identity;
+        wrong_candidate.sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert!(!github_actions_run_matches(&run,&wrong_candidate));
     }
 
     #[test]
