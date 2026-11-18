@@ -572,3 +572,11 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Exact-head CI #44366947192 passed Rust format/lint/tests, migration and Python checks, Docker build and Compose startup, then failed in container smoke cleanup. The fixture released implementer and tester workspaces earlier, and their task completion had already released those assignments; the final cleanup loop then tried to delete the same assignment/release the same workspace again, receiving HTTP 409.
 - Updated cleanup so only the still-active reviewer assignment and reviewer workspace are released in the final loop. Implementer/tester workspaces are not released a second time. Runtime authorization and lease invariants remain unchanged.
 - Workflow correction commit: `6b6ec0a64084f7b45b197477e25ee7a504c2f49b`. Exact-head CI is pending.
+
+
+### Exact-head workspace cleanup verification — 2026-11-18
+
+- Current PR #64 head `46d9758b4b8a94d63480722096ffa719372a2ac6` passed exact-head CI run [#44369359083](https://github.com/Aloews/russian-dev-projects/actions/runs/44369359083).
+- All 27 workflow steps passed: Product Factory checks, Rust format/Clippy/tests, restricted-role and migration checks, Python/Ruff tests, Docker build, Compose runtime startup and container smoke.
+- The final smoke now releases only the still-active reviewer assignment/workspace. Implementer and tester assignments are released by their successful task completion paths; no duplicate release is attempted.
+- This verifies the durable task API and current lease/cleanup smoke only. It does not verify actual Git worktree provisioning, long-running external worker execution, trusted OIDC evidence ingestion, production deployment, or multi-tenant live operation.
