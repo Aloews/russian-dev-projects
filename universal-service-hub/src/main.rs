@@ -3572,6 +3572,19 @@ mod integration_security_tests {
     }
 
     #[test]
+    fn github_actions_evidence_requires_artifact_digest() {
+        let request=json!({
+            "source_run_id":1,
+            "source_run_attempt":1,
+            "candidate_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        });
+        assert!(serde_json::from_value::<GithubActionsEvidenceBody>(request.clone()).is_err());
+        let mut complete=request;
+        complete["artifact_digest"]=json!(format!("sha256:{}", "b".repeat(64)));
+        assert!(serde_json::from_value::<GithubActionsEvidenceBody>(complete).is_ok());
+    }
+
+    #[test]
     fn artifact_digest_must_be_a_sha256_hex_digest() {
         assert!(valid_sha256_artifact_digest(&format!("sha256:{}", "a".repeat(64))));
         assert!(valid_sha256_artifact_digest(&format!("sha256:{}", "A".repeat(64))));
