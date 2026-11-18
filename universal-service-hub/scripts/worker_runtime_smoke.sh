@@ -47,6 +47,18 @@ fi
 curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects" -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" -d "{\"id\":\"$project_id\",\"name\":\"Worker runtime smoke $suffix\",\"allowed_capabilities\":[\"ai.chat\"],\"allowed_provider_ids\":[]}" >/dev/null
 curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects/$project_id/jobs" -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" -d "{\"idempotency_key\":\"$idempotency_key\",\"job_type\":\"system_noop\",\"agent_role\":\"integrator\"}" >/dev/null
 
+job_id=$(compose exec -T postgres psql -U ush -d ush -tA -v ON_ERROR_STOP=1 -c "SELECT id FROM execution_jobs WHERE project_id='$project_id' AND idempotency_key='$idempotency_key'")
+artifact_unauthorized_status=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects/$project_id/jobs/$job_id/artifacts" -H "Content-Type: text/plain" -H "X-Artifact-Type: test" --data-binary "unauthorized")
+if [[ "$artifact_unauthorized_status" != "401" && "$artifact_unauthorized_status" != "403" ]]; then
+  echo "artifact upload must require project authorization, got HTTP $artifact_unauthorized_status" >&2
+  exit 1
+fi
+artifact_disabled_status=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects/$project_id/jobs/$job_id/artifacts" -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: text/plain" -H "X-Artifact-Type: test" --data-binary "artifact-storage-disabled")
+if [[ "$artifact_disabled_status" != "503" ]]; then
+  echo "artifact API must fail closed without configured storage, got HTTP $artifact_disabled_status" >&2
+  exit 1
+fi
+
 crash_container=$(compose run -d --no-deps -e "USH_WORKER_DATABASE_URL=postgres://ush_worker:$worker_password@postgres:5432/ush" -e "USH_WORKER_ID=ci-crash-worker" -e "USH_WORKER_CONCURRENCY=1" -e "USH_WORKER_POLL_MS=200" -e "USH_WORKER_LEASE_SECONDS=10" -e "USH_WORKER_TEST_PAUSE_AFTER_CLAIM_MS=30000" -e "USH_WORKER_JOB_TYPES=system_noop" worker)
 
 job_status=""
