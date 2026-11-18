@@ -1822,12 +1822,22 @@ fn github_caller_workflow_is_allowed(workflow_ref: &str, allowed_workflows: &[St
     allowed_workflows.iter().any(|allowed|allowed==workflow_ref)
 }
 
+fn github_source_branch_is_allowed(branch: &str, allowed_branches: &[String]) -> bool {
+    allowed_branches.iter().any(|allowed| {
+        if let Some(prefix)=allowed.strip_suffix('*') {
+            !prefix.is_empty() && !prefix.contains('*') && branch.starts_with(prefix) && branch.len()>prefix.len()
+        } else {
+            allowed==branch
+        }
+    })
+}
+
 fn github_source_run_is_allowed(event_name: &str, run: &Value, allowed_branches: &[String]) -> bool {
     if !["push","workflow_dispatch"].contains(&event_name) {
         return false;
     }
     run.get("head_branch").and_then(Value::as_str)
-        .is_some_and(|branch|allowed_branches.iter().any(|allowed|allowed==branch))
+        .is_some_and(|branch|github_source_branch_is_allowed(branch,allowed_branches))
 }
 
 fn github_job_workflow_is_trusted(
@@ -3619,9 +3629,12 @@ mod integration_security_tests {
 
     #[test]
     fn github_source_run_policy_allows_only_exact_events_and_target_branches() {
-        let allowed=vec!["main".to_owned(),"release/stable".to_owned()];
+        let allowed=vec!["main".to_owned(),"release/stable".to_owned(),"ai/task-*".to_owned()];
         assert!(github_source_run_is_allowed("push",&json!({"head_branch":"main"}),&allowed));
         assert!(github_source_run_is_allowed("workflow_dispatch",&json!({"head_branch":"main"}),&allowed));
+        assert!(github_source_run_is_allowed("push",&json!({"head_branch":"ai/task-42-9001"}),&allowed));
+        assert!(!github_source_run_is_allowed("push",&json!({"head_branch":"ai/other-42"}),&allowed));
+        assert!(!github_source_run_is_allowed("push",&json!({"head_branch":"ai/task-"}),&allowed));
         assert!(!github_source_run_is_allowed("pull_request",&json!({
             "head_branch":"feature/task","pull_requests":[{"base":{"ref":"main"}}]
         }),&allowed));
