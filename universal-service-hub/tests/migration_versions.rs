@@ -34,3 +34,29 @@ fn sqlx_migration_versions_are_unique_and_well_formed() {
 
     assert!(!versions.is_empty(), "at least one SQLx migration must exist");
 }
+
+
+#[test]
+fn trusted_github_verification_migration_is_tenant_scoped_and_immutable() {
+    let migration = fs::read_to_string(
+        "rust-migrations/0011_trusted_github_verification.sql",
+    )
+    .expect("trusted verification migration must exist");
+    for required in [
+        "engineering_task_verification_evidence",
+        "UNIQUE (repository, run_id, run_attempt, task_id)",
+        "ENABLE ROW LEVEL SECURITY",
+        "FORCE ROW LEVEL SECURITY",
+        "CREATE POLICY tenant_execution_isolation",
+        "REVOKE UPDATE, DELETE ON engineering_task_verification_evidence FROM ush_runtime",
+        "ush_validate_verification_evidence_parent",
+        "ush_prevent_verification_evidence_update",
+        "conclusion = 'success'",
+        "job_workflow_sha",
+    ] {
+        assert!(
+            migration.contains(required),
+            "trusted verification migration is missing required control: {required}"
+        );
+    }
+}
