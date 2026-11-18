@@ -56,7 +56,13 @@ pub fn valid_content_type(value: &str) -> bool {
     }
     let media = value.split(';').next().unwrap_or("").trim();
     let Some((kind, subtype)) = media.split_once('/') else { return false; };
-    let valid_token = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#fn valid_bucket(value: &str) -> bool {
+    let valid_token = |part: &str| {
+        !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$&^_.+-".contains(&b))
+    };
+    valid_token(kind) && valid_token(subtype)
+}
+
+fn valid_bucket(value: &str) -> bool {
     (3..=63).contains(&value.len())
         && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
         && !value.starts_with('.') && !value.ends_with('.')
@@ -71,13 +77,9 @@ fn validate_endpoint(value: &str, production: bool) -> anyhow::Result<String> {
         || (production && parsed.scheme() != "https")
         || (!production && !["http", "https"].contains(&parsed.scheme()))
     {
-        bail!("artifact endpoint must be an HTTPS URL without credentials, query or fragment in production");
+        bail!("artifact endpoint must use HTTPS in production and contain no credentials, query or fragment");
     }
     Ok(parsed.to_string().trim_end_matches('/').to_owned())
-}
-
-fn safe_component(value: &str) -> bool {^_.+-".contains(&b));
-    valid_token(kind) && valid_token(subtype)
 }
 
 fn safe_component(value: &str) -> bool {
