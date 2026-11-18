@@ -95,7 +95,7 @@ impl ArtifactStore {
         if bytes.is_empty() || bytes.len() > self.max_bytes {
             bail!("artifact size must be between 1 and {} bytes", self.max_bytes);
         }
-        if content_type.is_empty() || content_type.len() > 128 || content_type.contains('\n') || content_type.contains('\r') {
+        if content_type.is_empty() || content_type.len() > 128 || !content_type.bytes().all(|b| b >= 0x20 && b != 0x7f) {
             bail!("invalid artifact content type");
         }
         let artifact_id = Uuid::new_v4();
