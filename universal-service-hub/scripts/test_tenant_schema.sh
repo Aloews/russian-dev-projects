@@ -313,18 +313,21 @@ WHERE id='bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb';
 INSERT INTO engineering_task_verification_evidence
  (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,
   job_workflow_ref,job_workflow_sha,workflow_path,git_ref,event_name,
-  run_id,run_attempt,conclusion,attestation_hash)
+  run_id,run_attempt,run_started_at,run_completed_at,artifact_digest,
+  conclusion,attestation_hash)
 VALUES
  ('aaaa1111-1111-4111-8111-aaaaaaaaaaaa','aloews','rls-alpha-project',
   'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',repeat('a',40),'Aloews/russian-dev-projects',
   'Aloews/russian-dev-projects/.github/workflows/ci.yml@refs/heads/main',
   'Aloews/russian-dev-projects/.github/workflows/ush-trusted-verify.yml@refs/heads/main',
-  repeat('c',40),'.github/workflows/ci.yml','refs/heads/main','push',900001,1,'success',repeat('a',64)),
+  repeat('c',40),'.github/workflows/ci.yml','refs/heads/main','push',900001,1,
+  '2026-11-18T19:30:00Z','2026-11-18T19:35:00Z','sha256:'||repeat('a',64),'success',repeat('a',64)),
  ('bbbb1111-1111-4111-8111-bbbbbbbbbbbb','tenant-beta','rls-beta-project',
   'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb',repeat('b',40),'Aloews/russian-dev-projects',
   'Aloews/russian-dev-projects/.github/workflows/ci.yml@refs/heads/main',
   'Aloews/russian-dev-projects/.github/workflows/ush-trusted-verify.yml@refs/heads/main',
-  repeat('c',40),'.github/workflows/ci.yml','refs/heads/main','push',900002,1,'success',repeat('b',64));
+  repeat('c',40),'.github/workflows/ci.yml','refs/heads/main','push',900002,1,
+  '2026-11-18T19:30:00Z','2026-11-18T19:35:00Z','sha256:'||repeat('b',64),'success',repeat('b',64));
 COMMIT;
 
 SET ROLE ush_runtime;
