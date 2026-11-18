@@ -1,5 +1,6 @@
 use std::{env, net::{IpAddr, SocketAddr}, str::FromStr, sync::Arc, time::{Duration, Instant}};
 
+use jsonwebtoken::{decode, decode_header, jwk::JwkSet, Algorithm, DecodingKey, Validation};
 use axum::{
     extract::{Path, Query, State},
     http::{header::{AUTHORIZATION, HeaderValue}, HeaderMap, StatusCode},
@@ -1562,10 +1563,17 @@ fn worker_can_complete_status(role: &str, next_status: &str) -> bool {
         "architect" => ["queued", "blocked", "recovery"].contains(&next_status),
         "implementer" => ["queued_build", "queued_test", "review", "blocked", "recovery"].contains(&next_status),
         // Positive build/test/review transitions require trusted external evidence.
-        "builder" | "tester" | "reviewer" => ["blocked", "recovery"].contains(&next_status),
+        "builder" | "tester" => ["blocked", "recovery"].contains(&next_status),
+        "reviewer" => ["verified", "blocked", "recovery"].contains(&next_status),
         "recovery" => ["queued", "failed", "blocked"].contains(&next_status),
         _ => false,
     }
+}
+
+fn reviewer_decision_valid(candidate_sha: Option<&str>, evidence: &Value) -> bool {
+    evidence.get("decision").and_then(Value::as_str)==Some("approved")
+        && candidate_sha.is_some_and(|sha|evidence.get("reviewed_sha").and_then(Value::as_str)==Some(sha))
+        && evidence.get("findings").and_then(Value::as_array).is_some()
 }
 
 fn worker_completion_evidence_valid(
@@ -1739,6 +1747,270 @@ async fn release_engineering_task_path_locks(
     Ok(Json(json!({"task_id":task_id,"released":result.rows_affected()})))
 }
 
+fn claim_string<'a>(claims: &'a Value, key: &str) -> ApiResult<&'a str> {
+    claims.get(key).and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or(ApiError(StatusCode::UNAUTHORIZED, "github_oidc_claim_missing"))
+}
+
+fn claim_u64(claims: &Value, key: &str) -> ApiResult<u64> {
+    let value=claims.get(key).ok_or(ApiError(StatusCode::UNAUTHORIZED,"github_oidc_claim_missing"))?;
+    value.as_u64().or_else(||value.as_str().and_then(|raw|raw.parse::<u64>().ok()))
+        .filter(|number|*number>0)
+        .ok_or(ApiError(StatusCode::UNAUTHORIZED,"github_oidc_claim_invalid"))
+}
+
+fn valid_github_repository_component(value: &str) -> bool {
+    !value.is_empty()
+        && value.len()<=100
+        && !value.starts_with('.')
+        && !value.ends_with('.')
+        && !value.contains("..")
+        && value.chars().all(|c|c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
+fn valid_github_repository(repository: &str) -> bool {
+    let mut parts=repository.split('/');
+    let Some(owner)=parts.next() else{return false;};
+    let Some(name)=parts.next() else{return false;};
+    parts.next().is_none()
+        && valid_github_repository_component(owner)
+        && valid_github_repository_component(name)
+}
+
+fn github_workflow_path(workflow_ref: &str, repository: &str) -> Option<String> {
+    let (identity, reference)=workflow_ref.rsplit_once('@')?;
+    if !reference.starts_with("refs/heads/") { return None; }
+    let prefix=format!("{repository}/");
+    let path=identity.strip_prefix(&prefix)?;
+    if !path.starts_with(".github/workflows/")
+        || path.contains("..")
+        || path.contains('\\')
+        || path.len()>300 {
+        return None;
+    }
+    Some(path.to_owned())
+}
+
+fn github_job_workflow_is_trusted(
+    job_workflow_ref: &str,
+    job_workflow_sha: &str,
+    allowed_workflows: &[String],
+    trusted_workflow_sha: &str,
+) -> bool {
+    allowed_workflows.iter().any(|allowed|allowed==job_workflow_ref)
+        && job_workflow_sha.eq_ignore_ascii_case(trusted_workflow_sha)
+}
+
+#[derive(Clone, Copy)]
+struct GithubActionsRunIdentity<'a> {
+    repository: &'a str,
+    workflow_path: &'a str,
+    git_ref: &'a str,
+    event_name: &'a str,
+    sha: &'a str,
+    run_id: u64,
+    run_attempt: u64,
+}
+
+fn github_actions_run_matches(run: &Value, identity: &GithubActionsRunIdentity<'_>) -> bool {
+    let expected_branch=identity.git_ref.strip_prefix("refs/heads/").unwrap_or("");
+    run.get("id").and_then(Value::as_u64)==Some(identity.run_id)
+        && run.get("run_attempt").and_then(Value::as_u64)==Some(identity.run_attempt)
+        && run.get("status").and_then(Value::as_str)==Some("completed")
+        && run.get("conclusion").and_then(Value::as_str)==Some("success")
+        && run.get("event").and_then(Value::as_str)==Some(identity.event_name)
+        && run.get("head_sha").and_then(Value::as_str).is_some_and(|value|value.eq_ignore_ascii_case(identity.sha))
+        && run.pointer("/head_repository/full_name").and_then(Value::as_str)==Some(identity.repository)
+        && run.get("path").and_then(Value::as_str)==Some(identity.workflow_path)
+        && run.get("head_branch").and_then(Value::as_str)==Some(expected_branch)
+}
+
+async fn verify_github_actions_run(
+    state: &AppState,
+    token: &str,
+) -> ApiResult<Value> {
+    if token.len()<100 || token.len()>8192 {
+        return Err(ApiError(StatusCode::UNAUTHORIZED,"invalid_github_oidc_token"));
+    }
+    let header=decode_header(token)
+        .map_err(|_|ApiError(StatusCode::UNAUTHORIZED,"invalid_github_oidc_header"))?;
+    if header.alg!=Algorithm::RS256 {
+        return Err(ApiError(StatusCode::UNAUTHORIZED,"github_oidc_algorithm_forbidden"));
+    }
+    let kid=header.kid.ok_or(ApiError(StatusCode::UNAUTHORIZED,"github_oidc_key_id_missing"))?;
+    let audience=env::var("USH_GITHUB_OIDC_AUDIENCE")
+        .ok().filter(|value|!value.trim().is_empty())
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_oidc_audience_not_configured"))?;
+    let allowed_workflows=env::var("USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS")
+        .unwrap_or_default().split(',')
+        .map(str::trim).filter(|value|!value.is_empty()).map(str::to_owned)
+        .collect::<Vec<_>>();
+    if allowed_workflows.is_empty() {
+        return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_oidc_workflow_allowlist_not_configured"));
+    }
+
+    let jwks=state.http.get("https://token.actions.githubusercontent.com/.well-known/jwks")
+        .timeout(Duration::from_secs(10))
+        .send().await
+        .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_oidc_jwks_unavailable"))?
+        .error_for_status()
+        .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_oidc_jwks_unavailable"))?
+        .json::<JwkSet>().await
+        .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_oidc_jwks_invalid"))?;
+    let jwk=jwks.find(&kid).ok_or(ApiError(StatusCode::UNAUTHORIZED,"github_oidc_signing_key_unknown"))?;
+    let key=DecodingKey::from_jwk(jwk)
+        .map_err(|_|ApiError(StatusCode::UNAUTHORIZED,"github_oidc_signing_key_invalid"))?;
+    let mut validation=Validation::new(Algorithm::RS256);
+    validation.set_issuer(&["https://token.actions.githubusercontent.com"]);
+    validation.set_audience(&[audience.as_str()]);
+    validation.validate_exp=true;
+    validation.validate_nbf=true;
+    validation.leeway=30;
+    let claims=decode::<Value>(token,&key,&validation)
+        .map_err(|_|ApiError(StatusCode::UNAUTHORIZED,"github_oidc_token_validation_failed"))?
+        .claims;
+
+    let repository=claim_string(&claims,"repository")?;
+    let workflow_ref=claim_string(&claims,"workflow_ref")?;
+    let job_workflow_ref=claim_string(&claims,"job_workflow_ref")?;
+    let job_workflow_sha=claim_string(&claims,"job_workflow_sha")?;
+    let git_ref=claim_string(&claims,"ref")?;
+    let event_name=claim_string(&claims,"event_name")?;
+    let sha=claim_string(&claims,"sha")?;
+    let subject=claim_string(&claims,"sub")?;
+    let trusted_workflow_sha=env::var("USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA")
+        .ok().filter(|value|value.len()==40 && value.chars().all(|c|c.is_ascii_hexdigit()))
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE,"github_trusted_workflow_sha_not_configured"))?;
+    if !valid_github_repository(repository)
+        || !github_job_workflow_is_trusted(job_workflow_ref,job_workflow_sha,&allowed_workflows,&trusted_workflow_sha)
+        || !git_ref.starts_with("refs/heads/")
+        || !["push","workflow_dispatch"].contains(&event_name)
+        || sha.len()!=40 || !sha.chars().all(|c|c.is_ascii_hexdigit())
+        || subject!=format!("repo:{repository}:ref:{git_ref}") {
+        return Err(ApiError(StatusCode::FORBIDDEN,"github_oidc_identity_not_allowed"));
+    }
+    let workflow_path=github_workflow_path(workflow_ref,repository)
+        .ok_or(ApiError(StatusCode::FORBIDDEN,"github_oidc_workflow_ref_invalid"))?;
+    github_workflow_path(job_workflow_ref,repository)
+        .ok_or(ApiError(StatusCode::FORBIDDEN,"github_oidc_job_workflow_ref_invalid"))?;
+    let run_id=claim_u64(&claims,"run_id")?;
+    let run_attempt=claim_u64(&claims,"run_attempt")?;
+    if run_attempt>100 || run_id>i64::MAX as u64 {
+        return Err(ApiError(StatusCode::UNAUTHORIZED,"github_oidc_run_identity_invalid"));
+    }
+
+    let url=format!("https://api.github.com/repos/{repository}/actions/runs/{run_id}");
+    let mut request=state.http.get(url)
+        .header("User-Agent","universal-service-hub")
+        .header("Accept","application/vnd.github+json")
+        .timeout(Duration::from_secs(10));
+    if let Ok(api_token)=env::var("USH_GITHUB_API_TOKEN")
+        && !api_token.trim().is_empty() {
+        request=request.bearer_auth(api_token);
+    }
+    let run=request.send().await
+        .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_lookup_failed"))?
+        .error_for_status()
+        .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_lookup_failed"))?
+        .json::<Value>().await
+        .map_err(|_|ApiError(StatusCode::BAD_GATEWAY,"github_actions_run_response_invalid"))?;
+    let run_identity=GithubActionsRunIdentity {
+        repository,
+        workflow_path:&workflow_path,
+        git_ref,
+        event_name,
+        sha,
+        run_id,
+        run_attempt,
+    };
+    if !github_actions_run_matches(&run,&run_identity) {
+        return Err(ApiError(StatusCode::CONFLICT,"github_actions_run_not_successful_or_mismatched"));
+    }
+    Ok(json!({
+        "repository":repository,
+        "workflow_ref":workflow_ref,
+        "job_workflow_ref":job_workflow_ref,
+        "job_workflow_sha":job_workflow_sha,
+        "workflow_path":workflow_path,
+        "git_ref":git_ref,
+        "event_name":event_name,
+        "sha":sha.to_ascii_lowercase(),
+        "run_id":run_id,
+        "run_attempt":run_attempt,
+        "conclusion":"success"
+    }))
+}
+
+async fn ingest_github_actions_evidence(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id,task_id)): Path<(String,String)>,
+) -> ApiResult<Json<Value>> {
+    let token=bearer(&headers)?;
+    let attestation=verify_github_actions_run(&state,token).await?;
+    let repository=attestation["repository"].as_str().unwrap_or_default();
+    let candidate_sha=attestation["sha"].as_str().unwrap_or_default();
+    let workflow_ref=attestation["workflow_ref"].as_str().unwrap_or_default();
+    let job_workflow_ref=attestation["job_workflow_ref"].as_str().unwrap_or_default();
+    let job_workflow_sha=attestation["job_workflow_sha"].as_str().unwrap_or_default();
+    let workflow_path=attestation["workflow_path"].as_str().unwrap_or_default();
+    let git_ref=attestation["git_ref"].as_str().unwrap_or_default();
+    let event_name=attestation["event_name"].as_str().unwrap_or_default();
+    let run_id=attestation["run_id"].as_u64().unwrap_or_default() as i64;
+    let run_attempt=attestation["run_attempt"].as_u64().unwrap_or_default() as i32;
+    let attestation_hash=hex::encode(Sha256::digest(token.as_bytes()));
+
+    let mut tx=begin_platform_transaction(&state).await?;
+    let task=sqlx::query("SELECT tenant_id,status,candidate_sha,metadata FROM engineering_tasks WHERE id=$1 AND project_id=$2 FOR UPDATE")
+        .bind(&task_id).bind(&project_id).fetch_optional(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
+    let Some(task)=task else{return Err(ApiError(StatusCode::NOT_FOUND,"verification_task_not_found"));};
+    let tenant_id:String=task.try_get("tenant_id")
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
+    let status:String=task.try_get("status")
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
+    let task_sha:Option<String>=task.try_get("candidate_sha")
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
+    let metadata:Value=task.try_get("metadata")
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
+    let task_repository=metadata.get("source_repository").and_then(Value::as_str);
+    if task_repository!=Some(repository) {
+        return Err(ApiError(StatusCode::FORBIDDEN,"github_repository_does_not_match_task"));
+    }
+    if status!="review" {
+        return Err(ApiError(StatusCode::CONFLICT,"task_not_ready_for_verification_evidence"));
+    }
+    if task_sha.as_deref()!=Some(candidate_sha) {
+        return Err(ApiError(StatusCode::CONFLICT,"github_actions_sha_does_not_match_candidate"));
+    }
+    let evidence_id=Uuid::new_v4().to_string();
+    let inserted=sqlx::query("INSERT INTO engineering_task_verification_evidence (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,job_workflow_ref,job_workflow_sha,workflow_path,git_ref,event_name,run_id,run_attempt,conclusion,attestation_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'success',$15) ON CONFLICT (repository,run_id,run_attempt,task_id) DO NOTHING RETURNING id")
+        .bind(&evidence_id).bind(&tenant_id).bind(&project_id).bind(&task_id).bind(candidate_sha)
+        .bind(repository).bind(workflow_ref).bind(job_workflow_ref).bind(job_workflow_sha)
+        .bind(workflow_path).bind(git_ref).bind(event_name).bind(run_id).bind(run_attempt).bind(&attestation_hash)
+        .fetch_optional(&mut *tx).await
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_evidence_persist_failed"))?;
+    let (persisted_id,idempotent)=if let Some(row)=inserted {
+        let id:String=row.try_get("id").unwrap_or_else(|_|evidence_id.clone());
+        (id,false)
+    } else {
+        let existing=sqlx::query("SELECT id,attestation_hash FROM engineering_task_verification_evidence WHERE repository=$1 AND run_id=$2 AND run_attempt=$3 AND task_id=$4")
+            .bind(repository).bind(run_id).bind(run_attempt).bind(&task_id)
+            .fetch_optional(&mut *tx).await
+            .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_evidence_replay_check_failed"))?;
+        let Some(existing)=existing else{return Err(ApiError(StatusCode::CONFLICT,"github_actions_evidence_replay_conflict"));};
+        let existing_hash:String=existing.try_get("attestation_hash").unwrap_or_default();
+        if existing_hash!=attestation_hash {
+            return Err(ApiError(StatusCode::CONFLICT,"github_actions_evidence_replay_conflict"));
+        }
+        (existing.try_get("id").unwrap_or_default(),true)
+    };
+    tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
+    audit(&state,&format!("github-actions:{repository}:{run_id}:{run_attempt}"),"engineering_task.verification_evidence_ingested","engineering_task",&task_id,json!({"repository":repository,"workflow_ref":workflow_ref,"job_workflow_ref":job_workflow_ref,"job_workflow_sha":job_workflow_sha,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"conclusion":"success","idempotent":idempotent})).await;
+    Ok(Json(json!({"evidence_id":persisted_id,"task_id":task_id,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"conclusion":"success","idempotent":idempotent})))
+}
+
 #[derive(Deserialize)]
 struct TaskCompletionBody {
     worker_id: String,
@@ -1761,17 +2033,22 @@ async fn complete_engineering_task(
     let role=principal.worker_role.as_deref().unwrap_or("");
     let project_id=principal.project_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_project_scope_required"))?;
     let tenant_id=principal.tenant_id.as_deref().ok_or(ApiError(StatusCode::FORBIDDEN,"worker_tenant_scope_required"))?;
-    if body.next_status=="verified" {
-        return Err(ApiError(StatusCode::FORBIDDEN,"trusted_verification_evidence_required"));
+    if body.next_status=="verified" && role!="reviewer" {
+        return Err(ApiError(StatusCode::FORBIDDEN,"independent_reviewer_required"));
     }
     let allowed=worker_can_complete_status(role,&body.next_status);
+    let completion_evidence_valid=if body.next_status=="verified" {
+        reviewer_decision_valid(body.candidate_sha.as_deref(),&body.evidence)
+    } else {
+        worker_completion_evidence_valid(role,&body.next_status,body.candidate_sha.as_deref(),&body.evidence)
+    };
     if !allowed || body.worker_id!=worker_id || body.task_lease_token.len()<32
         || body.workspace_lease_token.len()<32 || Uuid::parse_str(&body.workspace_id).is_err()
         || !body.evidence.is_object() || body.evidence.to_string().len()>16_384
         || metadata_contains_sensitive_key(&body.evidence)
         || body.candidate_sha.as_ref().is_some_and(|sha|sha.len()!=40 || !sha.chars().all(|c|c.is_ascii_hexdigit()))
         || (["queued_build","queued_test","review","verified"].contains(&body.next_status.as_str()) && body.candidate_sha.is_none())
-        || !worker_completion_evidence_valid(role,&body.next_status,body.candidate_sha.as_deref(),&body.evidence) {
+        || !completion_evidence_valid {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_worker_task_completion"));
     }
     let queue=match body.next_status.as_str() {
@@ -1799,12 +2076,30 @@ async fn complete_engineering_task(
         .bind(&body.workspace_id).bind(tenant_id).bind(project_id).bind(worker_id).bind(&workspace_hash)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_workspace_check_failed"))?;
     if workspace.is_none(){return Err(ApiError(StatusCode::CONFLICT,"workspace_lease_expired_or_invalid"));}
-    let assignment=sqlx::query("SELECT worker_role FROM engineering_task_workspace_assignments WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND workspace_id=$4 AND released_at IS NULL FOR UPDATE")
+    let assignment=sqlx::query("SELECT worker_role,writer_scope FROM engineering_task_workspace_assignments WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND workspace_id=$4 AND released_at IS NULL FOR UPDATE")
         .bind(tenant_id).bind(project_id).bind(&task_id).bind(&body.workspace_id)
         .fetch_optional(&mut *tx).await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
     let Some(assignment)=assignment else{return Err(ApiError(StatusCode::CONFLICT,"active_task_workspace_assignment_required"));};
     let assigned_role:String=assignment.try_get("worker_role").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
+    let assigned_scope:Value=assignment.try_get("writer_scope").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"task_completion_assignment_check_failed"))?;
     if assigned_role!=role{return Err(ApiError(StatusCode::FORBIDDEN,"workspace_assignment_role_mismatch"));}
+    if body.next_status=="verified" {
+        if !assigned_scope.as_array().is_some_and(|scope|scope.is_empty())
+            || body.candidate_sha.as_deref()!=existing_candidate.as_deref() {
+            return Err(ApiError(StatusCode::FORBIDDEN,"reviewer_candidate_not_pinned_or_read_only"));
+        }
+        let evidence=sqlx::query("SELECT id FROM engineering_task_verification_evidence WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND candidate_sha=$4 AND conclusion='success' LIMIT 1")
+            .bind(tenant_id).bind(project_id).bind(&task_id).bind(body.candidate_sha.as_deref().unwrap_or_default())
+            .fetch_optional(&mut *tx).await
+            .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"trusted_verification_evidence_lookup_failed"))?;
+        if evidence.is_none(){return Err(ApiError(StatusCode::FORBIDDEN,"trusted_verification_evidence_required"));}
+        let prior=sqlx::query("SELECT worker_id FROM engineering_task_attempts WHERE tenant_id=$1 AND project_id=$2 AND task_id=$3 AND worker_role IN ('implementer','builder','tester') ORDER BY attempt_no DESC LIMIT 1")
+            .bind(tenant_id).bind(project_id).bind(&task_id).fetch_optional(&mut *tx).await
+            .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"reviewer_independence_check_failed"))?;
+        let Some(prior)=prior else{return Err(ApiError(StatusCode::CONFLICT,"independent_implementation_attempt_required"));};
+        let prior_worker:String=prior.try_get("worker_id").map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"reviewer_independence_check_failed"))?;
+        if prior_worker==worker_id{return Err(ApiError(StatusCode::FORBIDDEN,"reviewer_must_be_independent"));}
+    }
     if body.candidate_sha.is_some() && existing_candidate.as_deref().is_some_and(|existing|body.candidate_sha.as_deref()!=Some(existing)) && role!="implementer" {
         return Err(ApiError(StatusCode::CONFLICT,"candidate_sha_change_requires_implementer"));
     }
@@ -2855,6 +3150,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/projects/{project_id}/tasks/{task_id}/path-locks", post(acquire_engineering_task_path_locks).delete(release_engineering_task_path_locks))
         .route("/v1/tasks/{task_id}/attempts", post(record_engineering_task_attempt))
         .route("/v1/tasks/{task_id}/complete", post(complete_engineering_task))
+        .route("/v1/projects/{project_id}/tasks/{task_id}/verification/github-actions", post(ingest_github_actions_evidence))
         .route("/v1/projects/{project_id}/tasks/{task_id}/attempts", get(list_engineering_task_attempts))
         .route("/v1/projects/{project_id}", put(update_project).delete(delete_project))
         .route("/v1/projects/{project_id}/tokens", get(list_project_tokens).post(create_project_token))
@@ -3101,11 +3397,21 @@ mod integration_security_tests {
         assert!(!worker_completion_evidence_valid("reviewer","verified",Some(sha),&json!({
             "decision":"approved","reviewed_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","findings":[]
         })));
-        for role in ["builder", "tester", "reviewer"] {
+        for role in ["builder", "tester"] {
             assert!(!worker_can_complete_status(role, "verified"));
             assert!(worker_can_complete_status(role, "blocked"));
             assert!(worker_can_complete_status(role, "recovery"));
         }
+        assert!(worker_can_complete_status("reviewer", "verified"));
+        assert!(reviewer_decision_valid(Some(sha),&json!({
+            "decision":"approved","reviewed_sha":sha,"findings":[]
+        })));
+        assert!(!reviewer_decision_valid(Some(sha),&json!({
+            "decision":"approved","reviewed_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","findings":[]
+        })));
+        assert!(!reviewer_decision_valid(Some(sha),&json!({
+            "decision":"rejected","reviewed_sha":sha,"findings":[]
+        })));
         assert!(!worker_can_complete_status("builder", "queued_test"));
         assert!(!worker_can_complete_status("tester", "review"));
         assert!(worker_completion_evidence_valid("architect","queued",None,&json!({
@@ -3114,6 +3420,99 @@ mod integration_security_tests {
         assert!(worker_completion_evidence_valid("recovery","queued",None,&json!({
             "recovery_reason":"lease expired","recovery_action":"requeue from checkpoint"
         })));
+    }
+
+    #[test]
+    fn github_actions_identity_requires_exact_repository_workflow_and_branch() {
+        assert!(valid_github_repository("Aloews/russian-dev-projects"));
+        assert!(!valid_github_repository("Aloews/russian-dev-projects/extra"));
+        assert!(!valid_github_repository("../russian-dev-projects"));
+        assert!(!valid_github_repository("owner/.."));
+        assert!(!valid_github_repository("owner/repo..name"));
+        assert!(!valid_github_repository("owner/.repo"));
+        assert_eq!(
+            github_workflow_path(
+                "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/heads/main",
+                "Aloews/russian-dev-projects"
+            ).as_deref(),
+            Some(".github/workflows/ush-verify.yml")
+        );
+        assert!(github_workflow_path(
+            "Aloews/russian-dev-projects/.github/workflows/../deploy.yml@refs/heads/main",
+            "Aloews/russian-dev-projects"
+        ).is_none());
+        assert!(github_workflow_path(
+            "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/pull/12/merge",
+            "Aloews/russian-dev-projects"
+        ).is_none());
+    }
+
+    #[test]
+    fn github_oidc_requires_allowlisted_reusable_workflow_and_pinned_sha() {
+        let allowed=vec![
+            "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/heads/main".to_owned()
+        ];
+        let trusted_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert!(github_job_workflow_is_trusted(
+            &allowed[0],trusted_sha,&allowed,trusted_sha
+        ));
+        assert!(!github_job_workflow_is_trusted(
+            "Aloews/russian-dev-projects/.github/workflows/untrusted.yml@refs/heads/main",
+            trusted_sha,&allowed,trusted_sha
+        ));
+        assert!(!github_job_workflow_is_trusted(
+            &allowed[0],"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",&allowed,trusted_sha
+        ));
+    }
+
+    #[test]
+    fn github_actions_run_must_be_completed_success_for_exact_candidate_and_workflow() {
+        let run=json!({
+            "id":123456,
+            "run_attempt":2,
+            "status":"completed",
+            "conclusion":"success",
+            "event":"push",
+            "head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "head_branch":"main",
+            "path":".github/workflows/ush-verify.yml",
+            "head_repository":{"full_name":"Aloews/russian-dev-projects"}
+        });
+        let identity=GithubActionsRunIdentity {
+            repository:"Aloews/russian-dev-projects",
+            workflow_path:".github/workflows/ush-verify.yml",
+            git_ref:"refs/heads/main",
+            event_name:"push",
+            sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            run_id:123456,
+            run_attempt:2,
+        };
+        assert!(github_actions_run_matches(&run,&identity));
+        for (field,value) in [
+            ("status",json!("in_progress")),
+            ("conclusion",json!("failure")),
+            ("event",json!("pull_request")),
+            ("head_sha",json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")),
+            ("head_branch",json!("feature")),
+            ("path",json!(".github/workflows/untrusted.yml")),
+            ("run_attempt",json!(1)),
+            ("id",json!(999)),
+        ] {
+            let mut invalid=run.clone();
+            invalid[field]=value;
+            assert!(!github_actions_run_matches(&invalid,&identity), "unexpected acceptance after mutating {field}");
+        }
+        let mut wrong_repo=run.clone();
+        wrong_repo["head_repository"]["full_name"]=json!("Aloews/Novel-forge");
+        assert!(!github_actions_run_matches(&wrong_repo,&identity));
+    }
+
+    #[test]
+    fn github_oidc_run_claims_accept_numeric_and_string_run_ids() {
+        assert_eq!(claim_u64(&json!({"run_id":123}),"run_id").unwrap(),123);
+        assert_eq!(claim_u64(&json!({"run_id":"123"}),"run_id").unwrap(),123);
+        assert!(claim_u64(&json!({"run_id":"0"}),"run_id").is_err());
+        assert!(claim_u64(&json!({"run_id":"not-a-number"}),"run_id").is_err());
     }
 
     #[test]
