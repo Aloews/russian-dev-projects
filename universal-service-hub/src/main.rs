@@ -1954,16 +1954,19 @@ struct GithubActionsEvidenceBody {
     source_run_attempt: u64,
     candidate_sha: String,
     artifact_digest: String,
+    #[serde(default)]
+    source_issue_number: Option<u64>,
 }
 
 async fn ingest_github_actions_evidence(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((project_id,task_id)): Path<(String,String)>,
+    Path(project_id): Path<String>,
     Json(body): Json<GithubActionsEvidenceBody>,
 ) -> ApiResult<Json<Value>> {
     if body.source_run_id==0 || body.source_run_id>i64::MAX as u64
         || body.source_run_attempt==0 || body.source_run_attempt>100
+        || body.source_issue_number==Some(0)
         || body.candidate_sha.len()!=40 || !body.candidate_sha.chars().all(|c|c.is_ascii_hexdigit())
         || !valid_sha256_artifact_digest(&body.artifact_digest) {
         return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_github_actions_evidence_request"));
@@ -2037,10 +2040,21 @@ async fn ingest_github_actions_evidence(
     ));
 
     let mut tx=begin_platform_transaction(&state).await?;
-    let task=sqlx::query("SELECT tenant_id,status,candidate_sha,metadata FROM engineering_tasks WHERE id=$1 AND project_id=$2 FOR UPDATE")
-        .bind(&task_id).bind(&project_id).fetch_optional(&mut *tx).await
+    let source_issue_number=body.source_issue_number.map(|number|number.to_string());
+    let matching_tasks=sqlx::query("SELECT id,tenant_id,status,candidate_sha,metadata FROM engineering_tasks WHERE project_id=$1 AND status='review' AND candidate_sha=$2 AND metadata->>'source_repository'=$3 AND ($4::text IS NULL OR metadata->>'source_issue_number'=$4) FOR UPDATE")
+        .bind(&project_id).bind(&candidate_sha).bind(repository).bind(&source_issue_number)
+        .fetch_all(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
-    let Some(task)=task else{return Err(ApiError(StatusCode::NOT_FOUND,"verification_task_not_found"));};
+    if matching_tasks.is_empty() {
+        return Err(ApiError(StatusCode::NOT_FOUND,"verification_task_not_found_for_candidate"));
+    }
+    if matching_tasks.len()!=1 {
+        return Err(ApiError(StatusCode::CONFLICT,"verification_task_candidate_is_ambiguous"));
+    }
+    let task=matching_tasks.into_iter().next()
+        .ok_or(ApiError(StatusCode::NOT_FOUND,"verification_task_not_found_for_candidate"))?;
+    let task_id:String=task.try_get("id")
+        .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
     let tenant_id:String=task.try_get("tenant_id")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
     let status:String=task.try_get("status")
@@ -3227,7 +3241,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/projects/{project_id}/tasks/{task_id}/path-locks", post(acquire_engineering_task_path_locks).delete(release_engineering_task_path_locks))
         .route("/v1/tasks/{task_id}/attempts", post(record_engineering_task_attempt))
         .route("/v1/tasks/{task_id}/complete", post(complete_engineering_task))
-        .route("/v1/projects/{project_id}/tasks/{task_id}/verification/github-actions", post(ingest_github_actions_evidence))
+        .route("/v1/projects/{project_id}/verification/github-actions", post(ingest_github_actions_evidence))
         .route("/v1/projects/{project_id}/tasks/{task_id}/attempts", get(list_engineering_task_attempts))
         .route("/v1/projects/{project_id}", put(update_project).delete(delete_project))
         .route("/v1/projects/{project_id}/tokens", get(list_project_tokens).post(create_project_token))
