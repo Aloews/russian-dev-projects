@@ -44,7 +44,11 @@ if compose exec -T postgres env PGPASSWORD="$worker_password" psql -h postgres -
   exit 1
 fi
 
-curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects" -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" -d "{\"id\":\"$project_id\",\"name\":\"Worker runtime smoke $suffix\",\"allowed_capabilities\":[\"ai.chat\"],\"allowed_provider_ids\":[]}" >/dev/null
+project_payload=$(jq -cn --arg id "$project_id" --arg name "Worker runtime smoke $suffix" '{id:$id,name:$name,allowed_capabilities:["ai.chat"],allowed_provider_ids:[]}')
+project_response=$(curl -sS -w '\n%{http_code}' -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects" -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" --data-binary "$project_payload")
+project_status="${project_response##*$'\n'}"
+project_body="${project_response%$'\n'*}"
+if [[ ! "$project_status" =~ ^2 ]]; then echo "project creation failed: HTTP $project_status: $project_body" >&2; exit 1; fi
 curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects/$project_id/jobs" -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" -d "{\"idempotency_key\":\"$idempotency_key\",\"job_type\":\"system_noop\",\"agent_role\":\"integrator\"}" >/dev/null
 
 job_id=$(compose exec -T postgres psql -U ush -d ush -tA -v ON_ERROR_STOP=1 -c "SELECT id FROM execution_jobs WHERE project_id='$project_id' AND idempotency_key='$idempotency_key'")
@@ -63,9 +67,10 @@ fi
 # Worker artifact endpoint uses the lease token as a one-job capability and
 # never asks the worker for the project/admin bearer token or S3 credentials.
 artifact_job_key="worker-artifact-smoke-$suffix"
+artifact_job_payload=$(jq -cn --arg key "$artifact_job_key" '{idempotency_key:$key,job_type:"system_noop",agent_role:"integrator",priority:1000}')
 curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects/$project_id/jobs" \
   -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
-  -d "{\\"idempotency_key\\":\\"$artifact_job_key\\",\\"job_type\\":\\"system_noop\\",\\"agent_role\\":\\"integrator\\",\\"priority\\":1000}" >/dev/null
+  --data-binary "$artifact_job_payload" >/dev/null
 artifact_job_id=$(compose exec -T postgres psql -U ush -d ush -tA -v ON_ERROR_STOP=1 -c "SELECT id FROM execution_jobs WHERE project_id='$project_id' AND idempotency_key='$artifact_job_key'")
 artifact_claim=$(curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects/$project_id/workers/claim" \
   -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
@@ -84,9 +89,10 @@ valid_lease_no_store_status=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
   -H "X-Artifact-Idempotency-Key: artifact-smoke-$suffix" -H "X-Artifact-Type: test" \
   -H "Content-Type: text/plain" --data-binary "artifact")
 if [[ "$valid_lease_no_store_status" != "503" ]]; then echo "valid lease without storage must fail closed with 503, got HTTP $valid_lease_no_store_status" >&2; exit 1; fi
+fail_payload=$(jq -cn --arg worker "artifact-smoke-worker" --arg token "$artifact_lease_token" '{worker_id:$worker,lease_token:$token,error_code:"smoke_cleanup",retryable:false}')
 curl -fsS -X POST "$USH_WORKER_SMOKE_BASE_URL/v1/projects/$project_id/jobs/$artifact_job_id/fail" \
   -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
-  -d "{\\"worker_id\\":\\"artifact-smoke-worker\\",\\"lease_token\\":\\"$artifact_lease_token\\",\\"error_code\\":\\"smoke_cleanup\\",\\"retryable\\":false}" >/dev/null
+  --data-binary "$fail_payload" >/dev/null
 
 crash_container=$(compose run -d --no-deps -e "USH_WORKER_DATABASE_URL=postgres://ush_worker:$worker_password@postgres:5432/ush" -e "USH_WORKER_ID=ci-crash-worker" -e "USH_WORKER_CONCURRENCY=1" -e "USH_WORKER_POLL_MS=200" -e "USH_WORKER_LEASE_SECONDS=10" -e "USH_WORKER_TEST_PAUSE_AFTER_CLAIM_MS=30000" -e "USH_WORKER_JOB_TYPES=system_noop" worker)
 
