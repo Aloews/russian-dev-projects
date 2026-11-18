@@ -623,10 +623,9 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 
 ### Trusted evidence source-run policy hardening — 2026-11-18
 
-- Source runs are accepted only for `push` / `workflow_dispatch` on an allowlisted head branch, or for same-repository `pull_request` runs whose **base branch** is explicitly allowlisted. This ensures the workflow definition is loaded from a trusted protected target branch.
-- Fork-originated PRs are rejected by the repository identity check. For PRs, the candidate SHA is taken from `pull_requests[0].head.sha`; the run must still match the exact workflow path, source branch, run ID/attempt, completion status and successful conclusion.
-- The branch policy test covers allowed and unapproved PR base branches. The SQL event constraint and migration contract include `pull_request` only as a source event; the initial safe configuration should allow only protected `main`.
-- The post-CI workflow resolves exactly one task by project, source repository, candidate SHA and optional PR/issue number. Static task IDs are no longer required; zero or multiple matches fail closed.
+- Trusted source runs are restricted to `push` and `workflow_dispatch` on exact configured protected branches. `pull_request` runs are excluded from evidence even when their base branch is allowlisted: GitHub executes a PR workflow from the PR merge commit, so the PR can change the workflow definition.
+- The post-CI caller skips PR events, the API rejects them, the evidence table constraint excludes them, and the source-run matcher uses only the exact `head_sha`. PR CI may still run for ordinary regression feedback, but it cannot create a trusted verification receipt.
+- The post-CI workflow resolves exactly one task by project, source repository and candidate SHA; an optional issue number can disambiguate where present. Static task IDs are no longer required; zero or multiple matches fail closed.
 - No production variables or secrets were changed. Exact-head CI and a signed OIDC round-trip remain required.
 
 
