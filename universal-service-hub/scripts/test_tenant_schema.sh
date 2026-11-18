@@ -327,7 +327,7 @@ VALUES
   'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb',repeat('b',40),'Aloews/russian-dev-projects',
   'Aloews/russian-dev-projects/.github/workflows/ush-post-ci-verification.yml@refs/heads/main',
   'Aloews/russian-dev-projects/.github/workflows/ush-trusted-verify.yml@refs/heads/main',
-  repeat('c',40),'.github/workflows/universal-service-hub-ci.yml','refs/heads/main','pull_request',900002,2,
+  repeat('c',40),'.github/workflows/universal-service-hub-ci.yml','refs/heads/main','workflow_dispatch',900002,2,
   '2026-11-18T19:30:00Z','2026-11-18T19:35:00Z','sha256:'||repeat('b',64),
   repeat('d',40),910002,1,'success',repeat('b',64));
 COMMIT;
