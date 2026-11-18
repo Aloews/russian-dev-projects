@@ -3553,6 +3553,7 @@ mod integration_security_tests {
     fn github_source_run_policy_allows_only_exact_events_and_target_branches() {
         let allowed=vec!["main".to_owned(),"release/stable".to_owned()];
         assert!(github_source_run_is_allowed("push",&json!({"head_branch":"main"}),&allowed));
+        assert!(github_source_run_is_allowed("workflow_dispatch",&json!({"head_branch":"main"}),&allowed));
         assert!(!github_source_run_is_allowed("pull_request",&json!({
             "head_branch":"feature/task","pull_requests":[{"base":{"ref":"main"}}]
         }),&allowed));
