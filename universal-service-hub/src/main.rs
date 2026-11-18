@@ -1772,6 +1772,7 @@ fn valid_github_repository(repository: &str) -> bool {
     let Some(name)=parts.next() else{return false;};
     parts.next().is_none()
         && !owner.is_empty() && !name.is_empty()
+        && owner!="." && owner!=".." && name!="." && name!=".."
         && owner.chars().all(|c|c.is_ascii_alphanumeric() || "-_.".contains(c))
         && name.chars().all(|c|c.is_ascii_alphanumeric() || "-_.".contains(c))
 }
