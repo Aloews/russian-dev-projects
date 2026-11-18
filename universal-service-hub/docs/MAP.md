@@ -511,3 +511,11 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Current candidate includes RLS/runtime-role migration, transaction context, assignment/path-lock endpoints and expanded CI smoke tests. Exact-head run is required; do not infer success from earlier CI.
 - Current runtime role test is designed to prove non-superuser/non-bypass access, tenant A/B row isolation, denied forged writes and no context leakage across reused transactions. Until the exact run passes, RLS is **implemented but not verified**.
 - PR #64 remains open and unmerged. Railway execution, production deployment and external tenant onboarding remain disabled.
+
+
+## CI repair checkpoint — 2026-11-18
+
+- PR #64 exact candidate `429791aa89ca68a661df3fc1b76dee4ee6b25ad1` failed exact-head CI run [#44132283616](https://github.com/Aloews/russian-dev-projects/actions/runs/44132283616) at the container smoke assertion for a tester attempting to heartbeat an implementer-owned workspace lease.
+- The runtime handler intentionally returns HTTP 403 (`workspace_lease_owner_forbidden`) for an authenticated worker that owns a different worker's live lease; HTTP 409 is reserved for an expired/invalid lease. The smoke test expected 409, contradicting the handler's authorization contract.
+- Corrected the smoke assertion to expect 403 in commit `93c8f15d66e5811c1dcc3b2f5fe5edd5b269e763`.
+- **Status: awaiting exact-head CI.** No verification is inferred from the code change; PR #64 remains draft/unmerged until the complete workflow passes.
