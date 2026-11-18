@@ -56,6 +56,10 @@ fn trusted_github_verification_migration_is_tenant_scoped_and_immutable() {
         "run_started_at",
         "run_completed_at",
         "artifact_digest VARCHAR(71) NOT NULL",
+        "attestation_run_id BIGINT NOT NULL",
+        "attestation_run_attempt INTEGER NOT NULL",
+        "attestation_sha VARCHAR(40) NOT NULL",
+        "run_completed_at >= run_started_at",
     ] {
         assert!(
             migration.contains(required),
