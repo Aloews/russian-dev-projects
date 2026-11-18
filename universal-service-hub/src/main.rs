@@ -1747,6 +1747,12 @@ async fn release_engineering_task_path_locks(
     Ok(Json(json!({"task_id":task_id,"released":result.rows_affected()})))
 }
 
+fn valid_sha256_artifact_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest|
+        digest.len()==64 && digest.chars().all(|character|character.is_ascii_hexdigit())
+    )
+}
+
 fn claim_string<'a>(claims: &'a Value, key: &str) -> ApiResult<&'a str> {
     claims.get(key).and_then(Value::as_str)
         .filter(|value| !value.is_empty())
@@ -1912,6 +1918,12 @@ async fn verify_github_actions_run(
     if !github_actions_run_matches(&run,&run_identity) {
         return Err(ApiError(StatusCode::CONFLICT,"github_actions_run_not_successful_or_mismatched"));
     }
+    let run_started_at=run.get("run_started_at").and_then(Value::as_str)
+        .filter(|value|chrono::DateTime::parse_from_rfc3339(value).is_ok())
+        .ok_or(ApiError(StatusCode::CONFLICT,"github_actions_run_start_time_missing"))?;
+    let run_completed_at=run.get("updated_at").and_then(Value::as_str)
+        .filter(|value|chrono::DateTime::parse_from_rfc3339(value).is_ok())
+        .ok_or(ApiError(StatusCode::CONFLICT,"github_actions_run_completion_time_missing"))?;
     Ok(json!({
         "repository":repository,
         "workflow_ref":workflow_ref,
@@ -1923,15 +1935,27 @@ async fn verify_github_actions_run(
         "sha":sha.to_ascii_lowercase(),
         "run_id":run_id,
         "run_attempt":run_attempt,
+        "run_started_at":run_started_at,
+        "run_completed_at":run_completed_at,
         "conclusion":"success"
     }))
+}
+
+#[derive(Deserialize)]
+struct GithubActionsEvidenceBody {
+    artifact_digest: String,
 }
 
 async fn ingest_github_actions_evidence(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((project_id,task_id)): Path<(String,String)>,
+    Json(body): Json<GithubActionsEvidenceBody>,
 ) -> ApiResult<Json<Value>> {
+    if !valid_sha256_artifact_digest(&body.artifact_digest) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY,"invalid_artifact_digest"));
+    }
+    let artifact_digest=body.artifact_digest.to_ascii_lowercase();
     let token=bearer(&headers)?;
     let attestation=verify_github_actions_run(&state,token).await?;
     let repository=attestation["repository"].as_str().unwrap_or_default();
@@ -1944,7 +1968,11 @@ async fn ingest_github_actions_evidence(
     let event_name=attestation["event_name"].as_str().unwrap_or_default();
     let run_id=attestation["run_id"].as_u64().unwrap_or_default() as i64;
     let run_attempt=attestation["run_attempt"].as_u64().unwrap_or_default() as i32;
-    let attestation_hash=hex::encode(Sha256::digest(attestation.to_string().as_bytes()));
+    let run_started_at=attestation["run_started_at"].as_str().unwrap_or_default();
+    let run_completed_at=attestation["run_completed_at"].as_str().unwrap_or_default();
+    let attestation_hash=hex::encode(Sha256::digest(
+        format!("{}:{artifact_digest}",attestation).as_bytes()
+    ));
 
     let mut tx=begin_platform_transaction(&state).await?;
     let task=sqlx::query("SELECT tenant_id,status,candidate_sha,metadata FROM engineering_tasks WHERE id=$1 AND project_id=$2 FOR UPDATE")
@@ -1970,10 +1998,11 @@ async fn ingest_github_actions_evidence(
         return Err(ApiError(StatusCode::CONFLICT,"github_actions_sha_does_not_match_candidate"));
     }
     let evidence_id=Uuid::new_v4().to_string();
-    let inserted=sqlx::query("INSERT INTO engineering_task_verification_evidence (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,job_workflow_ref,job_workflow_sha,workflow_path,git_ref,event_name,run_id,run_attempt,conclusion,attestation_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'success',$15) ON CONFLICT (repository,run_id,run_attempt,task_id) DO NOTHING RETURNING id")
+    let inserted=sqlx::query("INSERT INTO engineering_task_verification_evidence (id,tenant_id,project_id,task_id,candidate_sha,repository,workflow_ref,job_workflow_ref,job_workflow_sha,workflow_path,git_ref,event_name,run_id,run_attempt,run_started_at,run_completed_at,artifact_digest,conclusion,attestation_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16::timestamptz,$17,'success',$18) ON CONFLICT (repository,run_id,run_attempt,task_id) DO NOTHING RETURNING id")
         .bind(&evidence_id).bind(&tenant_id).bind(&project_id).bind(&task_id).bind(candidate_sha)
         .bind(repository).bind(workflow_ref).bind(job_workflow_ref).bind(job_workflow_sha)
-        .bind(workflow_path).bind(git_ref).bind(event_name).bind(run_id).bind(run_attempt).bind(&attestation_hash)
+        .bind(workflow_path).bind(git_ref).bind(event_name).bind(run_id).bind(run_attempt)
+        .bind(run_started_at).bind(run_completed_at).bind(&artifact_digest).bind(&attestation_hash)
         .fetch_optional(&mut *tx).await
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_evidence_persist_failed"))?;
     let (persisted_id,idempotent)=if let Some(row)=inserted {
@@ -1992,8 +2021,8 @@ async fn ingest_github_actions_evidence(
         (existing.try_get("id").unwrap_or_default(),true)
     };
     tx.commit().await.map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"database_transaction_commit_failed"))?;
-    audit(&state,&format!("github-actions:{repository}:{run_id}:{run_attempt}"),"engineering_task.verification_evidence_ingested","engineering_task",&task_id,json!({"repository":repository,"workflow_ref":workflow_ref,"job_workflow_ref":job_workflow_ref,"job_workflow_sha":job_workflow_sha,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"conclusion":"success","idempotent":idempotent})).await;
-    Ok(Json(json!({"evidence_id":persisted_id,"task_id":task_id,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"conclusion":"success","idempotent":idempotent})))
+    audit(&state,&format!("github-actions:{repository}:{run_id}:{run_attempt}"),"engineering_task.verification_evidence_ingested","engineering_task",&task_id,json!({"repository":repository,"workflow_ref":workflow_ref,"job_workflow_ref":job_workflow_ref,"job_workflow_sha":job_workflow_sha,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"artifact_digest":artifact_digest,"run_started_at":run_started_at,"run_completed_at":run_completed_at,"conclusion":"success","idempotent":idempotent})).await;
+    Ok(Json(json!({"evidence_id":persisted_id,"task_id":task_id,"candidate_sha":candidate_sha,"run_id":run_id,"run_attempt":run_attempt,"artifact_digest":artifact_digest,"conclusion":"success","idempotent":idempotent})))
 }
 
 #[derive(Deserialize)]
@@ -3405,6 +3434,15 @@ mod integration_security_tests {
         assert!(worker_completion_evidence_valid("recovery","queued",None,&json!({
             "recovery_reason":"lease expired","recovery_action":"requeue from checkpoint"
         })));
+    }
+
+    #[test]
+    fn artifact_digest_must_be_a_sha256_hex_digest() {
+        assert!(valid_sha256_artifact_digest(&format!("sha256:{}", "a".repeat(64))));
+        assert!(valid_sha256_artifact_digest(&format!("sha256:{}", "A".repeat(64))));
+        assert!(!valid_sha256_artifact_digest(&"a".repeat(64)));
+        assert!(!valid_sha256_artifact_digest(&format!("sha256:{}", "a".repeat(63))));
+        assert!(!valid_sha256_artifact_digest(&format!("sha256:{}", "g".repeat(64))));
     }
 
     #[test]
