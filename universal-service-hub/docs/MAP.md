@@ -571,12 +571,12 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 
 - Exact-head CI #44366947192 passed Rust format/lint/tests, migration and Python checks, Docker build and Compose startup, then failed in container smoke cleanup. The fixture released implementer and tester workspaces earlier, and their task completion had already released those assignments; the final cleanup loop then tried to delete the same assignment/release the same workspace again, receiving HTTP 409.
 - Updated cleanup so only the still-active reviewer assignment and reviewer workspace are released in the final loop. Implementer/tester workspaces are not released a second time. Runtime authorization and lease invariants remain unchanged.
-- Workflow correction commit: `6b6ec0a64084f7b45b197477e25ee7a504c2f49b`. Exact-head CI is pending.
+- Workflow correction commit: `6b6ec0a64084f7b45b197477e25ee7a504c2f49b`. PR #64 exact head `46d9758b4b8a94d63480722096ffa719372a2ac6` passed all 27 steps in run #44369359083.
 
 
 ### Trusted GitHub Actions verification — implementation in progress
 
-- New feature branch `feat/ush-trusted-github-verification-20261118` adds SQL migration `0011_trusted_github_verification.sql`, a dedicated OIDC ingestion endpoint, and a trusted-run verifier.
+- PR #91 branch `feat/ush-trusted-github-verification-v4-20261118` adds SQL migration `0011_trusted_github_verification.sql`, a dedicated OIDC ingestion endpoint, and a trusted-run verifier.
 - OIDC checks include GitHub JWKS signature, fixed issuer, configured audience, expiry/nbf, subject, repository, branch ref, event, allowlisted `job_workflow_ref` and exact `job_workflow_sha` pin.
 - The Hub independently fetches the Actions run from GitHub's API and requires exact repository, caller workflow path, branch, event, run ID/attempt, completed status, success conclusion and candidate SHA.
 - Evidence receipts are tenant-scoped, append-only for runtime users, unique by repository/run/attempt/task, and bound by a database trigger to the task's repository and candidate SHA. Runtime role has SELECT/INSERT only; RLS is forced.
@@ -587,3 +587,5 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 
 
 - First exact-head container startup exposed a migration syntax defect: the `job_workflow_sha` CHECK expression was truncated before its closing quote/parenthesis. PostgreSQL rejected the migration at the next `push` literal, so the Hub never opened port 18000. Replaced it with a length check plus a negated non-hex character class, avoiding the malformed expression. The fix is committed as `5fc30875d1c2c1856c6957d38f74ff53a81591f7`; exact-head CI is pending.
+
+- The first Compose startup attempt (#44369854642) exposed a truncated `job_workflow_sha` CHECK expression; the migration was corrected and a contract assertion was added. The corrected exact-head run for PR #91 is pending. No production config or worker activation was changed.
