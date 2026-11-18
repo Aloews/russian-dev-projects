@@ -3451,6 +3451,9 @@ mod integration_security_tests {
         assert!(valid_github_repository("Aloews/russian-dev-projects"));
         assert!(!valid_github_repository("Aloews/russian-dev-projects/extra"));
         assert!(!valid_github_repository("../russian-dev-projects"));
+        assert!(!valid_github_repository("./russian-dev-projects"));
+        assert!(!valid_github_repository("Aloews/.."));
+        assert!(!valid_github_repository("Aloews/."));
         assert_eq!(
             github_workflow_path(
                 "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/heads/main",
