@@ -1747,6 +1747,29 @@ async fn release_engineering_task_path_locks(
     Ok(Json(json!({"task_id":task_id,"released":result.rows_affected()})))
 }
 
+fn github_verification_receipt_hash(
+    identity: &Value,
+    source_run: &Value,
+    artifact_digest: &str,
+    task_id: &str,
+) -> String {
+    let stable_claims=json!({
+        "repository":identity["repository"],
+        "workflow_ref":identity["workflow_ref"],
+        "job_workflow_ref":identity["job_workflow_ref"],
+        "job_workflow_sha":identity["job_workflow_sha"],
+        "attestation_sha":identity["attestation_sha"]
+    });
+    hex::encode(Sha256::digest(
+        json!({
+            "identity":stable_claims,
+            "source_run":source_run,
+            "artifact_digest":artifact_digest,
+            "task_id":task_id
+        }).to_string().as_bytes()
+    ))
+}
+
 fn valid_sha256_artifact_digest(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|digest|
         digest.len()==64 && digest.chars().all(|character|character.is_ascii_hexdigit())
@@ -2054,9 +2077,9 @@ async fn ingest_github_actions_evidence(
         .ok_or(ApiError(StatusCode::NOT_FOUND,"verification_task_not_found_for_candidate"))?;
     let task_id:String=task.try_get("id")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
-    let attestation_hash=hex::encode(Sha256::digest(
-        format!("{}:{}:{}:{}",identity,source_run,artifact_digest,task_id).as_bytes()
-    ));
+    let attestation_hash=github_verification_receipt_hash(
+        &identity,&source_run,&artifact_digest,&task_id
+    );
     let tenant_id:String=task.try_get("tenant_id")
         .map_err(|_|ApiError(StatusCode::INTERNAL_SERVER_ERROR,"verification_task_lookup_failed"))?;
     let status:String=task.try_get("status")
@@ -3513,6 +3536,31 @@ mod integration_security_tests {
         assert!(worker_completion_evidence_valid("recovery","queued",None,&json!({
             "recovery_reason":"lease expired","recovery_action":"requeue from checkpoint"
         })));
+    }
+
+    #[test]
+    fn trusted_evidence_retry_is_idempotent_across_attestation_run_attempts() {
+        let identity=json!({
+            "repository":"Aloews/russian-dev-projects",
+            "workflow_ref":"Aloews/russian-dev-projects/.github/workflows/ush-post-ci-verification.yml@refs/heads/main",
+            "job_workflow_ref":"Aloews/russian-dev-projects/.github/workflows/ush-trusted-verify.yml@refs/heads/main",
+            "job_workflow_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "attestation_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "attestation_run_id":100,
+            "attestation_run_attempt":1
+        });
+        let mut retry=identity.clone();
+        retry["attestation_run_id"]=json!(101);
+        retry["attestation_run_attempt"]=json!(2);
+        let source=json!({"id":200,"run_attempt":1,"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc"});
+        let digest=format!("sha256:{}", "d".repeat(64));
+        let first=github_verification_receipt_hash(&identity,&source,&digest,"task-1");
+        let second=github_verification_receipt_hash(&retry,&source,&digest,"task-1");
+        assert_eq!(first,second);
+        assert_ne!(first,github_verification_receipt_hash(&retry,&source,&format!("sha256:{}", "e".repeat(64)),"task-1"));
+        let mut changed_workflow=retry.clone();
+        changed_workflow["job_workflow_sha"]=json!("ffffffffffffffffffffffffffffffffffffffff");
+        assert_ne!(first,github_verification_receipt_hash(&changed_workflow,&source,&digest,"task-1"));
     }
 
     #[test]
