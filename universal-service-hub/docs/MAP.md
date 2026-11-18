@@ -662,3 +662,11 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Exact-head CI run #44393555055 compiled the corrected JSON syntax but failed Rust Clippy on two remaining issues: the request field `artifact_digest` is a required `String`, so calling `.as_ref().is_some_and(...)` left the `AsRef` target ambiguous; and `github_verification_receipt_hash` accepted the artifact digest without including it in the hashed claims.
 - Replaced the ambiguous optional-style validation with direct `String` length/character checks and included the validated artifact digest in the receipt-hash payload. This preserves the mandatory SHA-256 digest requirement and binds the receipt hash to the artifact bytes' digest.
 - Correction commit: `6b39d55cb81f5f4fc99ddb352df55c4f3a4e52d9`. The next exact-head CI run must pass before this increment is considered verified. No production configuration, secrets, workers or deployment were changed.
+
+
+### Candidate-branch trusted CI reachability — 2026-11-19
+
+- A second-pass end-to-end review found a workflow reachability gap: worker-generated candidate branches use the `ai/task-...` prefix, while the Hub CI push trigger only covered `main`. PR CI is intentionally not attested because `pull_request` workflows are not trusted evidence; after merge, the SHA changes and no longer identifies the task candidate.
+- Added push CI for `ai/**` and strict allowlist support for exact branch names plus a single trailing-prefix wildcard such as `ai/task-*`. Pull-request events remain rejected. This allows CI to test the exact worker candidate SHA before PR merge without trusting a PR-controlled workflow run.
+- Added regression coverage for the approved task prefix and rejected sibling/empty-prefix branches. Configuration must explicitly include `ai/task-*` in `USH_GITHUB_ALLOWED_SOURCE_BRANCHES`; no production variables or secrets were changed.
+- New exact-head CI is required before this fix is considered verified.
