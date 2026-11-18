@@ -68,6 +68,22 @@ jobs:
       - name: Product Factory shell syntax
         working-directory: .
         run: bash -n universal-service-hub/scripts/product_factory_verify.sh
+      - name: Trusted verification workflow shell syntax
+        working-directory: .
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          lines = Path(".github/workflows/ush-trusted-verify.yml").read_text().splitlines()
+          marker = next(i for i, line in enumerate(lines) if line == "        run: |")
+          script = []
+          for line in lines[marker + 1:]:
+              if line and not line.startswith("          "):
+                  break
+              script.append(line[10:] if line.startswith("          ") else "")
+          subprocess.run(["bash", "-n"], input="\n".join(script) + "\n", text=True, check=True)
+          PY
       - name: Product Factory Python agent syntax
         working-directory: .
         run: python3 -m py_compile .github/scripts/qwen_local_agent.py
