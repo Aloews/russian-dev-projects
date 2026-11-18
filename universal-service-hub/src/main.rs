@@ -1796,7 +1796,7 @@ fn github_caller_workflow_is_allowed(workflow_ref: &str, allowed_workflows: &[St
 }
 
 fn github_source_run_is_allowed(event_name: &str, branch: &str, allowed_branches: &[String]) -> bool {
-    ["push","pull_request","workflow_dispatch"].contains(&event_name)
+    ["push","workflow_dispatch"].contains(&event_name)
         && allowed_branches.iter().any(|allowed|allowed==branch)
 }
 
@@ -3537,7 +3537,7 @@ mod integration_security_tests {
     fn github_source_run_policy_allows_only_exact_events_and_branches() {
         let allowed=vec!["main".to_owned(),"release/stable".to_owned()];
         assert!(github_source_run_is_allowed("push","main",&allowed));
-        assert!(github_source_run_is_allowed("pull_request","release/stable",&allowed));
+        assert!(!github_source_run_is_allowed("pull_request","release/stable",&allowed));
         assert!(!github_source_run_is_allowed("pull_request","feature/task",&allowed));
         assert!(!github_source_run_is_allowed("workflow_dispatch","release/*",&allowed));
         assert!(!github_source_run_is_allowed("schedule","main",&allowed));
