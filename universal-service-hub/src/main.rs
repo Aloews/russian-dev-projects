@@ -3559,7 +3559,7 @@ mod integration_security_tests {
     fn github_source_run_policy_allows_only_exact_events_and_target_branches() {
         let allowed=vec!["main".to_owned(),"release/stable".to_owned()];
         assert!(github_source_run_is_allowed("push",&json!({"head_branch":"main"}),&allowed));
-        assert!(github_source_run_is_allowed("pull_request",&json!({
+        assert!(!github_source_run_is_allowed("pull_request",&json!({
             "head_branch":"feature/task","pull_requests":[{"base":{"ref":"main"}}]
         }),&allowed));
         assert!(!github_source_run_is_allowed("pull_request",&json!({
@@ -3666,7 +3666,7 @@ mod integration_security_tests {
             run_id:123456,
             run_attempt:1
         };
-        assert!(github_source_run_is_allowed("pull_request",&run,&["main".to_owned()]));
+        assert!(!github_source_run_is_allowed("pull_request",&run,&["main".to_owned()]));
         assert!(github_actions_run_matches(&run,&identity));
         assert!(!github_source_run_is_allowed("pull_request",&run,&["develop".to_owned()]));
         let mut wrong_candidate=identity;
