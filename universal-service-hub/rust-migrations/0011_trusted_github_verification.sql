@@ -17,7 +17,7 @@ CREATE TABLE engineering_task_verification_evidence (
     run_attempt INTEGER NOT NULL CHECK (run_attempt BETWEEN 1 AND 100),
     run_started_at TIMESTAMPTZ NOT NULL,
     run_completed_at TIMESTAMPTZ NOT NULL,
-    artifact_digest VARCHAR(71) CHECK (artifact_digest IS NULL OR (length(artifact_digest)=71 AND left(artifact_digest,7)='sha256:' AND substring(artifact_digest from 8) !~ '[^0-9a-f]')),
+    artifact_digest VARCHAR(71) NOT NULL CHECK (length(artifact_digest)=71 AND left(artifact_digest,7)='sha256:' AND substring(artifact_digest from 8) !~ '[^0-9a-f]'),
     attestation_sha VARCHAR(40) NOT NULL CHECK (attestation_sha ~ '^[0-9a-f]{40}$'),
     attestation_run_id BIGINT NOT NULL CHECK (attestation_run_id > 0),
     attestation_run_attempt INTEGER NOT NULL CHECK (attestation_run_attempt BETWEEN 1 AND 100),
