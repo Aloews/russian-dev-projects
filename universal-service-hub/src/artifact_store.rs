@@ -83,7 +83,7 @@ impl ArtifactStore {
         let mut builder = Builder::new()
             .region(Region::new(region))
             .credentials_provider(credentials)
-            .timeout_config(aws_sdk_s3::config::TimeoutConfig::builder()
+            .timeout_config(aws_sdk_s3::config::timeout::TimeoutConfig::builder()
                 .operation_timeout(Duration::from_secs(30))
                 .build())
             .force_path_style(true);
