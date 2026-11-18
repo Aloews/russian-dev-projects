@@ -3369,6 +3369,96 @@ mod integration_security_tests {
     }
 
     #[test]
+    fn github_actions_identity_requires_exact_repository_workflow_and_branch() {
+        assert!(valid_github_repository("Aloews/russian-dev-projects"));
+        assert!(!valid_github_repository("Aloews/russian-dev-projects/extra"));
+        assert!(!valid_github_repository("../russian-dev-projects"));
+        assert_eq!(
+            github_workflow_path(
+                "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/heads/main",
+                "Aloews/russian-dev-projects"
+            ).as_deref(),
+            Some(".github/workflows/ush-verify.yml")
+        );
+        assert!(github_workflow_path(
+            "Aloews/russian-dev-projects/.github/workflows/../deploy.yml@refs/heads/main",
+            "Aloews/russian-dev-projects"
+        ).is_none());
+        assert!(github_workflow_path(
+            "Aloews/russian-dev-projects/.github/workflows/ush-verify.yml@refs/pull/12/merge",
+            "Aloews/russian-dev-projects"
+        ).is_none());
+    }
+
+    #[test]
+    fn github_actions_run_must_be_completed_success_for_exact_candidate_and_workflow() {
+        let run=json!({
+            "id":123456,
+            "run_attempt":2,
+            "status":"completed",
+            "conclusion":"success",
+            "event":"push",
+            "head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "head_branch":"main",
+            "path":".github/workflows/ush-verify.yml",
+            "head_repository":{"full_name":"Aloews/russian-dev-projects"}
+        });
+        assert!(github_actions_run_matches(
+            &run,
+            "Aloews/russian-dev-projects",
+            ".github/workflows/ush-verify.yml",
+            "refs/heads/main",
+            "push",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            123456,
+            2
+        ));
+        for (field,value) in [
+            ("status",json!("in_progress")),
+            ("conclusion",json!("failure")),
+            ("event",json!("pull_request")),
+            ("head_sha",json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")),
+            ("head_branch",json!("feature")),
+            ("path",json!(".github/workflows/untrusted.yml")),
+            ("run_attempt",json!(1)),
+            ("id",json!(999)),
+        ] {
+            let mut invalid=run.clone();
+            invalid[field]=value;
+            assert!(!github_actions_run_matches(
+                &invalid,
+                "Aloews/russian-dev-projects",
+                ".github/workflows/ush-verify.yml",
+                "refs/heads/main",
+                "push",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                123456,
+                2
+            ), "unexpected acceptance after mutating {field}");
+        }
+        let mut wrong_repo=run.clone();
+        wrong_repo["head_repository"]["full_name"]=json!("Aloews/Novel-forge");
+        assert!(!github_actions_run_matches(
+            &wrong_repo,
+            "Aloews/russian-dev-projects",
+            ".github/workflows/ush-verify.yml",
+            "refs/heads/main",
+            "push",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            123456,
+            2
+        ));
+    }
+
+    #[test]
+    fn github_oidc_run_claims_accept_numeric_and_string_run_ids() {
+        assert_eq!(claim_u64(&json!({"run_id":123}),"run_id").unwrap(),123);
+        assert_eq!(claim_u64(&json!({"run_id":"123"}),"run_id").unwrap(),123);
+        assert!(claim_u64(&json!({"run_id":"0"}),"run_id").is_err());
+        assert!(claim_u64(&json!({"run_id":"not-a-number"}),"run_id").is_err());
+    }
+
+    #[test]
     fn workspace_worktree_paths_are_relative_and_cannot_escape_the_workspace_root() {
         assert!(valid_worktree_path("tenants/aloews/projects/ush/tasks/task-123"));
         assert!(!valid_worktree_path("/tmp/worktree"));
