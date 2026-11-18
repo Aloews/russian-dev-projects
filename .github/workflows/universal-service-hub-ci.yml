@@ -749,9 +749,6 @@ jobs:
           docker image inspect universal-service-hub:test \
             | jq '.[0] | {Id,RepoTags,RootFS}' > "$RUNNER_TEMP/ush-ci-evidence/container-image.json"
           source_sha="$GITHUB_SHA"
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            source_sha=$(jq --exit-status --raw-output '.pull_request.head.sha | select(test("^[a-fA-F0-9]{40}$"))' "$GITHUB_EVENT_PATH")
-          fi
           [[ "$source_sha" =~ ^[a-fA-F0-9]{40}$ ]]
           jq -n --arg source_sha "$source_sha" \
             --arg source_run_id "$GITHUB_RUN_ID" \
