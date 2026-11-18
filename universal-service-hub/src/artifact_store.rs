@@ -19,6 +19,15 @@ pub struct ArtifactStore {
     max_bytes: usize,
 }
 
+pub struct ArtifactRegistration<'a> {
+    pub project_id: &'a str,
+    pub job_id: Uuid,
+    pub task_id: Option<Uuid>,
+    pub artifact_type: &'a str,
+    pub content_type: &'a str,
+    pub bytes: &'a [u8],
+}
+
 #[derive(Debug, Clone)]
 pub struct StoredArtifact {
     pub artifact_id: Uuid,
@@ -159,23 +168,18 @@ impl ArtifactStore {
     pub async fn put_and_register(
         &self,
         pool: &PgPool,
-        project_id: &str,
-        job_id: Uuid,
-        task_id: Option<Uuid>,
-        artifact_type: &str,
-        content_type: &str,
-        bytes: &[u8],
+        registration: ArtifactRegistration<'_>,
     ) -> anyhow::Result<StoredArtifact> {
-        if !valid_artifact_type(artifact_type) { bail!("invalid artifact type"); }
-        let stored = self.put(project_id, job_id, content_type, bytes).await?;
+        if !valid_artifact_type(registration.artifact_type) { bail!("invalid artifact type"); }
+        let stored = self.put(registration.project_id, registration.job_id, registration.content_type, registration.bytes).await?;
         let result = sqlx::query(
             "INSERT INTO execution_artifacts (id, project_id, job_id, task_id, artifact_type, storage_backend, storage_key, content_sha256, size_bytes, content_type) VALUES ($1, $2, $3, $4, $5, 's3', $6, $7, $8, $9)"
         )
             .bind(stored.artifact_id)
-            .bind(project_id)
-            .bind(job_id)
-            .bind(task_id)
-            .bind(artifact_type)
+            .bind(registration.project_id)
+            .bind(registration.job_id)
+            .bind(registration.task_id)
+            .bind(registration.artifact_type)
             .bind(&stored.object_key)
             .bind(&stored.sha256)
             .bind(stored.size_bytes as i64)
