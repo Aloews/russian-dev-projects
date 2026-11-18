@@ -534,3 +534,11 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - The single CI job completed all 47 steps successfully, including Product Factory syntax/safety/contract checks, Rust format/Clippy/tests, restricted-role and migration checks, Python checks, Docker build, Compose startup and container smoke test.
 - The container smoke test passed after correcting the fixture to follow the real implementation-to-test lifecycle. This is exact-head CI evidence only; it does not prove persistent Git worktree execution, a live Railway worker, production deployment, external tenant onboarding or self-hosting.
 - PR #64 remains draft and unmerged. Next: implement the real isolated workspace/worktree executor and connect the existing task API to a resumable worker adapter.
+
+
+### Verification trust boundary — 2026-11-18
+
+- Security review found that `worker_completion_evidence_valid` accepted worker-supplied `build_run_id`, `test_run_id` and reviewer approval JSON as proof of a passed check. Those values are self-reported and do not prove that GitHub Actions executed against the claimed commit.
+- The latest code change removes positive completion rights from builder, tester and reviewer worker tokens. They can report `blocked` or `recovery`, but cannot advance a task to a passed-build/test state or `verified`. The ordinary user transition API already rejects `verified`.
+- This is an intentional fail-closed gate, not a completed evidence pipeline. The next implementation must add a separate trusted GitHub Actions identity path (OIDC issuer/audience/repository/workflow validation), bind evidence to the exact candidate SHA and run attempt, persist the workflow conclusion and artifact digest, and only then allow an independent reviewer decision to mark the task verified.
+- Until that trusted evidence path exists, the Hub must not advertise a task as verified based only on agent metadata. Exact-head CI for this hardening change is pending.
