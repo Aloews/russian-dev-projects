@@ -2010,7 +2010,6 @@ async fn ingest_github_actions_evidence(
     let workflow_ref=identity["workflow_ref"].as_str().unwrap_or_default();
     let job_workflow_ref=identity["job_workflow_ref"].as_str().unwrap_or_default();
     let job_workflow_sha=identity["job_workflow_sha"].as_str().unwrap_or_default();
-    let workflow_path=identity["workflow_path"].as_str().unwrap_or_default();
     let git_ref=source_git_ref.as_str();
     let event_name=source_event;
     let attestation_sha=identity["attestation_sha"].as_str().unwrap_or_default();
