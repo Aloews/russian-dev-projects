@@ -519,3 +519,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - The runtime handler intentionally returns HTTP 403 (`workspace_lease_owner_forbidden`) for an authenticated worker that owns a different worker's live lease; HTTP 409 is reserved for an expired/invalid lease. The smoke test expected 409, contradicting the handler's authorization contract.
 - Corrected the smoke assertion to expect 403 in commit `93c8f15d66e5811c1dcc3b2f5fe5edd5b269e763`.
 - **Status: awaiting exact-head CI.** No verification is inferred from the code change; PR #64 remains draft/unmerged until the complete workflow passes.
+
+### Follow-up CI diagnosis — 2026-11-18
+
+- The next exact-head Container smoke failure was not in the workspace lease authorization check. The log identified the failing assertion as the tester claim not returning the second task.
+- Root cause: the smoke fixture attempted to move a task directly from `planned` to `queued` while setting `queue="test"`. The state machine permits `planned -> queued`, but the test consumer only claims `queued_test`; queue and status were inconsistent, and the fixture skipped the implementation-to-test handoff.
+- Corrected the fixture to use a valid lifecycle: `received -> classified -> planned -> queued`, claim from the implementation queue, transition to `queued_test`, then claim from the test queue. The state machine and queue semantics were not weakened.
+- New workflow fixture commit: `54f1b9a895e9c8c2246f7ff92bb0187baba9c018`. Exact-head CI is still required.
