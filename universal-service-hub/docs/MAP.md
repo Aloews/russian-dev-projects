@@ -729,3 +729,13 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Defined human safeguards: UHS may prepare a handoff, but cannot autonomously hire/contact/contract/pay, disclose private source, grant broad access or expose production secrets. Human contributions pass the same acceptance gate and independent review.
 - Added sandbox failure-injection and release gates, including duplicate delivery, concurrent claims, worker crashes, lease expiry, provider quota failures, changed candidate SHA, missing evidence, budget exhaustion and human patch verification.
 - **Status: design recorded; implementation not yet complete.** Existing task/attempt/lease/workspace/checkpoint and trusted-CI primitives are not proof of an end-to-end completion engine. No production workers, secrets, deployment, hiring or payments were enabled. Next implementation sequence: schema/contracts → durable orchestrator → Completion Gate → strategy controller → secure human handoff → operator API/UI → sandbox E2E.
+
+
+## Branch freshness and divergence guard — 2026-11-19
+
+- **Triggering incident (Sherlock Scholes):** agent branch for PR #440 was measured at 151 commits divergent from protected `main`. It was correctly treated as unsafe to merge wholesale; only a reviewed selective transplant onto a fresh branch is acceptable.
+- **Required invariant:** no agent may implement, publish a PR from, or merge a branch without a recorded comparison to the latest protected base SHA. Record base SHA, HEAD SHA, merge-base, ahead/behind counts and changed-file summary at dispatch, before PR creation, and immediately before merge.
+- **Thresholds:** more than 20 commits behind base => hard stop and synchronize/rebase; more than 50 commits divergent or unexplained unrelated history => quarantine branch and rebuild/selectively transplant intended changes onto a fresh branch from current base. Never merge the divergent branch wholesale.
+- **Merge acceptance:** exact-candidate CI must pass; diff must be reviewed against the current base; changed files/commits must match task scope; no unexplained merge commits, conflict resolutions or unrelated history. Stale-branch CI is not merge evidence.
+- **Fail-closed behavior:** missing comparison data, unavailable base, failed merge-base calculation, or threshold breach blocks agent dispatch/PR creation/merge and creates a durable escalation event for an operator.
+- **Implementation status:** this is a mandatory design requirement for the UHS orchestrator, not an implemented runtime guard yet. Add database evidence fields/events, enforce the guard in dispatch and completion/merge gates, and test stale-base, 21-behind, 51-divergent, unrelated-history and clean-branch cases before enabling workers.
