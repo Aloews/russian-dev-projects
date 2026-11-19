@@ -57,7 +57,7 @@ pub fn valid_content_type(value: &str) -> bool {
     let media = value.split(';').next().unwrap_or("").trim();
     let Some((kind, subtype)) = media.split_once('/') else { return false; };
     let valid_token = |part: &str| {
-        !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$&^_.+-".contains(&b))
+        !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
     };
     valid_token(kind) && valid_token(subtype)
 }
@@ -271,7 +271,16 @@ mod tests {
         assert!(!valid_artifact_type("UPPER"));
         assert!(!valid_artifact_type("../path"));
         assert!(valid_content_type("application/json"));
+        assert!(valid_content_type("application/vnd.example+json"));
+        assert!(valid_content_type("application/x%custom"));
+        assert!(valid_content_type("application/x'custom"));
+        assert!(valid_content_type("application/x*custom"));
+        assert!(valid_content_type("application/x`custom"));
+        assert!(valid_content_type("application/x|custom"));
+        assert!(valid_content_type("application/x~custom"));
         assert!(valid_content_type("text/plain; charset=utf-8"));
+        assert!(!valid_content_type("application/x?custom"));
+        assert!(!valid_content_type("application/x custom"));
         assert!(!valid_content_type("invalid"));
         assert!(!valid_content_type("application/\u{7f}bad"));
         assert!(!valid_content_type("application/"));
