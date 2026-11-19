@@ -446,3 +446,296 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - **API-only:** the current product has no browser management UI; only health/readiness endpoints are directly viewable in a browser, and administrative workflows use the authenticated HTTP API.
 - **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
 - Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
+
+## Durable engineering task dispatcher and multi-tenant foundation
+
+Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63). PR #64 contains the first durable task-control slice and the first tenant-owned schema foundation. This is not yet a complete autonomous executor, full tenant authorization layer or self-hosting system.
+
+### Implemented in the candidate branch
+
+- Tenant and workspace tables, tenant membership identities and revocable tenant service-token records.
+- Existing projects are backfilled into tenant `aloews` and workspace `default`.
+- Projects and project tokens carry tenant ownership; project creation compatibility trigger assigns the initial Aloews tenant when the bootstrap API omits explicit ownership.
+- Tenant-scoped provider connection references, resource-limit policies, budget policies and idempotent usage ledger schema. Credential values are not stored in these tables.
+- Task, event and checkpoint records carry tenant ownership. Database triggers derive ownership from the owning project/task rather than trusting request payloads.
+- Composite foreign keys prevent a task, event or checkpoint from pairing a tenant with another tenant's project/task.
+- Project-scoped PostgreSQL task intake/listing, append-only user context events, version-checked state transitions, worker claims, hashed leases, heartbeat, checkpoint metadata and lease-expiry recovery.
+- Role-bound workers for architect, implementer, builder, tester, reviewer and recovery queues; worker tokens are bound to a tenant/project and a single queue.
+- Multiple workspace records with independent leases, heartbeats, immutable base SHAs, worktree metadata and expired-lease quarantine.
+- Task-to-workspace assignments require both task and workspace leases. Overlapping writer path scopes are protected by transactional PostgreSQL locks; an independent task cannot acquire a conflicting prefix while the first lease is active.
+- Model attempt records retain provider/model, strategy, outcome, error, cost fields and acceptance progress. These are the control-plane records; model selection and retry orchestration remain in the executor adapter.
+- Transaction-local tenant context is applied to task/workspace/attempt and project/token/provider-selection APIs. Migration 0006 enables and forces RLS on execution-plane tables; migration 0007 provisions the non-login `ush_runtime` role; migration 0008 extends RLS to tenants, workspaces, memberships, provider connections, resource/budget policies, usage events, API rate limits, projects and audit events; migration 0009 enables RLS on tenant and project token tables.
+- The Rust API runs application queries via `SET ROLE ush_runtime` after privileged migrations and verifies that the active role is neither `SUPERUSER` nor `BYPASSRLS`. Authentication uses short-lived platform-scoped transactions to resolve token hashes before establishing a tenant principal; management/read routes then use tenant-scoped transactions.
+- Exact-head CI includes restricted-role RLS tests for tenant A/B visibility, forged cross-tenant writes, core/token/audit/rate-limit isolation and transaction-context reset on one reused connection.
+- Migration version regression test and PostgreSQL tenant schema smoke test remain part of CI.
+
+### API surface currently implemented
+
+- POST/GET /v1/projects/{project_id}/tasks
+- POST /v1/projects/{project_id}/tasks/{task_id}/events
+- POST /v1/projects/{project_id}/tasks/{task_id}/transition
+- POST /v1/tasks/claim
+- POST /v1/tasks/{task_id}/heartbeat
+- POST /v1/tasks/{task_id}/checkpoints
+- POST /v1/tasks/{task_id}/attempts and GET /v1/projects/{project_id}/tasks/{task_id}/attempts
+- POST/GET /v1/projects/{project_id}/workspaces; POST lease-next, heartbeat and release
+- POST/DELETE /v1/tasks/{task_id}/workspace-assignment (requires valid task and workspace leases; automatically acquires/releases path locks)
+- POST/DELETE /v1/projects/{project_id}/tasks/{task_id}/path-locks (requires an active task/workspace assignment and a path inside the assigned writer scope)
+- Tenant service-token authentication and token lifecycle endpoints are present; human OIDC membership authentication is not.
+
+### Explicit gaps — do not call this full multi-tenancy yet
+
+- RLS policies now cover execution-plane and core tenant-owned tables, including projects, tenants, token records, usage, audit, memberships, provider connections, quotas/budgets and API rate limits. Token authentication is deliberately platform-scoped only for exact hash lookup; every token-management route must retain tenant/project ownership checks. A final route-by-route authorization review and adversarial API tests remain required.
+- The runtime pool now verifies it is operating as `ush_runtime`, a non-login role with neither `SUPERUSER` nor `BYPASSRLS`. The migration connection remains privileged by design; the application connection is role-switched after migrations.
+- Tenant membership rows are not yet bound to a verified human OIDC identity. Tenant service tokens work, but user session identity, invitation/SCIM lifecycle and support elevation are outstanding.
+- Tenant resource limits, budget policies, usage ledger and provider-connection records are schema only; runtime enforcement and billing attribution remain outstanding.
+- Workspace records and path locks are implemented, but actual isolated Git worktree provisioning, persistent workspace storage, shell/network sandboxing, artifacts, caches and per-tenant logs are not yet connected to the Railway execution plane.
+- The existing GitHub/Starimg worker has a USH-only repository/path scope gate and validated model fallback/strategy rotation. It is **not yet connected to the USH PostgreSQL task API**: intake is still owner-authored GitHub `/ai` comments, execution remains bounded to one issue per invocation, and the Railway workers remain disabled. Do not describe this as an end-to-end USH adapter.
+- Independent queue roles and persisted attempts exist in the API. The existing Railway worker is not yet a durable API-backed multi-role scheduler; unrelated tasks are not yet proven to continue concurrently while another waits on CI/review.
+- Fair tenant scheduling, tenant export/deletion and cross-tenant penetration testing remain outstanding.
+- No public signup/onboarding, production deployment or self-hosting acceptance is enabled.
+
+### Next implementation order
+
+1. Pass exact-head Rust/Clippy/migration/Compose/API/RLS tests; repair any failures without weakening gates.
+2. Convert the USH-only worker scope into a real project adapter: poll/claim PostgreSQL tasks with worker leases, lease/assign workspaces, use persistent Git worktrees, heartbeat and checkpoint accepted units, and publish evidence through the API.
+3. Split architect/implementer/builder/tester/reviewer/recovery into independent queue consumers; keep independent DAG branches moving while CI/review is pending.
+4. Route retries through validated Starimg model candidates and strategy changes, recording every attempt and cost; prove a real provider call in a bounded sandbox.
+5. Complete route-by-route tenant isolation for project/token/provider/usage/audit/artifact surfaces, then OIDC memberships, quotas/budgets, export/deletion and penetration tests.
+6. Activate only the existing Railway runtime with USH-only repo/path scope after sandbox end-to-end acceptance; never enable the other six repositories as a side effect.
+7. Continue Hub self-hosting only after API recovery, multi-workspace execution and publication acceptance passes.
+
+### Verification evidence
+
+- Schema foundation passed exact-head CI run [#43870849099](https://github.com/Aloews/russian-dev-projects/actions/runs/43870849099) on `1dbb093c56975f07eee47d3bbd3f26bc802610d6`; this evidence predates the execution-role/RLS/workspace-assignment increment.
+- Current candidate includes RLS/runtime-role migration, transaction context, assignment/path-lock endpoints and expanded CI smoke tests. Exact-head run is required; do not infer success from earlier CI.
+- Current runtime role test is designed to prove non-superuser/non-bypass access, tenant A/B row isolation, denied forged writes and no context leakage across reused transactions. Until the exact run passes, RLS is **implemented but not verified**.
+- PR #64 remains open and unmerged. Railway execution, production deployment and external tenant onboarding remain disabled.
+
+
+## CI repair checkpoint — 2026-11-18
+
+- PR #64 exact candidate `429791aa89ca68a661df3fc1b76dee4ee6b25ad1` failed exact-head CI run [#44132283616](https://github.com/Aloews/russian-dev-projects/actions/runs/44132283616) at the container smoke assertion for a tester attempting to heartbeat an implementer-owned workspace lease.
+- The runtime handler intentionally returns HTTP 403 (`workspace_lease_owner_forbidden`) for an authenticated worker that owns a different worker's live lease; HTTP 409 is reserved for an expired/invalid lease. The smoke test expected 409, contradicting the handler's authorization contract.
+- Corrected the smoke assertion to expect 403 in commit `93c8f15d66e5811c1dcc3b2f5fe5edd5b269e763`.
+- **Status: awaiting exact-head CI.** No verification is inferred from the code change; PR #64 remains draft/unmerged until the complete workflow passes.
+
+### Follow-up CI diagnosis — 2026-11-18
+
+- The next exact-head Container smoke failure was not in the workspace lease authorization check. The log identified the failing assertion as the tester claim not returning the second task.
+- Root cause: the smoke fixture attempted to move a task directly from `planned` to `queued` while setting `queue="test"`. The state machine permits `planned -> queued`, but the test consumer only claims `queued_test`; queue and status were inconsistent, and the fixture skipped the implementation-to-test handoff.
+- Corrected the fixture to use a valid lifecycle: `received -> classified -> planned -> queued`, claim from the implementation queue, transition to `queued_test`, then claim from the test queue. The state machine and queue semantics were not weakened.
+- New workflow fixture commit: `54f1b9a895e9c8c2246f7ff92bb0187baba9c018`. Exact-head CI is still required.
+
+
+### Exact-head verification — 2026-11-18
+
+- PR #64 head `38562a96c4c48006c97fe5a74cd3e1daac60ee71` passed workflow run [#44352404767](https://github.com/Aloews/russian-dev-projects/actions/runs/44352404767) (`universal-service-hub-ci`).
+- The single CI job completed all 47 steps successfully, including Product Factory syntax/safety/contract checks, Rust format/Clippy/tests, restricted-role and migration checks, Python checks, Docker build, Compose startup and container smoke test.
+- The container smoke test passed after correcting the fixture to follow the real implementation-to-test lifecycle. This is exact-head CI evidence only; it does not prove persistent Git worktree execution, a live Railway worker, production deployment, external tenant onboarding or self-hosting.
+- PR #64 remains draft and unmerged. Next: implement the real isolated workspace/worktree executor and connect the existing task API to a resumable worker adapter.
+
+
+### Verification trust boundary — 2026-11-18
+
+- Security review found that `worker_completion_evidence_valid` accepted worker-supplied `build_run_id`, `test_run_id` and reviewer approval JSON as proof of a passed check. Those values are self-reported and do not prove that GitHub Actions executed against the claimed commit.
+- The latest code change removes positive completion rights from builder, tester and reviewer worker tokens. They can report `blocked` or `recovery`, but cannot advance a task to a passed-build/test state or `verified`. The ordinary user transition API already rejects `verified`.
+- This is an intentional fail-closed gate, not a completed evidence pipeline. The next implementation must add a separate trusted GitHub Actions identity path (OIDC issuer/audience/repository/workflow validation), bind evidence to the exact candidate SHA and run attempt, persist the workflow conclusion and artifact digest, and only then allow an independent reviewer decision to mark the task verified.
+- Until that trusted evidence path exists, the Hub must not advertise a task as verified based only on agent metadata. Exact-head CI for this hardening change is pending.
+
+
+### Reviewer self-verification smoke correction — 2026-11-18
+
+- Exact-head CI `44360949183` failed only in the container smoke test because the fixture still expected a reviewer worker to transition a task to `verified` using self-reported `decision=approved` JSON.
+- The API correctly returned HTTP 403 with `trusted_verification_evidence_required`; this confirms the new fail-closed control is working. The application was healthy and the failure was an obsolete test expectation, not a runtime startup or database error.
+- Updated the container smoke fixture to assert that exact 403/error response and then verify the task remains in `review` with its candidate SHA unchanged. This explicitly tests that an agent cannot self-certify verification.
+- New workflow fixture commit: `95cda9909247c6c4168a8ac4e041c8238b7a026c`. Exact-head CI has been triggered; its result is pending.
+- Positive verification remains intentionally unavailable until Issue #83 implements trusted GitHub Actions OIDC evidence ingestion plus independent review.
+
+
+### Workspace cleanup smoke correction — 2026-11-18
+
+- Exact-head run `44364315855` confirmed the reviewer self-verification rejection assertion passed; the container smoke then failed during cleanup because it tried to release a workspace while its still-live task assignment remained active. The API correctly returned `active_task_workspace_assignment_must_be_released` (HTTP 409).
+- Corrected the smoke cleanup to call the worker-scoped task workspace-assignment DELETE endpoint with both live lease tokens before releasing each workspace. This preserves the runtime's lease/assignment safety invariant; no application behavior was weakened.
+- Workflow fixture commit: `88b22195f05b1711f6113d914d4426b741825770`. Exact-head run pending.
+
+
+### Workspace cleanup follow-up — 2026-11-18
+
+- Exact-head run `44366947192` passed Rust format, lint and unit tests, then failed in container smoke cleanup. The implementation and tester completion paths already release their workspace assignments transactionally; the smoke fixture redundantly tried to DELETE those assignments using task lease tokens that had correctly been cleared at completion, producing HTTP 409.
+- Updated cleanup to issue the explicit assignment DELETE only for the reviewer, whose attempted verification is intentionally rejected and therefore leaves its read-only assignment active. Implementer/tester assignments continue to be released by task completion; all workspaces are then released with their own lease tokens.
+- Workflow fixture commit: `c914e2c51109b921ac9f5e581d3630907102157b`. Exact-head CI pending.
+
+
+### Workspace cleanup smoke correction 2 — 2026-11-18
+
+- Exact-head CI #44366947192 passed Rust format/lint/tests, migration and Python checks, Docker build and Compose startup, then failed in container smoke cleanup. The fixture released implementer and tester workspaces earlier, and their task completion had already released those assignments; the final cleanup loop then tried to delete the same assignment/release the same workspace again, receiving HTTP 409.
+- Updated cleanup so only the still-active reviewer assignment and reviewer workspace are released in the final loop. Implementer/tester workspaces are not released a second time. Runtime authorization and lease invariants remain unchanged.
+- Workflow correction commit: `6b6ec0a64084f7b45b197477e25ee7a504c2f49b`. Exact-head CI is pending.
+
+
+### Exact-head workspace cleanup verification — 2026-11-18
+
+- Current PR #64 head `46d9758b4b8a94d63480722096ffa719372a2ac6` passed exact-head CI run [#44369359083](https://github.com/Aloews/russian-dev-projects/actions/runs/44369359083).
+- All 27 workflow steps passed: Product Factory checks, Rust format/Clippy/tests, restricted-role and migration checks, Python/Ruff tests, Docker build, Compose runtime startup and container smoke.
+- The final smoke now releases only the still-active reviewer assignment/workspace. Implementer and tester assignments are released by their successful task completion paths; no duplicate release is attempted.
+- This verifies the durable task API and current lease/cleanup smoke only. It does not verify actual Git worktree provisioning, long-running external worker execution, trusted OIDC evidence ingestion, production deployment, or multi-tenant live operation.
+
+
+### Trusted GitHub Actions verification — implementation in progress
+
+- Integrated the trusted verification work onto the current PR #64 branch so it includes the latest durable-runtime and smoke-test fixes. Adds SQL migration `0011_trusted_github_verification.sql`, a dedicated OIDC ingestion endpoint, and a trusted-run verifier.
+- OIDC checks include GitHub JWKS signature, fixed issuer, configured audience, expiry/nbf, subject, repository, branch ref, event, allowlisted `job_workflow_ref` and exact `job_workflow_sha` pin.
+- The Hub independently fetches the Actions run from GitHub's API and requires exact repository, caller workflow path, branch, event, run ID/attempt, completed status, success conclusion and candidate SHA.
+- Evidence receipts are tenant-scoped, append-only for runtime users, unique by repository/run/attempt/task, and bound by a database trigger to the task's repository and candidate SHA. Runtime role has SELECT/INSERT only; RLS is forced.
+- Reviewer completion is re-enabled only behind the persisted trusted evidence lookup, exact candidate pin, empty writer scope and distinct implementation/reviewer identity.
+- Added unit tests for repository/workflow allowlisting, reusable-workflow SHA pinning, exact run metadata, failure/replay mismatch and numeric/string run claims; migration contract tests; container smoke checks for RLS and restricted grants.
+- Required configuration: `USH_GITHUB_OIDC_AUDIENCE`, exact caller `USH_GITHUB_ALLOWED_WORKFLOW_REFS`, exact reusable `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS`, and pinned `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA`; optional `USH_GITHUB_API_TOKEN` for API rate limits/private run lookup.
+- Added a two-run flow: source CI uploads an immutable image/test manifest; `.github/workflows/ush-post-ci-verification.yml` starts after `workflow_run` completion; `.github/workflows/ush-trusted-verify.yml` downloads the artifact from the completed source run, validates its SHA/run identity, and submits a short-lived OIDC token plus source run identity. The server validates the attestation run identity separately from the source run, preventing self-verification of an in-progress run.
+- Added exact source workflow path allowlisting and persisted source run ID/attempt separately from the attestation run ID/attempt. The current caller still uses a single `USH_TASK_ID` repository variable as an integration hook; dynamic task resolution for multiple concurrent tasks is not yet implemented.
+- The evidence record now requires the SHA-256 artifact digest and persists GitHub run start/completion timestamps alongside repository/caller workflow/reusable workflow/ref/SHA/run identity. Both caller and reusable workflow refs are exact allowlists; the reusable workflow SHA is pinned. The caller build/test pipeline must calculate the digest and pass it to the reusable workflow.
+- Not yet complete: a real signed-token end-to-end round-trip after the workflow files are merged/configured, dynamic task-to-run resolution for concurrent tasks, exact-head CI, and adversarial disposable-Postgres tests. Existing fail-closed behavior remains until those gates pass. No production config or workers changed.
+
+
+
+### Repository identity path-segment hardening — 2026-11-18
+
+- Exact-head CI run #44382077304 failed in Rust tests: `valid_github_repository("../russian-dev-projects")` incorrectly returned true because the character allowlist permitted dot-only owner segments.
+- Updated the validator to reject owner/name segments exactly equal to `.` or `..`; added regression assertions for both owner and repository-name positions. This prevents path-segment traversal while retaining normal GitHub owner/repository characters.
+- The new base-head CI is required before stacking further UHS work; no PR is merged and no production configuration changed.
+
+
+### Completed-run artifact provenance — 2026-11-18
+
+- The source CI workflow creates and uploads `ush-ci-evidence.json` only after all checks, container startup and smoke tests succeed. The manifest records the exact candidate SHA, source run ID/attempt and Docker image ID plus root filesystem layer digests.
+- The separate `workflow_run` caller invokes the pinned reusable workflow only after the source run completes. The reusable workflow downloads the artifact from that exact source run, verifies the embedded candidate SHA/run ID/attempt, and calculates SHA-256 over the downloaded manifest. It does not accept a caller-supplied digest.
+- The Hub verifies the OIDC identity of the separate attestation run, fetches the completed source run independently, and compares source repository, allowed workflow path, event, run ID/attempt, branch and exact candidate SHA. The receipt stores both source and attestation run identities, source start/completion times, artifact digest and immutable identity claims.
+- The post-CI workflow no longer needs a static task ID. The Hub resolves exactly one `review` task by project, source repository, candidate SHA and optional PR/issue number. Zero matches are rejected; multiple matches return an explicit ambiguity conflict. No production secrets or workers are configured; the signed-token round-trip remains unverified until merged and configured.
+
+
+### Pull-request artifact identity alignment — 2026-11-18
+
+- The CI artifact manifest previously recorded `GITHUB_SHA` for every event. On `pull_request`, GitHub's workflow environment SHA can represent the synthetic merge ref, while the Actions run API and `workflow_run.head_sha` identify the source branch head. That would make the later trusted source-run comparison reject otherwise successful PR evidence.
+- The manifest now records `pull_request.head.sha` for pull-request events (validated as a 40-character SHA) and keeps `GITHUB_SHA` for push/workflow_dispatch. This aligns the uploaded evidence with the exact source run head validated by the Hub.
+- Exact-head CI must validate the workflow and container startup after this correction; no production config or worker activation was changed.
+
+
+
+### Trusted evidence source-run policy hardening — 2026-11-18
+
+- Trusted source runs are restricted to `push` and `workflow_dispatch` on exact configured protected branches. `pull_request` runs are excluded from evidence even when their base branch is allowlisted: GitHub executes a PR workflow from the PR merge commit, so the PR can change the workflow definition.
+- The post-CI caller skips PR events, the API rejects them, the evidence table constraint excludes them, and the source-run matcher uses only the exact `head_sha`. PR CI may still run for ordinary regression feedback, but it cannot create a trusted verification receipt.
+- The post-CI workflow resolves exactly one task by project, source repository and candidate SHA; an optional issue number can disambiguate where present. Static task IDs are no longer required; zero or multiple matches fail closed.
+- No production variables or secrets were changed. Exact-head CI and a signed OIDC round-trip remain required.
+
+
+### Pull-request source evidence rejection — 2026-11-18
+
+- A regression review found that the helper still allowed `pull_request` source runs whenever the PR base was an allowlisted branch. This is unsafe because a PR can modify its own CI workflow and produce a success result without executing the trusted pipeline.
+- The source-run policy now accepts only `push` and `workflow_dispatch` events on exact configured protected branches. Regression tests explicitly reject a same-repository PR targeting `main`; the post-CI caller skips PR events before requesting OIDC.
+- No production secrets or worker settings changed. Exact-head CI must validate this fail-closed policy before trusted evidence can be enabled.
+
+
+### Attestation hash task-resolution ordering — 2026-11-18
+
+- Moved attestation-hash construction until after the Hub resolves the unique review task by project, candidate SHA, repository and optional issue number. The hash now includes the resolved task ID without referencing an uninitialized local.
+- Added explicit positive coverage for protected-branch `workflow_dispatch` evidence while keeping `pull_request` rejected.
+- Exact-head Rust and container CI must validate this correction; no production changes were made.
+
+
+### Trusted evidence artifact is mandatory — 2026-11-18
+
+- The trusted attestation workflow previously treated a missing evidence artifact as an empty digest and allowed the API/database to persist a receipt without an artifact hash. That did not meet the evidence lifecycle's artifact-digest requirement.
+- The workflow now fails closed if the source-run manifest is absent, empty, or does not match the exact source SHA/run ID/attempt. The Hub request requires a valid SHA-256 digest; the evidence table column is `NOT NULL`; the receipt hash includes the digest.
+- Added a deserialization regression proving that evidence without `artifact_digest` is rejected and updated the migration contract test. Exact-head CI is pending; no production migration, secret, worker or deployment was changed.
+
+
+### Exact-head Rust lint correction — 2026-11-18
+
+- Exact-head CI run #44390802937 failed in Rust lint/compile at `src/main.rs:1766`: the attestation hash JSON object contained a duplicated `"task_id": task_id` entry and the first entry lacked its separating comma.
+- Removed the duplicated key and restored valid JSON macro syntax in commit `4e9e5443bdb28a2db0be472a68e2aa56eaab9332`.
+- This is a compile-level correction only; it does not change attestation claims, trust policy, database schema, or production configuration. The new exact-head CI run must pass before this increment is considered verified.
+
+
+### Artifact-digest Clippy correction — 2026-11-19
+
+- Exact-head CI run #44393555055 compiled the corrected JSON syntax but failed Rust Clippy on two remaining issues: the request field `artifact_digest` is a required `String`, so calling `.as_ref().is_some_and(...)` left the `AsRef` target ambiguous; and `github_verification_receipt_hash` accepted the artifact digest without including it in the hashed claims.
+- Replaced the ambiguous optional-style validation with direct `String` length/character checks and included the validated artifact digest in the receipt-hash payload. This preserves the mandatory SHA-256 digest requirement and binds the receipt hash to the artifact bytes' digest.
+- Correction commit: `6b39d55cb81f5f4fc99ddb352df55c4f3a4e52d9`. The next exact-head CI run must pass before this increment is considered verified. No production configuration, secrets, workers or deployment were changed.
+
+
+### Candidate-branch trusted CI reachability — 2026-11-19
+
+- A second-pass end-to-end review found a workflow reachability gap: worker-generated candidate branches use the `ai/task-...` prefix, while the Hub CI push trigger only covered `main`. PR CI is intentionally not attested because `pull_request` workflows are not trusted evidence; after merge, the SHA changes and no longer identifies the task candidate.
+- Added push CI for `ai/**` and strict allowlist support for exact branch names plus a single trailing-prefix wildcard such as `ai/task-*`. Pull-request events remain rejected. This allows CI to test the exact worker candidate SHA before PR merge without trusting a PR-controlled workflow run.
+- Added regression coverage for the approved task prefix and rejected sibling/empty-prefix branches. Configuration must explicitly include `ai/task-*` in `USH_GITHUB_ALLOWED_SOURCE_BRANCHES`; no production variables or secrets were changed.
+- New exact-head CI is required before this fix is considered verified.
+
+
+### Independent trusted candidate verification before OIDC — 2026-11-19
+
+- Security review found that the first reusable attestor only downloaded the source-run artifact and checked its digest; it did not independently execute the candidate tests. A candidate-controlled CI workflow on an agent branch could therefore report success without running the intended checks.
+- The reusable workflow now has a separate `verify_candidate` job with read-only contents permission and no OIDC permission. It checks out the exact candidate SHA with persisted credentials disabled, runs Rust format/Clippy/tests, Python Ruff/migrations/tests against an isolated PostgreSQL service, and builds the candidate container.
+- Only after that job succeeds does a separate `attest` job receive `id-token: write`, download the manifest generated by the trusted verification job, compute its SHA-256 digest, and submit the signed evidence. Candidate code never runs in the OIDC-enabled job.
+- Added actionlint coverage for both trusted workflow files. Exact-head CI must validate the new job graph and scripts; no production secrets, settings, workers, or deployments were changed.
+
+
+### Source-run conclusion enforcement — 2026-11-19
+
+- Exact-head Rust test run #44408123072 caught a real policy regression: the source-run identity matcher checked `status=completed` but did not require `conclusion=success`, despite the security regression test explicitly mutating the conclusion.
+- Restored the mandatory `conclusion == success` condition in `github_actions_run_matches`. This prevents completed-but-failed/cancelled source runs from being treated as successful evidence; reviewer gating still independently requires a success receipt.
+- Correction commit: `aca721e48995a7755d38f7e458b6b4485f8f305c`. Exact-head CI is pending.
+
+
+### Trusted OIDC submission shellcheck correction — 2026-11-19
+
+- Exact-head run #44409369585 passed the new trusted workflow's initial Bash syntax extraction but actionlint/ShellCheck found malformed nested command-substitution quoting in the OIDC POST payload. The same step also treated the artifact digest as optional even though the API contract requires it.
+- Split payload construction into a separate `payload=$(jq ...)` assignment and made the SHA-256 digest check mandatory before token acquisition/submission. This keeps OIDC token retrieval after the independent candidate-verification job and avoids running candidate code in the OIDC-enabled job.
+- Correction commit: `6edc2714b0d951dbbac8a9bade324d78e7e0eb78`. New exact-head CI is pending.
+
+
+### Trusted workflow shell-test coverage — 2026-11-19
+
+- A review of the workflow test harness found it syntax-checked only the first inline `run: |` block in `ush-trusted-verify.yml`, which was insufficient after the reusable workflow gained multiple jobs.
+- Updated the CI syntax test to extract and run `bash -n` against every inline shell block in the trusted workflow. This covers candidate validation, DB/migration checks, manifest generation and OIDC submission.
+- Correction commit: `deb9b5734bd015df19312ceb5bee7fc0e5bb6ac8`. Exact-head CI is pending.
+
+
+### Branch wildcard deny-case regression tests — 2026-11-19
+
+- Added explicit tests that reject a global `*`, embedded wildcards such as `ai/*/task-*`, and suffix text after a wildcard. Only exact branch entries and one terminal-prefix wildcard are accepted.
+- Test commit: `938099159139cb3a9e20e5cc52ab618980030d78`. Exact-head workflow #44410129959 is pending.
+
+
+### Exact-head verification after trusted OIDC shell correction — 2026-11-19
+
+- Current PR #64 head: `6e8c888cf9cf00220321e75b66c7734bd351ec9b`.
+- Exact-head workflow [#44409743514](https://github.com/Aloews/russian-dev-projects/actions/runs/44409743514) passed container initialization, Product Factory shell/Python/safety/contract checks, trusted-workflow shell syntax, Actionlint workflow validation, composite action metadata, Rust format and Rust Clippy. Rust unit tests are still running; migration, Compose startup, API/RLS and container smoke stages have not yet completed.
+- The previous exact-head Actionlint failure was traced to nested jq command-substitution quoting in the OIDC submission step. The workflow now builds the payload in a separate variable and requires the artifact digest before obtaining/submitting the OIDC token.
+- **Status: in progress; no full CI pass is claimed.** Keep PR #64 draft/unmerged until the entire workflow succeeds.
+
+
+### Migration 0011 duplicate-tail syntax fix — 2026-11-19
+
+- Removed the malformed duplicated SQL tail from `rust-migrations/0011_trusted_github_verification.sql`; preserved the complete evidence table, trigger, RLS policy, runtime grants, and UPDATE/DELETE revocation.
+- Fix commit: `9ef7035e740e31918aef6c156e0d2d1a12c59e37`.
+- Exact-head workflow run #44489332392 completed successfully (job `test`, conclusion `success`). This is CI evidence for the commit, not yet proof of deployed/runtime end-to-end behavior. PR #64 remains draft/unmerged pending full review and runtime/security acceptance.
+
+
+### Task Completion Engine and human escalation policy — 2026-11-19
+
+- Added `docs/TASK_COMPLETION_AND_ESCALATION.md` to define the product-level completion invariant: a task is complete only when every mandatory acceptance criterion has evidence bound to the same candidate SHA, required checks pass, an independent reviewer approves, and the final state transition is durable.
+- Defined persisted lifecycle states, versioned acceptance contracts, append-only evidence/events, SHA-based evidence invalidation, strategy fingerprints, finite retry/budget controls, no-progress detection, independent-provider escalation and a human-engineer handoff.
+- Defined human safeguards: UHS may prepare a handoff, but cannot autonomously hire/contact/contract/pay, disclose private source, grant broad access or expose production secrets. Human contributions pass the same acceptance gate and independent review.
+- Added sandbox failure-injection and release gates, including duplicate delivery, concurrent claims, worker crashes, lease expiry, provider quota failures, changed candidate SHA, missing evidence, budget exhaustion and human patch verification.
+- **Status: design recorded; implementation not yet complete.** Existing task/attempt/lease/workspace/checkpoint and trusted-CI primitives are not proof of an end-to-end completion engine. No production workers, secrets, deployment, hiring or payments were enabled. Next implementation sequence: schema/contracts → durable orchestrator → Completion Gate → strategy controller → secure human handoff → operator API/UI → sandbox E2E.
+
+
+## Branch freshness and divergence guard — 2026-11-19
+
+- **Triggering incident (Sherlock Scholes):** agent branch for PR #440 was measured at 151 commits divergent from protected `main`. It was correctly treated as unsafe to merge wholesale; only a reviewed selective transplant onto a fresh branch is acceptable.
+- **Required invariant:** no agent may implement, publish a PR from, or merge a branch without a recorded comparison to the latest protected base SHA. Record base SHA, HEAD SHA, merge-base, ahead/behind counts and changed-file summary at dispatch, before PR creation, and immediately before merge.
+- **Thresholds:** more than 20 commits behind base => hard stop and synchronize/rebase; more than 50 commits divergent or unexplained unrelated history => quarantine branch and rebuild/selectively transplant intended changes onto a fresh branch from current base. Never merge the divergent branch wholesale.
+- **Merge acceptance:** exact-candidate CI must pass; diff must be reviewed against the current base; changed files/commits must match task scope; no unexplained merge commits, conflict resolutions or unrelated history. Stale-branch CI is not merge evidence.
+- **Fail-closed behavior:** missing comparison data, unavailable base, failed merge-base calculation, or threshold breach blocks agent dispatch/PR creation/merge and creates a durable escalation event for an operator.
+- **Implementation status:** this is a mandatory design requirement for the UHS orchestrator, not an implemented runtime guard yet. Add database evidence fields/events, enforce the guard in dispatch and completion/merge gates, and test stale-base, 21-behind, 51-divergent, unrelated-history and clean-branch cases before enabling workers.

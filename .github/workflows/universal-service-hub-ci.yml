@@ -5,12 +5,15 @@ name: universal-service-hub-ci
   push:
     branches:
       - main
+      - "ai/**"
     paths:
       - "universal-service-hub/**"
       - "AGENTS.md"
       - ".github/AGENTS.md"
       - ".github/product-factory/**"
       - ".github/workflows/universal-service-hub-ci.yml"
+      - ".github/workflows/ush-trusted-verify.yml"
+      - ".github/workflows/ush-post-ci-verification.yml"
       - ".github/workflows/product-factory.yml"
       - ".github/workflows/universal-hub-codex-claude.yml"
       - ".github/actions/product-factory-agent/**"
@@ -25,6 +28,8 @@ name: universal-service-hub-ci
       - ".github/AGENTS.md"
       - ".github/product-factory/**"
       - ".github/workflows/universal-service-hub-ci.yml"
+      - ".github/workflows/ush-trusted-verify.yml"
+      - ".github/workflows/ush-post-ci-verification.yml"
       - ".github/workflows/product-factory.yml"
       - ".github/workflows/universal-hub-codex-claude.yml"
       - ".github/actions/product-factory-agent/**"
@@ -68,6 +73,29 @@ jobs:
       - name: Product Factory shell syntax
         working-directory: .
         run: bash -n universal-service-hub/scripts/product_factory_verify.sh
+      - name: Trusted verification workflow shell syntax
+        working-directory: .
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          lines = Path(".github/workflows/ush-trusted-verify.yml").read_text().splitlines()
+          scripts = []
+          for marker, line in enumerate(lines):
+              if line != "        run: |":
+                  continue
+              script = []
+              for body_line in lines[marker + 1:]:
+                  if body_line and not body_line.startswith("          "):
+                      break
+                  script.append(body_line[10:] if body_line.startswith("          ") else "")
+              scripts.append("\n".join(script) + "\n")
+          if not scripts:
+              raise SystemExit("trusted workflow contains no inline run scripts")
+          for script in scripts:
+              subprocess.run(["bash", "-n"], input=script, text=True, check=True)
+          PY
       - name: Product Factory Python agent syntax
         working-directory: .
         run: python3 -m py_compile .github/scripts/qwen_local_agent.py
@@ -79,7 +107,7 @@ jobs:
         run: python3 .github/scripts/validate_agent_docs.py
       - name: Product Factory workflow validation
         working-directory: .
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/product-factory.yml .github/workflows/universal-hub-codex-claude.yml
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/product-factory.yml .github/workflows/universal-hub-codex-claude.yml .github/workflows/ush-trusted-verify.yml .github/workflows/ush-post-ci-verification.yml
       - name: Product Factory composite action metadata
         working-directory: .
         run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' .github/actions/product-factory-agent/action.yml .github/actions/product-factory-qwen-agent/action.yml .github/actions/product-factory-verify/action.yml
@@ -89,6 +117,11 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Rust tests
         run: cargo test
+      - name: Create non-superuser application and runtime database roles
+        run: |
+          docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE ush_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; CREATE ROLE ush_app LOGIN PASSWORD 'ush-test-password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; GRANT ush_runtime TO ush_app; GRANT CONNECT ON DATABASE ush_test TO ush_app; GRANT USAGE, CREATE ON SCHEMA public TO ush_app;"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -100,7 +133,7 @@ jobs:
         run: ruff check app tests migrations
       - name: Migration smoke test
         env:
-          USH_DATABASE_URL: postgresql+asyncpg://ush:ush-test-password@localhost:5432/ush_test
+          USH_DATABASE_URL: postgresql+asyncpg://ush_app:ush-test-password@localhost:5432/ush_test
         run: alembic upgrade head
       - name: Tests
         run: pytest -q
@@ -111,15 +144,26 @@ jobs:
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
           USH_DB_PASSWORD: ush-ci-db-password-with-at-least-32-characters
+          USH_APP_DB_PASSWORD: ush-test-password
         run: |
           bash -n scripts/dev-up.sh scripts/dev-down.sh
+          sh -n scripts/init-app-db-role.sh
           docker compose --env-file .env.example -f compose.yml config -q
       - name: Local Compose runtime startup smoke
         run: |
           set -eu
-          trap 'docker compose --env-file .env.local -f compose.yml down -v >/dev/null 2>&1 || true' EXIT
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              docker compose --env-file .env.local -f compose.yml logs --no-color db-init postgres hub || true
+            fi
+            docker compose --env-file .env.local -f compose.yml down -v >/dev/null 2>&1 || true
+            exit "$status"
+          }
+          trap cleanup EXIT
           docker tag universal-service-hub:test universal-service-hub:local
           USH_SKIP_BUILD=1 PORT=18000 bash scripts/dev-up.sh
+          bash scripts/test_tenant_schema.sh
           curl -fsS http://127.0.0.1:18000/healthz >/dev/null
           docker compose --env-file .env.local -f compose.yml ps
           docker compose --env-file .env.local -f compose.yml logs --no-color hub
@@ -127,23 +171,49 @@ jobs:
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
         run: |
-          set -eu
+          set -Eeuo pipefail
+          failure_context=""
+          trap 'failure_context=$BASH_COMMAND' ERR
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "Container smoke failed at: ${failure_context:-${BASH_COMMAND}} (exit ${status})"
+              echo "Listener state for port 8000:"
+              (ss -ltnp '( sport = :8000 )' || true)
+              echo "Container state:"
+              docker inspect ush-smoke --format '{{json .State}}' 2>&1 || true
+              echo "Container logs:"
+              docker logs ush-smoke 2>&1 || true
+            fi
+            docker stop ush-smoke >/dev/null 2>&1 || true
+            exit "$status"
+          }
+          trap cleanup EXIT
           docker run -d --rm --name ush-smoke --network host \
             -e USH_API_TOKEN="$USH_API_TOKEN" \
-            -e USH_DATABASE_URL="postgres://ush:ush-test-password@127.0.0.1:5432/ush_test" \
+            -e USH_DATABASE_URL="postgres://ush_app:ush-test-password@127.0.0.1:5432/ush_test" \
             -e USH_RATE_LIMIT_PER_MINUTE=100 \
+            -e HOST=0.0.0.0 \
+            -e PORT=8000 \
             universal-service-hub:test
-          trap 'docker stop ush-smoke >/dev/null 2>&1 || true' EXIT
           ready=0
           for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/readyz >/dev/null; then
+            http_status=$(curl -sS -o /tmp/ush-readyz-body -w "%{http_code}" \
+              http://127.0.0.1:8000/readyz || true)
+            if [ "$http_status" = "200" ]; then
               ready=1
+              break
+            fi
+            if [ "$http_status" != "000" ]; then
+              echo "Readiness endpoint returned HTTP $http_status:"
+              cat /tmp/ush-readyz-body || true
               break
             fi
             sleep 2
           done
           if [ "$ready" -ne 1 ]; then
-            docker logs ush-smoke
+            failure_context="readiness endpoint returned HTTP ${http_status:-unknown}; expected 200"
+            echo "Container did not reach HTTP 200 on /readyz."
             exit 1
           fi
           curl -fsS http://127.0.0.1:8000/healthz >/dev/null
@@ -156,6 +226,19 @@ jobs:
             -H "Authorization: Bearer $USH_API_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{"id":"smoke-project","name":"Smoke project","allowed_capabilities":["ai.chat"],"allowed_provider_ids":[]}' >/dev/null
+
+          docker run --rm -i --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO tenants (id,slug,name) VALUES ('tenant-beta','tenant-beta','Tenant Beta');
+          INSERT INTO workspaces (tenant_id,id,slug,name) VALUES ('tenant-beta','default','default','Default workspace');
+          INSERT INTO projects (id,tenant_id,workspace_id,name,allowed_capabilities,allowed_provider_ids,created_at,updated_at)
+            VALUES ('beta-project','tenant-beta','default','Beta project','["ai.chat"]'::jsonb,'[]'::jsonb,NOW(),NOW());
+          SELECT 'tenant_beta_seeded=' || count(*) FROM tenants WHERE id='tenant-beta';
+          SQL
+          tenant_beta_after_seed=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -Atc "SELECT count(*) FROM tenants WHERE id='tenant-beta'")
+          echo "Tenant-beta immediately after fixture seed: $tenant_beta_after_seed"
+          test "$tenant_beta_after_seed" = "1"
           curl -fsS -X PUT http://127.0.0.1:8000/v1/providers/smoke-provider \
             -H "Authorization: Bearer $USH_API_TOKEN" \
             -H "Content-Type: application/json" \
@@ -168,6 +251,88 @@ jobs:
           owner_token=$(printf '%s' "$owner_response" | jq -r '.token')
           owner_id=$(printf '%s' "$owner_response" | jq -r '.id')
           echo "::add-mask::$owner_token"
+
+          tenant_alpha_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tenants/aloews/tokens \
+            -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"alpha-owner","role":"tenant_owner"}')
+          tenant_alpha_token=$(printf '%s' "$tenant_alpha_response" | jq -r '.token')
+          echo "::add-mask::$tenant_alpha_token"
+
+          tenant_beta_admin_count=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -Atc "SELECT count(*) FROM tenants WHERE id='tenant-beta'")
+          echo "Platform DB tenant-beta rows: $tenant_beta_admin_count"
+          test "$tenant_beta_admin_count" = "1"
+          app_visible_tenant=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush_app -d ush_test -qAtc "SET ROLE ush_runtime; SET app.is_admin='true'; SELECT COALESCE((SELECT status FROM tenants WHERE id='tenant-beta'), 'hidden_or_missing')")
+          echo "Runtime DB role visibility for tenant-beta: ${app_visible_tenant:-<not-visible>}"
+          test "$app_visible_tenant" = "active"
+
+          verification_evidence_controls=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -Atc "SELECT c.relrowsecurity AND c.relforcerowsecurity AND has_table_privilege('ush_runtime','engineering_task_verification_evidence','SELECT') AND has_table_privilege('ush_runtime','engineering_task_verification_evidence','INSERT') AND NOT has_table_privilege('ush_runtime','engineering_task_verification_evidence','UPDATE') AND NOT has_table_privilege('ush_runtime','engineering_task_verification_evidence','DELETE') FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='engineering_task_verification_evidence'")
+          echo "Trusted verification evidence RLS/runtime grants: $verification_evidence_controls"
+          test "$verification_evidence_controls" = "t"
+
+          tenant_beta_http=$(curl -sS -o /tmp/tenant-beta-token-response.json -w "%{http_code}" -X POST http://127.0.0.1:8000/v1/tenants/tenant-beta/tokens \
+            -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"beta-owner","role":"tenant_owner"}')
+          echo "Tenant token endpoint HTTP status: $tenant_beta_http"
+          cat /tmp/tenant-beta-token-response.json
+          test "$tenant_beta_http" = "200"
+          tenant_beta_response=$(cat /tmp/tenant-beta-token-response.json)
+          tenant_beta_token=$(printf '%s' "$tenant_beta_response" | jq -r '.token')
+          echo "::add-mask::$tenant_beta_token"
+
+          curl -fsS -H "Authorization: Bearer $tenant_alpha_token" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tasks | jq -e 'type == "array"' >/dev/null
+          curl -fsS -H "Authorization: Bearer $tenant_beta_token" \
+            http://127.0.0.1:8000/v1/projects/beta-project/tasks | jq -e 'type == "array"' >/dev/null
+
+          cross_tenant_read=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $tenant_alpha_token" \
+            http://127.0.0.1:8000/v1/projects/beta-project/tasks)
+          test "$cross_tenant_read" = "403"
+
+          cross_tenant_worker=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/projects/smoke-project/workers \
+            -H "Authorization: Bearer $tenant_beta_token" -H "Content-Type: application/json" \
+            -d '{"name":"wrong-tenant","worker_id":"wrong-tenant","worker_role":"tester"}')
+          test "$cross_tenant_worker" = "403"
+
+          beta_worker_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/beta-project/workers \
+            -H "Authorization: Bearer $tenant_beta_token" -H "Content-Type: application/json" \
+            -d '{"name":"beta reviewer","worker_id":"beta-reviewer","worker_role":"reviewer"}')
+          beta_worker_token=$(printf '%s' "$beta_worker_response" | jq -r '.token')
+          echo "::add-mask::$beta_worker_token"
+
+          beta_project_token_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/beta-project/tokens \
+            -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"beta-viewer","role":"viewer"}')
+          beta_project_token=$(printf '%s' "$beta_project_token_response" | jq -r '.token')
+          echo "::add-mask::$beta_project_token"
+
+          docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -v ON_ERROR_STOP=1 \
+            -c "UPDATE tenants SET status='suspended' WHERE id='tenant-beta'"
+
+          suspended_tenant_status=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $tenant_beta_token" \
+            http://127.0.0.1:8000/v1/projects/beta-project/tasks)
+          suspended_project_status=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $beta_project_token" \
+            http://127.0.0.1:8000/v1/projects/beta-project/tasks)
+          suspended_worker_status=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $beta_worker_token" -H "Content-Type: application/json" \
+            -d '{"queue":"review","worker_id":"beta-reviewer"}')
+          test "$suspended_tenant_status" = "401"
+          test "$suspended_project_status" = "401"
+          test "$suspended_worker_status" = "401"
+
+          docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -v ON_ERROR_STOP=1 \
+            -c "UPDATE tenants SET status='active' WHERE id='tenant-beta'"
+          curl -fsS -H "Authorization: Bearer $tenant_beta_token" \
+            http://127.0.0.1:8000/v1/projects/beta-project/tasks | jq -e 'type == "array"' >/dev/null
 
           operator_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tokens \
             -H "Authorization: Bearer $owner_token" \
@@ -183,6 +348,328 @@ jobs:
             -d '{"name":"readonly","role":"viewer"}')
           viewer_token=$(printf '%s' "$viewer_response" | jq -r '.token')
           echo "::add-mask::$viewer_token"
+
+          architect_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workers \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"name":"architect","worker_id":"architect-smoke","worker_role":"architect"}')
+          architect_token=$(printf '%s' "$architect_response" | jq -r '.token')
+          echo "::add-mask::$architect_token"
+
+          tester_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workers \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"name":"tester","worker_id":"tester-smoke","worker_role":"tester"}')
+          tester_token=$(printf '%s' "$tester_response" | jq -r '.token')
+          echo "::add-mask::$tester_token"
+
+          implementer_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workers \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"name":"implementer","worker_id":"implementer-smoke","worker_role":"implementer"}')
+          implementer_token=$(printf '%s' "$implementer_response" | jq -r '.token')
+          echo "::add-mask::$implementer_token"
+
+          curl -fsS -H "Authorization: Bearer $owner_token" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/workers | jq -e 'length == 3' >/dev/null
+
+          wrong_worker_queue=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d '{"queue":"planning","worker_id":"tester-smoke"}')
+          test "$wrong_worker_queue" = "403"
+
+          correct_worker_queue=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $architect_token" -H "Content-Type: application/json" \
+            -d '{"queue":"planning","worker_id":"architect-smoke"}')
+          printf '%s' "$correct_worker_queue" | jq -e '.task == null' >/dev/null
+
+          curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"workspace_key":"workspace-a","runtime_provider":"railway","repository":"Aloews/russian-dev-projects","base_branch":"main","base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' >/dev/null
+          curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"workspace_key":"workspace-b","runtime_provider":"railway","repository":"Aloews/russian-dev-projects","base_branch":"main","base_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' >/dev/null
+          curl -fsS -H "Authorization: Bearer $owner_token" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/workspaces | jq -e 'length == 2' >/dev/null
+
+          implementer_workspace=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/lease-next \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d '{"worker_id":"implementer-smoke","lease_seconds":120}')
+          implementer_workspace_id=$(printf '%s' "$implementer_workspace" | jq -r '.workspace.id')
+          implementer_workspace_lease=$(printf '%s' "$implementer_workspace" | jq -r '.lease_token')
+          echo "::add-mask::$implementer_workspace_lease"
+
+          tester_workspace=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/lease-next \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d '{"worker_id":"tester-smoke","lease_seconds":120}')
+          tester_workspace_id=$(printf '%s' "$tester_workspace" | jq -r '.workspace.id')
+          tester_workspace_lease=$(printf '%s' "$tester_workspace" | jq -r '.lease_token')
+          echo "::add-mask::$tester_workspace_lease"
+          test "$implementer_workspace_id" != "$tester_workspace_id"
+
+          workspace_heartbeat=$(curl -fsS -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/heartbeat" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$implementer_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')")
+          printf '%s' "$workspace_heartbeat" | jq -e '.workspace_id != null' >/dev/null
+
+          wrong_workspace_owner=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/heartbeat" \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "tester-smoke" --arg lease_token "$implementer_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')")
+          test "$wrong_workspace_owner" = "403"
+
+          implementer_active_assignments=$(docker run --rm --network host -e PGPASSWORD=ush-test-password postgres:16-alpine \
+            psql -h 127.0.0.1 -U ush -d ush_test -Atc "SELECT count(*) FROM engineering_task_workspace_assignments a JOIN engineering_tasks t ON t.id=a.task_id AND t.tenant_id=a.tenant_id AND t.project_id=a.project_id WHERE a.tenant_id='aloews' AND a.project_id='smoke-project' AND a.workspace_id='$implementer_workspace_id' AND a.released_at IS NULL AND t.lease_expires_at>NOW()")
+          echo "Implementer active task assignments before release: $implementer_active_assignments"
+          implementer_release_status=$(curl -sS -o /tmp/ush-implementer-release.json -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/release" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$implementer_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')")
+          echo "Implementer workspace release HTTP status: $implementer_release_status"
+          cat /tmp/ush-implementer-release.json || true
+          test "$implementer_release_status" = "204"
+          curl -fsS -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$tester_workspace_id/release" \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "tester-smoke" --arg lease_token "$tester_workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
+
+          reviewer_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workers \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"name":"reviewer","worker_id":"reviewer-smoke","worker_role":"reviewer"}')
+          reviewer_token=$(printf '%s' "$reviewer_response" | jq -r '.token')
+          echo "::add-mask::$reviewer_token"
+
+          candidate_sha="cccccccccccccccccccccccccccccccccccccccc"
+          curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg sha "$candidate_sha" '{workspace_key:"reviewer-candidate",runtime_provider:"railway",repository:"Aloews/russian-dev-projects",base_branch:"main",base_sha:$sha,git_branch:"ush/review/candidate"}')" >/dev/null
+
+          implementer_workspace=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/lease-next \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d '{"worker_id":"implementer-smoke","lease_seconds":600}')
+          implementer_workspace_id=$(printf '%s' "$implementer_workspace" | jq -r '.workspace.id')
+          implementer_workspace_lease=$(printf '%s' "$implementer_workspace" | jq -r '.lease_token')
+          implementer_workspace_base_sha=$(printf '%s' "$implementer_workspace" | jq -r '.workspace.base_sha')
+          echo "::add-mask::$implementer_workspace_lease"
+
+          tester_workspace=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/lease-next \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d '{"worker_id":"tester-smoke","lease_seconds":600}')
+          tester_workspace_id=$(printf '%s' "$tester_workspace" | jq -r '.workspace.id')
+          tester_workspace_lease=$(printf '%s' "$tester_workspace" | jq -r '.lease_token')
+          tester_workspace_base_sha=$(printf '%s' "$tester_workspace" | jq -r '.workspace.base_sha')
+          echo "::add-mask::$tester_workspace_lease"
+          test "$implementer_workspace_id" != "$tester_workspace_id"
+
+          task_response=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tasks \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"idempotency_key":"smoke-task-1","title":"USH adapter smoke task","objective":"Exercise durable task execution and reviewer handoff","acceptance_criteria":["Persist task metadata","Require independent review"],"dependencies":[],"metadata":{"adapter":"universal-service-hub","source_issue_number":63,"source_repository":"Aloews/russian-dev-projects"}}')
+          printf '%s' "$task_response" | jq -e '.metadata.adapter == "universal-service-hub" and .metadata.source_issue_number == 63' >/dev/null
+          task_id=$(printf '%s' "$task_response" | jq -r '.id')
+          task_version=$(printf '%s' "$task_response" | jq -r '.version')
+          for next_status in classified planned queued; do
+            transition_response=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$task_id/transition" \
+              -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+              -d "$(jq -nc --arg next_status "$next_status" --argjson expected_version "$task_version" '{next_status:$next_status,expected_version:$expected_version}')")
+            task_version=$(printf '%s' "$transition_response" | jq -r '.version')
+          done
+
+          claimed_task=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d '{"queue":"implementation","worker_id":"implementer-smoke"}')
+          claimed_task_id=$(printf '%s' "$claimed_task" | jq -r '.task.id')
+          task_lease=$(printf '%s' "$claimed_task" | jq -r '.lease_token')
+          test "$claimed_task_id" = "$task_id"
+          printf '%s' "$claimed_task" | jq -e '.task.metadata.source_issue_number == 63' >/dev/null
+          echo "::add-mask::$task_lease"
+
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/workspace-assignment" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg task_lease_token "$task_lease" \
+              --arg workspace_id "$implementer_workspace_id" --arg workspace_lease_token "$implementer_workspace_lease" \
+              --arg base_sha "$implementer_workspace_base_sha" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"implementer",writer_scope:["universal-service-hub/src/","universal-service-hub/rust-migrations/"],base_sha:$base_sha}')" >/dev/null
+
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/heartbeat" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$task_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" | jq -e '.lease_expires_at != null' >/dev/null
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$implementer_workspace_id/heartbeat" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$implementer_workspace_lease" \
+              --arg head_sha "$implementer_workspace_base_sha" --arg path "tenants/aloews/projects/smoke-project/workspaces/$implementer_workspace_id" \
+              --arg branch "ush/smoke/$task_id" \
+              '{worker_id:$worker_id,lease_token:$lease_token,lease_seconds:600,head_sha:$head_sha,git_worktree_path:$path,git_branch:$branch,runtime_id:"ci-smoke"}')" \
+            | jq -e '.lease_expires_at != null' >/dev/null
+
+          second_task=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/tasks \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d '{"idempotency_key":"smoke-task-2","title":"Concurrent QA task","objective":"Prove independent tester workspace and path locks","acceptance_criteria":["Reject overlapping writer scope"],"dependencies":[]}')
+          second_task_id=$(printf '%s' "$second_task" | jq -r '.id')
+          second_version=$(printf '%s' "$second_task" | jq -r '.version')
+          for next_status in classified planned queued; do
+            second_transition=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$second_task_id/transition" \
+              -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+              -d "$(jq -nc --arg next_status "$next_status" --argjson expected_version "$second_version" '{next_status:$next_status,expected_version:$expected_version}')")
+            second_version=$(printf '%s' "$second_transition" | jq -r '.version')
+          done
+          second_implementation_claim=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d '{"queue":"implementation","worker_id":"implementer-smoke"}')
+          test "$(printf '%s' "$second_implementation_claim" | jq -r '.task.id')" = "$second_task_id"
+          second_version=$(printf '%s' "$second_implementation_claim" | jq -r '.task.version')
+          second_transition=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$second_task_id/transition" \
+            -H "Authorization: Bearer $owner_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --argjson expected_version "$second_version" '{next_status:"queued_test",expected_version:$expected_version,queue:"test"}')")
+          second_claim=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d '{"queue":"test","worker_id":"tester-smoke"}')
+          second_task_lease=$(printf '%s' "$second_claim" | jq -r '.lease_token')
+          echo "::add-mask::$second_task_lease"
+          test "$(printf '%s' "$second_claim" | jq -r '.task.id')" = "$second_task_id"
+
+          overlap_status=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:8000/v1/tasks/$second_task_id/workspace-assignment" \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "tester-smoke" --arg task_lease_token "$second_task_lease" \
+              --arg workspace_id "$tester_workspace_id" --arg workspace_lease_token "$tester_workspace_lease" \
+              --arg base_sha "$tester_workspace_base_sha" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"tester",writer_scope:["universal-service-hub/src/main.rs"],base_sha:$base_sha}')")
+          test "$overlap_status" = "409"
+
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$second_task_id/workspace-assignment" \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "tester-smoke" --arg task_lease_token "$second_task_lease" \
+              --arg workspace_id "$tester_workspace_id" --arg workspace_lease_token "$tester_workspace_lease" \
+              --arg base_sha "$tester_workspace_base_sha" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"tester",writer_scope:["universal-service-hub/docs/"],base_sha:$base_sha}')" >/dev/null
+
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$second_task_id/path-locks" \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "tester-smoke" --arg task_lease_token "$second_task_lease" \
+              --arg workspace_id "$tester_workspace_id" --arg workspace_lease_token "$tester_workspace_lease" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,path_prefixes:["universal-service-hub/docs/architecture/"]}')" \
+            | jq -e '.lock_ids | length == 1' >/dev/null
+
+          attempt_failure=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/attempts" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$task_lease" \
+              '{worker_id:$worker_id,lease_token:$lease_token,model_id:"smoke-model-a",strategy:"baseline",outcome:"failed",acceptance_progress:0.25,error_code:"smoke_failure",error_summary:"Expected first attempt failure"}')")
+          printf '%s' "$attempt_failure" | jq -e '.attempt_no == 1 and .outcome == "failed"' >/dev/null
+          attempt_success=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/attempts" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg lease_token "$task_lease" \
+              '{worker_id:$worker_id,lease_token:$lease_token,model_id:"smoke-model-b",strategy:"decomposed-plan",outcome:"succeeded",acceptance_progress:1.0}')")
+          printf '%s' "$attempt_success" | jq -e '.attempt_no == 2 and .outcome == "succeeded"' >/dev/null
+
+          attempt_history=$(curl -fsS -H "Authorization: Bearer $tenant_alpha_token" \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$task_id/attempts")
+          printf '%s' "$attempt_history" | jq -e 'length == 2 and .[0].model_id == "smoke-model-a" and .[0].outcome == "failed" and .[1].model_id == "smoke-model-b" and .[1].outcome == "succeeded"' >/dev/null
+
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/complete" \
+            -H "Authorization: Bearer $implementer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "implementer-smoke" --arg task_lease_token "$task_lease" \
+              --arg workspace_id "$implementer_workspace_id" --arg workspace_lease_token "$implementer_workspace_lease" \
+              --arg candidate_sha "$candidate_sha" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,next_status:"review",candidate_sha:$candidate_sha,evidence:{commit_sha:$candidate_sha,changed_files:["universal-service-hub/src/main.rs"],validation:{rustfmt:"passed",clippy:"passed",tests:"passed"}}}')" \
+            | jq -e '.status == "review" and .candidate_sha != null' >/dev/null
+
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$second_task_id/complete" \
+            -H "Authorization: Bearer $tester_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "tester-smoke" --arg task_lease_token "$second_task_lease" \
+              --arg workspace_id "$tester_workspace_id" --arg workspace_lease_token "$tester_workspace_lease" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,next_status:"blocked",evidence:{reason:"smoke-test-cleanup"}}')" \
+            | jq -e '.status == "blocked"' >/dev/null
+
+          reviewer_claim=$(curl -fsS -X POST http://127.0.0.1:8000/v1/tasks/claim \
+            -H "Authorization: Bearer $reviewer_token" -H "Content-Type: application/json" \
+            -d '{"queue":"review","worker_id":"reviewer-smoke"}')
+          reviewer_task_lease=$(printf '%s' "$reviewer_claim" | jq -r '.lease_token')
+          test "$(printf '%s' "$reviewer_claim" | jq -r '.task.id')" = "$task_id"
+          echo "::add-mask::$reviewer_task_lease"
+
+          review_task_version=$(curl -fsS -H "Authorization: Bearer $USH_API_TOKEN" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tasks \
+            | jq -r --arg id "$task_id" '.[] | select(.id == $id) | .version')
+          generic_verify_status=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$task_id/transition" \
+            -H "Authorization: Bearer $USH_API_TOKEN" -H "Content-Type: application/json" \
+            -d "$(jq -nc --argjson expected_version "$review_task_version" '{next_status:"verified",expected_version:$expected_version}')")
+          test "$generic_verify_status" = "403"
+
+          reviewer_workspace=$(curl -fsS -X POST http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/lease-next \
+            -H "Authorization: Bearer $reviewer_token" -H "Content-Type: application/json" \
+            -d '{"worker_id":"reviewer-smoke","lease_seconds":600}')
+          reviewer_workspace_id=$(printf '%s' "$reviewer_workspace" | jq -r '.workspace.id')
+          reviewer_workspace_lease=$(printf '%s' "$reviewer_workspace" | jq -r '.lease_token')
+          echo "::add-mask::$reviewer_workspace_lease"
+
+          wrong_candidate_assignment=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/tasks/$task_id/workspace-assignment" \
+            -H "Authorization: Bearer $reviewer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "reviewer-smoke" --arg task_lease_token "$reviewer_task_lease" \
+              --arg workspace_id "$reviewer_workspace_id" --arg workspace_lease_token "$reviewer_workspace_lease" \
+              --arg candidate_sha "dddddddddddddddddddddddddddddddddddddddd" --arg base_sha "$candidate_sha" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"reviewer",writer_scope:[],base_sha:$base_sha,candidate_sha:$candidate_sha}')")
+          test "$wrong_candidate_assignment" = "422"
+
+          curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/workspace-assignment" \
+            -H "Authorization: Bearer $reviewer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "reviewer-smoke" --arg task_lease_token "$reviewer_task_lease" \
+              --arg workspace_id "$reviewer_workspace_id" --arg workspace_lease_token "$reviewer_workspace_lease" \
+              --arg candidate_sha "$candidate_sha" --arg base_sha "$candidate_sha" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,worker_role:"reviewer",writer_scope:[],base_sha:$base_sha,candidate_sha:$candidate_sha}')" >/dev/null
+
+          reviewer_write_lock=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/projects/smoke-project/tasks/$task_id/path-locks" \
+            -H "Authorization: Bearer $reviewer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "reviewer-smoke" --arg task_lease_token "$reviewer_task_lease" \
+              --arg workspace_id "$reviewer_workspace_id" --arg workspace_lease_token "$reviewer_workspace_lease" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,path_prefixes:["universal-service-hub/src/"]}')")
+          test "$reviewer_write_lock" = "403"
+
+          reviewer_attempt=$(curl -fsS -X POST "http://127.0.0.1:8000/v1/tasks/$task_id/attempts" \
+            -H "Authorization: Bearer $reviewer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "reviewer-smoke" --arg lease_token "$reviewer_task_lease" \
+              '{worker_id:$worker_id,lease_token:$lease_token,model_id:"reviewer-model",strategy:"independent-review",outcome:"succeeded",acceptance_progress:1.0}')")
+          printf '%s' "$reviewer_attempt" | jq -e '.outcome == "succeeded"' >/dev/null
+
+          reviewer_verify_status=$(curl -sS -o /tmp/ush-reviewer-verify-response.json -w "%{http_code}" -X POST \
+            "http://127.0.0.1:8000/v1/tasks/$task_id/complete" \
+            -H "Authorization: Bearer $reviewer_token" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg worker_id "reviewer-smoke" --arg task_lease_token "$reviewer_task_lease" \
+              --arg workspace_id "$reviewer_workspace_id" --arg workspace_lease_token "$reviewer_workspace_lease" \
+              --arg candidate_sha "$candidate_sha" \
+              '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token,next_status:"verified",candidate_sha:$candidate_sha,evidence:{decision:"approved",reviewed_sha:$candidate_sha,findings:[]}}')")
+          test "$reviewer_verify_status" = "403"
+          printf '%s' "$(cat /tmp/ush-reviewer-verify-response.json)" | jq -e '.error == "trusted_verification_evidence_required"' >/dev/null
+
+          final_tasks=$(curl -fsS -H "Authorization: Bearer $tenant_alpha_token" \
+            http://127.0.0.1:8000/v1/projects/smoke-project/tasks)
+          printf '%s' "$final_tasks" | jq -e --arg id "$task_id" --arg sha "$candidate_sha" \
+            'any(.[]; .id == $id and .status == "review" and .candidate_sha == $sha and .metadata.source_issue_number == 63)' >/dev/null
+
+          for pair in "$implementer_workspace_id:$implementer_workspace_lease:implementer-smoke:$implementer_token:$task_id:$task_lease" \
+                      "$tester_workspace_id:$tester_workspace_lease:tester-smoke:$tester_token:$second_task_id:$second_task_lease" \
+                      "$reviewer_workspace_id:$reviewer_workspace_lease:reviewer-smoke:$reviewer_token:$task_id:$reviewer_task_lease"; do
+            workspace_id=$(printf '%s' "$pair" | cut -d: -f1)
+            workspace_lease=$(printf '%s' "$pair" | cut -d: -f2)
+            worker_id=$(printf '%s' "$pair" | cut -d: -f3)
+            worker_token=$(printf '%s' "$pair" | cut -d: -f4)
+            assigned_task_id=$(printf '%s' "$pair" | cut -d: -f5)
+            assigned_task_lease=$(printf '%s' "$pair" | cut -d: -f6)
+            if [ "$worker_id" = "reviewer-smoke" ]; then
+              reviewer_assignment_release_status=$(curl -sS -o /tmp/ush-reviewer-assignment-release.json -w "%{http_code}" -X DELETE \
+                "http://127.0.0.1:8000/v1/tasks/$assigned_task_id/workspace-assignment" \
+                -H "Authorization: Bearer $worker_token" -H "Content-Type: application/json" \
+                -d "$(jq -nc --arg worker_id "$worker_id" --arg task_lease_token "$assigned_task_lease" \
+                  --arg workspace_id "$workspace_id" --arg workspace_lease_token "$workspace_lease" \
+                  '{worker_id:$worker_id,task_lease_token:$task_lease_token,workspace_id:$workspace_id,workspace_lease_token:$workspace_lease_token}')")
+              echo "Reviewer assignment release HTTP status: $reviewer_assignment_release_status"
+              cat /tmp/ush-reviewer-assignment-release.json || true
+              test "$reviewer_assignment_release_status" = "204"
+              curl -fsS -X POST "http://127.0.0.1:8000/v1/projects/smoke-project/workspaces/$workspace_id/release" \
+                -H "Authorization: Bearer $worker_token" -H "Content-Type: application/json" \
+                -d "$(jq -nc --arg worker_id "$worker_id" --arg lease_token "$workspace_lease" '{worker_id:$worker_id,lease_token:$lease_token}')" >/dev/null
+            fi
+          done
 
           curl -fsS -H "Authorization: Bearer $owner_token" \
             http://127.0.0.1:8000/v1/projects/smoke-project/tokens | jq -e 'length == 3' >/dev/null
@@ -260,3 +747,28 @@ jobs:
             exit 1
           fi
           grep -q "Infisical backend requires" /tmp/ush-production-guard.log
+      - name: Create completed CI evidence manifest
+        if: success()
+        working-directory: .
+        env:
+          SOURCE_CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ush-ci-evidence"
+          docker image inspect universal-service-hub:test \
+            | jq '.[0] | {Id,RepoTags,RootFS}' > "$RUNNER_TEMP/ush-ci-evidence/container-image.json"
+          source_sha="$GITHUB_SHA"
+          [[ "$source_sha" =~ ^[a-fA-F0-9]{40}$ ]]
+          jq -n --arg source_sha "$source_sha" \
+            --arg source_run_id "$GITHUB_RUN_ID" \
+            --arg source_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --slurpfile image "$RUNNER_TEMP/ush-ci-evidence/container-image.json" \
+            '{schema_version:1,source_sha:$source_sha,source_run_id:$source_run_id,source_run_attempt:$source_run_attempt,container_image:$image[0]}' \
+            > "$RUNNER_TEMP/ush-ci-evidence/ush-ci-evidence.json"
+      - name: Upload completed CI evidence manifest
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ush-ci-evidence
+          path: ${{ runner.temp }}/ush-ci-evidence/ush-ci-evidence.json
+          if-no-files-found: error
+          retention-days: 7

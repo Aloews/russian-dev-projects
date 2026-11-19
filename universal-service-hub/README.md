@@ -4,7 +4,22 @@ A provider-neutral control plane for the user's applications. It is designed to 
 
 ## Current status
 
-**Rust control plane implemented; production activation remains incomplete.** The production container uses an Axum/Tokio/SQLx Rust binary. It includes PostgreSQL-backed project/token management, provider registry/selection, health probes, audit, AI chat routing and read-only verification adapters for hosting, database, storage, PostgreSQL and Redis services. Provider credentials resolve through Infisical references. Private database/Redis hosts are rejected unless exact DNS names are explicitly allowlisted with `USH_ALLOWED_PRIVATE_HOSTS`. The legacy FastAPI implementation remains a compatibility/reference target. The provider checks are not live connections until credentials are added and verified. Deployment/resource mutation, object upload/download, queue orchestration, budgets/quotas, production rollout and live Infisical/provider smoke tests remain outstanding.
+USH has a working Rust API foundation, PostgreSQL migrations, tenant-scoped service tokens, project-scoped credentials, provider registry, AI request adapters, durable engineering task records, worker identities, workspace leases, checkpoints, task attempts and recovery primitives.
+
+The execution-plane API now includes:
+
+- PostgreSQL-backed task queue with legal state transitions, dependency checks, idempotency keys and immutable event history.
+- Role-specific worker identities and queues for architecture, implementation, build, test, review and recovery.
+- Atomic task claims, expiring leases, heartbeats and recovery of expired task leases.
+- Workspace leases, task-to-workspace assignments, base/candidate SHA pinning and exclusive path-prefix locks.
+- Read-only reviewer assignments: candidate SHA required, writer scope empty, and path-lock acquisition denied.
+- Checkpoint and model-attempt history, including strategy/model changes.
+- Transaction-local tenant context and fail-closed PostgreSQL RLS across tenant-owned core data, tokens, rate limits and engineering execution tables.
+- Runtime startup rejects database roles with superuser or BYPASSRLS privileges. Local Compose and CI use `ush_app` as the restricted migration login; after migrations, every API pool connection switches to the non-login `ush_runtime` role (`NOLOGIN`, `NOSUPERUSER`, `NOBYPASSRLS).
+
+**Not yet production-ready:** the Railway worker is not yet consuming the USH task queue. The API primitives and database controls do not by themselves create a working autonomous runtime. The remaining work is to connect the Railway project adapter, create real Git worktrees in leased workspaces, separate the role-specific executors, and prove the complete task-to-PR-to-independent-review-and-recovery flow in a sandbox.
+
+No production execution has been enabled and no broad repository permissions have been granted. Railway's existing `distinguished-transformation` project remains the intended execution plane; its current workers are disabled and their live cron configuration still needs reconciliation with the documented role cadence.
 
 ## Security-first product roadmap
 
@@ -59,106 +74,24 @@ AI:
 
 Project tokens have `owner`, `operator` or `viewer` roles. The Rust runtime enforces project capability/provider allowlists and role boundaries: owner/operator tokens can invoke AI; all project roles can perform read-only provider selection. Project owners can list, issue and revoke operator/viewer tokens only within their own project; only the root administrator can issue owner tokens or change/delete project policy. Tokens are generated once, stored as SHA-256 hashes and revocable.
 
-## Secret manager
+## Trusted GitHub Actions verification
 
-Infisical Universal Auth is supported for provider credentials. Configure:
+Tasks can enter `verified` only after a separate, trusted attestation workflow proves that the source build/test run completed successfully. The Hub validates a signed GitHub OIDC token, independently fetches the source run from GitHub's Actions API, and stores an immutable tenant-scoped receipt bound to the task's exact repository and candidate SHA. A worker cannot certify its own task by supplying JSON.
 
-- `USH_SECRET_BACKEND=infisical`
-- `INFISICAL_URL` (optional; defaults to `https://app.infisical.com`)
-- `INFISICAL_CLIENT_ID`
-- `INFISICAL_CLIENT_SECRET`
-- `INFISICAL_PROJECT_ID`
-- `INFISICAL_ENVIRONMENT`
-- `USH_INFISICAL_SECRET_PATH_PREFIX` (optional; defaults to `/projects`)
+The flow deliberately uses two workflow runs: the source CI workflow uploads a small image/test manifest; `.github/workflows/ush-post-ci-verification.yml` runs on GitHub's `workflow_run` event after source CI completes; it calls `.github/workflows/ush-trusted-verify.yml`, which downloads the source run's artifact, checks its SHA and run metadata, requests a short-lived OIDC token, and submits the source run ID/attempt and artifact digest. This avoids the impossible condition of trying to verify a workflow run while that same run is still in progress.
 
-Store each project-scoped provider key in Infisical under `/projects/{project_id}/providers` with the same name as the provider's `api_key_env` reference (for example `OPENAI_API_KEY`). Root-administrator integrations and shared infrastructure accounts use `/projects/shared/providers`; the integration verification endpoint resolves its credential reference from this shared path. The Hub exchanges the machine identity credentials for a short-lived token, caches it until shortly before expiry, and retrieves the key only when dispatching a request. Secret values are not written to the provider table, audit events or logs. In development only, when Infisical is not configured and `USH_SECRET_BACKEND` is not set to `infisical`, provider credentials can be read from environment variables.
+Configure server-side variables only after reviewing the exact workflow files and pinning the reusable workflow:
 
-## AI provider configuration
+- `USH_GITHUB_OIDC_AUDIENCE`: exact audience requested by the reusable workflow.
+- `USH_GITHUB_ALLOWED_WORKFLOW_REFS`: exact post-CI caller ref, e.g. `Aloews/russian-dev-projects/.github/workflows/ush-post-ci-verification.yml@refs/heads/main`.
+- `USH_GITHUB_ALLOWED_JOB_WORKFLOW_REFS`: exact reusable workflow ref, e.g. `Aloews/russian-dev-projects/.github/workflows/ush-trusted-verify.yml@refs/heads/main`.
+- `USH_GITHUB_TRUSTED_JOB_WORKFLOW_SHA`: exact 40-character SHA of the approved reusable workflow at the deployed default branch.
+- `USH_GITHUB_ALLOWED_SOURCE_WORKFLOW_PATHS`: exact source workflow path, e.g. `.github/workflows/universal-service-hub-ci.yml`.
+- `USH_GITHUB_ALLOWED_SOURCE_BRANCHES`: exact protected source branches allowed to produce evidence, e.g. `main`.
+- `USH_GITHUB_API_TOKEN`: optional read-only Actions token for private repositories or increased API rate limits.
 
-The provider record stores a secret reference name, never the key value. In production, the preferred source is Infisical; environment-variable lookup is retained only for development or temporary compatibility.
+Only `push` and `workflow_dispatch` source runs on explicitly allowlisted protected branches can produce trusted evidence. `pull_request` source runs are deliberately excluded. GitHub documents that a `pull_request` workflow runs from the PR merge commit, so a PR can change its own workflow definition; an allowlisted base branch alone does not make that run's workflow immutable. The post-CI caller skips PR events, and the Hub independently rejects them. The initial safe policy should allow only protected `main`.
 
-Example for a standard Anthropic Messages API endpoint:
+The post-CI caller requires GitHub repository variables `USH_API_BASE_URL`, `USH_GITHUB_OIDC_AUDIENCE`, and `USH_PROJECT_ID`. The Hub resolves the task by exact project, repository and candidate SHA, using the source PR/issue number when present. If multiple review tasks still match, the endpoint fails closed with an ambiguity conflict rather than selecting one arbitrarily. The source workflow creates a manifest containing the exact commit, run identity and container image ID/layer list; the reusable workflow downloads that manifest from the completed source run and calculates its SHA-256 digest. The Hub stores the source run start/completion timestamps, source and attestation run identities, caller/reusable workflow claims, candidate SHA and artifact digest.
 
-```json
-{
-  "name": "Anthropic",
-  "capabilities": ["ai.chat"],
-  "priority": 100,
-  "enabled": true,
-  "adapter_type": "anthropic",
-  "model": "provider-model-id",
-  "base_url": "https://api.anthropic.com",
-  "api_key_env": "ANTHROPIC_API_KEY",
-  "timeout_seconds": 30,
-  "supports_idempotency": false
-}
-```
-
-Send this object to `PUT /v1/providers/anthropic`. In production, store `ANTHROPIC_API_KEY` in Infisical at the project's `/providers` path; environment variables are development-only. For Starimg, use this adapter only after its current account documentation confirms the Anthropic Messages endpoint and use the model identifier returned by that provider. The API response reveals only whether the referenced credential is configured; it never returns the environment-variable name or secret.
-
-Supported adapter types:
-- Infrastructure verification adapters: `northflank`, `railway`, `cloudflare`, `netlify`, `render`, `digitalocean`, `flyio`, `supabase`, `supabase_storage`, `neon`, `cloudflare_r2`, `backblaze_b2`, `s3_compatible`, `postgresql`, `redis` (read-only checks only; PostgreSQL requires verified TLS; public Redis requires TLS)
-- `openai_compatible` — OpenAI-compatible `/chat/completions` endpoints
-- `anthropic` — Anthropic Messages API
-- `gemini` — Gemini `generateContent` API
-
-All configured API base URLs must use HTTPS. Query strings, URL userinfo and embedded credentials are rejected.
-
-Example chat request:
-
-```json
-{
-  "messages": [
-    {"role": "system", "content": "Answer precisely."},
-    {"role": "user", "content": "Explain the task."}
-  ],
-  "temperature": 0.2,
-  "max_tokens": 1200
-}
-```
-
-## Failover and billing safety
-
-The Hub does not blindly retry paid generation requests. Cross-provider failover is attempted only when the caller supplies an `idempotency_key`, the attempted provider is explicitly configured to support idempotency, and the failure is a rate-limit rejection or a connection failure before request transmission. Ambiguous 5xx/read-timeout failures are not retried because the upstream may already have processed and billed the request. Gemini is not marked idempotent by this adapter.
-
-## Operating principles
-
-- Provider adapters isolate vendor-specific APIs from application logic.
-- Selection is based on declared capability, enabled state, health and explicit priority.
-- Health probes and AI adapters do not follow redirects, require HTTPS, reject local/private IP destinations, and perform DNS checks before outbound requests.
-- Provider mutations and AI usage metadata are recorded without storing prompts, responses or credential values.
-- No credentials are returned by API responses or logs.
-- A provider is not a verified fallback until its integration and failure modes have been exercised.
-- The root service token is administrator-only. Runtime projects use scoped tokens with `owner`, `operator` or `viewer` roles; provider configuration, audit reads and project/token administration remain root-only.
-- Database failover is not automatic; this Hub does not replicate or move project data between providers.
-
-## Roadmap
-
-1. Foundation: registry, health checks, selection API, tests. (Completed)
-2. Control API authentication. (Completed)
-3. Durable PostgreSQL provider registry and migrations. (Completed)
-4. AI provider adapters and normalized chat routing. (This increment)
-5. Project tenancy, scoped tokens, roles and audit event table/read API. (Completed)
-6. Managed secret-store integration and read-only infrastructure account verification. (Implemented; live credential checks pending.)
-7. Provider resource-management adapters for compute, deployments, databases, storage lifecycle, queues and observability.
-8. Policy engine: per-project budgets, quotas, cost/latency/region constraints, circuit breakers and fallback chains.
-9. GitHub-driven project onboarding, isolated build/test workers and independent QA gates.
-10. Deployment controllers, staged rollout, synthetic monitoring, rollback and operator dashboard.
-
-See [ARCHITECTURE.md](./docs/ARCHITECTURE.md), [SECURITY.md](./docs/SECURITY.md), [OPERATIONS.md](./docs/OPERATIONS.md), and [INTEGRATION_PLAN.md](./docs/INTEGRATION_PLAN.md).
-
-
-## Coding the Universal Service Hub
-
-The Hub has a dedicated Codex CLI + Claude Code CLI workflow through Starimg. Codex is the primary writer using the OpenAI Responses API; Claude Code independently reviews and repairs the resulting diff using the Anthropic Messages API. The workflow discovers exact model IDs, verifies tool calling on both protocols, runs the agents sequentially, restricts changes to this Hub subtree and opens an isolated PR. GitHub CI validates the exact PR head. No automatic merge or production deployment is permitted. See [CODING_AGENTS.md](./docs/CODING_AGENTS.md).
-
-## Product Factory for other projects
-
-The separate Autonomous Product Factory workflow orchestrates work in target product repositories. Its current provider/model route is distinct from the Hub self-development workflow; do not infer that Starimg Codex/Claude configuration has migrated the target-product pipeline. See [PRODUCT_FACTORY.md](./docs/PRODUCT_FACTORY.md) for its current execution and safety contract.
-
-
-## API request limits
-
-The Rust runtime enforces a PostgreSQL-backed fixed-window rate limit per authenticated bearer token. Default: 120 requests per minute. Configure `USH_RATE_LIMIT_PER_MINUTE` between 1 and 10000. Exceeded limits return HTTP 429 and `Retry-After: 60`. This does not replace unauthenticated IP-level throttling at the edge.
-
-Rate-limit fingerprint rows idle for 24 hours are pruned at startup and hourly. This keeps the limiter's metadata table from retaining inactive token fingerprints indefinitely.
+Do not enable this endpoint in production until the reusable workflow is merged, its immutable SHA/ref and source-path allowlist are configured, exact-head CI passes, and a real signed OIDC round-trip is tested. The example values remain blank.

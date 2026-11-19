@@ -23,19 +23,28 @@ if [[ -z "$USH_API_TOKEN" || -z "$USH_DB_PASSWORD" ]]; then
   umask 077
   api_token="$(openssl rand -hex 32)"
   db_password="$(openssl rand -hex 32)"
+  app_db_password="$(openssl rand -hex 32)"
   rate_limit="$(sed -n 's/^USH_RATE_LIMIT_PER_MINUTE=//p' .env.local | tail -n 1)"
   port_from_file="$(sed -n 's/^PORT=//p' .env.local | tail -n 1)"
   cat > .env.local <<EOF
 USH_API_TOKEN=$api_token
 USH_DB_PASSWORD=$db_password
+USH_APP_DB_PASSWORD=$app_db_password
 USH_RATE_LIMIT_PER_MINUTE=${rate_limit:-120}
 PORT=${port_from_file:-8000}
 EOF
+fi
+
+USH_APP_DB_PASSWORD="$(sed -n 's/^USH_APP_DB_PASSWORD=//p' .env.local | tail -n 1)"
+if [[ -z "$USH_APP_DB_PASSWORD" ]]; then
+  app_db_password="$(openssl rand -hex 32)"
+  printf 'USH_APP_DB_PASSWORD=%s\n' "$app_db_password" >> .env.local
 fi
 chmod 600 .env.local
 
 USH_API_TOKEN="$(sed -n 's/^USH_API_TOKEN=//p' .env.local | tail -n 1)"
 USH_DB_PASSWORD="$(sed -n 's/^USH_DB_PASSWORD=//p' .env.local | tail -n 1)"
+USH_APP_DB_PASSWORD="$(sed -n 's/^USH_APP_DB_PASSWORD=//p' .env.local | tail -n 1)"
 PORT="${PORT:-$(sed -n 's/^PORT=//p' .env.local | tail -n 1)}"
 PORT="${PORT:-8000}"
 if [[ ! "$PORT" =~ ^[0-9]{1,5}$ ]]; then
@@ -48,12 +57,12 @@ if (( PORT < 1 || PORT > 65535 )); then
   exit 1
 fi
 export PORT
-if [[ ! "$USH_API_TOKEN" =~ ^[A-Za-z0-9_-]{32,}$ || ! "$USH_DB_PASSWORD" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
-  echo "Local .env.local must contain safe USH_API_TOKEN and USH_DB_PASSWORD values of at least 32 characters." >&2
+if [[ ! "$USH_API_TOKEN" =~ ^[A-Za-z0-9_-]{32,}$ || ! "$USH_DB_PASSWORD" =~ ^[A-Za-z0-9_-]{32,}$ || ! "$USH_APP_DB_PASSWORD" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
+  echo "Local .env.local must contain safe API, admin DB and app DB credentials of at least 32 characters." >&2
   echo "Remove the local .env.local and rerun this script to generate new values." >&2
   exit 1
 fi
-export USH_API_TOKEN USH_DB_PASSWORD
+export USH_API_TOKEN USH_DB_PASSWORD USH_APP_DB_PASSWORD
 
 if [[ "${USH_SKIP_BUILD:-0}" == "1" ]]; then
   docker compose --env-file .env.local -f compose.yml up -d
