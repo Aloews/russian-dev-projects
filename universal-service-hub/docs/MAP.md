@@ -720,3 +720,12 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Removed the malformed duplicated SQL tail from `rust-migrations/0011_trusted_github_verification.sql`; preserved the complete evidence table, trigger, RLS policy, runtime grants, and UPDATE/DELETE revocation.
 - Fix commit: `9ef7035e740e31918aef6c156e0d2d1a12c59e37`.
 - Exact-head workflow run #44489332392 completed successfully (job `test`, conclusion `success`). This is CI evidence for the commit, not yet proof of deployed/runtime end-to-end behavior. PR #64 remains draft/unmerged pending full review and runtime/security acceptance.
+
+
+### Task Completion Engine and human escalation policy — 2026-11-19
+
+- Added `docs/TASK_COMPLETION_AND_ESCALATION.md` to define the product-level completion invariant: a task is complete only when every mandatory acceptance criterion has evidence bound to the same candidate SHA, required checks pass, an independent reviewer approves, and the final state transition is durable.
+- Defined persisted lifecycle states, versioned acceptance contracts, append-only evidence/events, SHA-based evidence invalidation, strategy fingerprints, finite retry/budget controls, no-progress detection, independent-provider escalation and a human-engineer handoff.
+- Defined human safeguards: UHS may prepare a handoff, but cannot autonomously hire/contact/contract/pay, disclose private source, grant broad access or expose production secrets. Human contributions pass the same acceptance gate and independent review.
+- Added sandbox failure-injection and release gates, including duplicate delivery, concurrent claims, worker crashes, lease expiry, provider quota failures, changed candidate SHA, missing evidence, budget exhaustion and human patch verification.
+- **Status: design recorded; implementation not yet complete.** Existing task/attempt/lease/workspace/checkpoint and trusted-CI primitives are not proof of an end-to-end completion engine. No production workers, secrets, deployment, hiring or payments were enabled. Next implementation sequence: schema/contracts → durable orchestrator → Completion Gate → strategy controller → secure human handoff → operator API/UI → sandbox E2E.
