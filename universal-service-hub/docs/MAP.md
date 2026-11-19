@@ -713,3 +713,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - Exact-head workflow [#44409743514](https://github.com/Aloews/russian-dev-projects/actions/runs/44409743514) passed container initialization, Product Factory shell/Python/safety/contract checks, trusted-workflow shell syntax, Actionlint workflow validation, composite action metadata, Rust format and Rust Clippy. Rust unit tests are still running; migration, Compose startup, API/RLS and container smoke stages have not yet completed.
 - The previous exact-head Actionlint failure was traced to nested jq command-substitution quoting in the OIDC submission step. The workflow now builds the payload in a separate variable and requires the artifact digest before obtaining/submitting the OIDC token.
 - **Status: in progress; no full CI pass is claimed.** Keep PR #64 draft/unmerged until the entire workflow succeeds.
+
+
+### Migration 0011 duplicate-tail syntax fix — 2026-11-19
+
+- Removed the malformed duplicated SQL tail from `rust-migrations/0011_trusted_github_verification.sql`; preserved the complete evidence table, trigger, RLS policy, runtime grants, and UPDATE/DELETE revocation.
+- Fix commit: `9ef7035e740e31918aef6c156e0d2d1a12c59e37`.
+- Exact-head workflow run #44489332392 completed successfully (job `test`, conclusion `success`). This is CI evidence for the commit, not yet proof of deployed/runtime end-to-end behavior. PR #64 remains draft/unmerged pending full review and runtime/security acceptance.
