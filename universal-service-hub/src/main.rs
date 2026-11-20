@@ -1,6 +1,7 @@
 #[allow(dead_code)]
 mod artifact_store;
 mod schedule_recovery;
+#[allow(dead_code)]
 mod agent_runtime;
 
 use std::{env, net::{IpAddr, SocketAddr}, str::FromStr, sync::Arc, time::{Duration, Instant}};
