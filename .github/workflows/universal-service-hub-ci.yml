@@ -113,13 +113,18 @@ jobs:
         run: docker build --network=host --progress=plain -t universal-service-hub:test .
       - name: Worker binary image smoke
         run: docker run --rm --entrypoint /bin/sh universal-service-hub:test -c 'test -x /app/universal-service-hub && test -x /app/ush-worker'
+      - name: S3-compatible artifact API integration smoke
+        env:
+          USH_ARTIFACT_SMOKE_DATABASE_URL: postgresql://ush:ush-test-password@127.0.0.1:5432/ush_test
+          USH_ARTIFACT_SMOKE_API_TOKEN: ush-artifact-smoke-token-2026-11-18
+        run: bash scripts/artifact_storage_smoke.sh
 
       - name: Local runtime scripts and Compose configuration
         env:
           USH_API_TOKEN: ush-ci-token-with-at-least-32-characters
           USH_DB_PASSWORD: ush-ci-db-password-with-at-least-32-characters
         run: |
-          bash -n scripts/dev-up.sh scripts/dev-down.sh scripts/worker_runtime_smoke.sh
+          bash -n scripts/dev-up.sh scripts/dev-down.sh scripts/worker_runtime_smoke.sh scripts/artifact_storage_smoke.sh
           docker compose --env-file .env.example -f compose.yml config -q
       - name: Local Compose runtime startup smoke
         run: |

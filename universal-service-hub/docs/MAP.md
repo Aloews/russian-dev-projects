@@ -665,19 +665,34 @@ The cloud coding workflow was not triggered for these checks because it can call
 - Failure handling now verifies exactly one running attempt is finalized, preserving consistency between the job row and attempt ledger.
 - Exact-head CI is pending. This change does not yet start a continuously polling process or invoke an LLM. A worker supervisor, object-store-backed artifacts and real specialist dispatch remain the next implementation milestones.
 
-## Worker supervisor implementation — PR in progress
+## Worker supervisor implementation — PR #77
 
 - Branch: `feat/ush-worker-supervisor-v1`, based on the exact CI-green PR #76 head.
-- Adds a separate `ush-worker` Rust binary and packages it in the API image.
-- Adds job-type-filtered claims and transactional expired-lease/attempt reconciliation.
-- Worker concurrency and polling are bounded; SIGINT stops the supervisor gracefully.
-- Worker uses a dedicated `USH_WORKER_DATABASE_URL`; production requires TLS `verify-full`; worker does not run migrations or receive the Hub API/admin token.
-- Capability is intentionally limited to non-billable `system_noop`. No provider invocation, specialist dispatch, artifact bytes or production service is claimed.
-- Required next evidence: exact-head Rust CI, PostgreSQL concurrency/recovery tests, container smoke, and a process-kill/restart test.
-
+- Exact current head: `19e2935b1ca5d58fcbaf4694e88e9e02f67c7168`; GitHub Actions run [#44510765148](https://github.com/Aloews/russian-dev-projects/actions/runs/44510765148) completed success. All steps in the `test` job succeeded, including Rust format/lint/tests, PostgreSQL migration smoke, Docker/container checks and local worker crash/restart recovery smoke.
+- Adds the `ush-worker` Rust binary, bounded supervisor and expired-lease/attempt reconciliation. Worker uses a dedicated DB URL and production TLS verification; it does not run migrations or receive Hub API/admin tokens.
+- Capability remains limited to non-billable `system_noop`. It is not an AI executor, specialist dispatcher or artifact-transfer worker.
 
 ## Worker runtime and artifact storage
 
 - Worker Supervisor v1: `src/bin/ush-worker.rs`, `src/execution_queue.rs`; limited to `system_noop` until project-scoped execution authorization and provider budgets are complete.
-- Artifact adapter/API: `src/artifact_store.rs`, project-scoped upload/download handlers, generated UUID keys, SHA-256 verification, DB manifest/content-type and compensating cleanup. 2 MiB HTTP limit. Worker-to-worker handoff remains not integrated.
-- Workspaces/Git worktrees remain next after durable artifact handoff and specialist dispatcher gates.
+- Artifact adapter/API: `src/artifact_store.rs`, project-scoped upload/download handlers, generated UUID keys, SHA-256 verification, DB manifest/content-type and compensating cleanup. HTTP upload limit 2 MiB.
+- PR #82 adds a lease-scoped worker upload API with idempotency, but remains a separate Draft branch and is not integrated into the current PR #77 head.
+
+## Artifact API end-to-end smoke — investigation and repair
+
+- **PR #80 failed:** exact head `e3535d5eed27314b77ec79e52baaa9faa15c8460`, run [#44291673336](https://github.com/Aloews/russian-dev-projects/actions/runs/44291673336). Rust, migration, Docker build and worker image smoke passed. The S3 smoke failed because the API container did not become ready and the container was removed with `--rm`; the failure log reported a missing container, so its startup logs were not retained. Root cause is still unknown.
+- **PR #81 passed CI:** exact head `5df6f8cf8525efd0cb05552176df8edb14c88527`, run [#44312073334](https://github.com/Aloews/russian-dev-projects/actions/runs/44312073334). It adds AWS SDK S3 HTTP unit tests using Wiremock; its workflow did not run the actual Silo/API integration smoke. It does not close PR #80's integration failure.
+- **PR #82 passed CI:** exact current head `6732845f84276d15138dd574c08b322357f54209`, run [#44408166978](https://github.com/Aloews/russian-dev-projects/actions/runs/44408166978). All main test steps passed, but the checks are deterministic API/runtime tests, not an actual worker-to-S3 transfer. The MAP entry in PR #82 is stale: it cites earlier head `6d4df2b1d18fbba3ab9148dbaefba63e54190df7` and run #1589. PR #82 is based on PR #81 head `5df6f8cf...`, while PR #77 is now at `19e2935...`; the PR #82 stack is therefore one commit behind #77 and must be reconciled before integration.
+- **PR #83 diagnostic integration (superseded):** the first exact-head smoke run exposed a client-construction panic; this is no longer an unknown startup failure.
+- **PR #94 — exact current head before this repair:** `48fdc71793763f95a231a6a5712476d5ffbde7ec`, run [#44719553638](https://github.com/Aloews/russian-dev-projects/actions/runs/44719553638). Runner was allocated. Rust format/lint/tests, Python/Ruff, migration smoke, Docker build and worker image smoke passed. The S3-compatible API integration smoke failed at API startup; Silo became ready, PostgreSQL was healthy, but API exited 101.
+- **Root cause confirmed from preserved, redacted logs:** AWS SDK S3 client config panicked because no behavior major version was set: `Invalid client configuration: A behavior major version must be set when sending a request or constructing a client. You must set it during client construction or by enabling the behavior-version-latest cargo feature.` This is a code/configuration failure, not runner allocation or Silo readiness.
+- **Repair committed on PR #94:** `124462baf75ec729b542c98e03bc3190279cd630`. `ArtifactStore::from_env` now sets `aws_sdk_s3::config::BehaviorVersion::latest()` explicitly. Added regression test constructs a configured S3 client without making network requests, to catch the missing-behavior-version panic. Exact-head CI must still run and pass; the real S3 smoke must proceed to upload/download, integrity and tenant-isolation acceptance before the API is verified.
+- PR #94 remains Draft and unmerged. Artifact transfer to workers, automatic artifact binding to completion/checkpoints, and specialist dispatch are still not implemented.
+
+Acceptance sequence:
+1. Pass real S3-compatible upload/download against the ephemeral fixture, byte equality, SHA-256, authorization, metadata validation, size bounds and tampered-object rejection.
+2. Wire worker upload through the Hub API using lease capability, with idempotency and restart/recovery tests; worker must not receive project/admin or S3 credentials.
+3. Implement project-authorized specialist dispatch with budget/idempotency controls.
+4. Only after these gates begin workspace/repository schema and Git worktree manager per `docs/WORKSPACES_GIT_WORKTREES.md`, including persistent root, exact SHA, one-writer lease/fencing, credential-safe provider access, crash reconciliation and quarantine.
+
+No PR merge, production migration/deployment, live provider call or paid resource was performed.
