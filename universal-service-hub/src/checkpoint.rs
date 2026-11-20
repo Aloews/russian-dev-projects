@@ -207,6 +207,77 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn postgres_store_recovers_after_restart_and_fences_replay_and_races() {
+        let Ok(database_url) = std::env::var("USH_CHECKPOINT_TEST_DATABASE_URL") else {
+            return;
+        };
+        let pool = PgPool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("./rust-migrations").run(&pool).await.unwrap();
+
+        let project_id = format!("checkpoint-{}", Uuid::new_v4().simple());
+        let job_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let lease_token = Uuid::new_v4();
+        sqlx::query("INSERT INTO projects (id, name) VALUES ($1, 'checkpoint integration')")
+            .bind(&project_id).execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO execution_jobs (id, project_id, task_id, job_type, status, idempotency_key, lease_owner, lease_token, lease_expires_at) VALUES ($1,$2,$3,'agent.test','leased',$4,'checkpoint-test',$5,NOW() + INTERVAL '5 minutes')"
+        )
+        .bind(job_id).bind(&project_id).bind(task_id).bind(format!("checkpoint-{job_id}"))
+        .bind(lease_token).execute(&pool).await.unwrap();
+
+        let store = CheckpointStore::new(pool.clone());
+        let make = |sequence| AgentCheckpoint {
+            schema_version: CHECKPOINT_SCHEMA_VERSION,
+            project_id: project_id.clone(),
+            job_id,
+            task_id,
+            sequence,
+            state: AgentState::Checkpointing,
+            phase: "tool_result_saved".into(),
+            budget: BudgetSnapshot {
+                turns_remaining: 2,
+                tool_calls_remaining: 1,
+                tokens_remaining: 700,
+                deadline: Utc::now() + Duration::minutes(4),
+            },
+            completed_steps: vec!["input_loaded".into()],
+            artifact_ids: vec![],
+            last_action_digest: None,
+            saved_at: Utc::now(),
+        };
+
+        store.save(make(1), 0, lease_token).await.unwrap();
+        let restored = store.load(&project_id, job_id, lease_token, task_id).await.unwrap().unwrap();
+        assert_eq!(restored.sequence, 1);
+        assert_eq!(restored.budget.tokens_remaining, 700);
+
+        let left = store.save(make(2), 1, lease_token);
+        let right = store.save(make(2), 1, lease_token);
+        let (left, right) = tokio::join!(left, right);
+        assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+        let failure = if left.is_err() { left.unwrap_err() } else { right.unwrap_err() };
+        assert_eq!(failure, CheckpointError::LeaseLost);
+
+        sqlx::query("UPDATE execution_jobs SET agent_checkpoint_sha256 = $1 WHERE project_id = $2 AND id = $3")
+            .bind("0".repeat(64)).bind(&project_id).bind(job_id).execute(&pool).await.unwrap();
+        assert_eq!(
+            store.load(&project_id, job_id, lease_token, task_id).await,
+            Err(CheckpointError::IntegrityMismatch)
+        );
+
+        let replacement_token = Uuid::new_v4();
+        sqlx::query("UPDATE execution_jobs SET lease_token = $1 WHERE project_id = $2 AND id = $3")
+            .bind(replacement_token).bind(&project_id).bind(job_id).execute(&pool).await.unwrap();
+        assert_eq!(
+            store.load(&project_id, job_id, lease_token, task_id).await,
+            Err(CheckpointError::LeaseLost)
+        );
+        sqlx::query("DELETE FROM projects WHERE id = $1").bind(&project_id).execute(&pool).await.unwrap();
+        pool.close().await;
+    }
+
     #[test]
     fn checkpoint_round_trip_preserves_budget_and_progress_after_restart() {
         let original = checkpoint(4);
