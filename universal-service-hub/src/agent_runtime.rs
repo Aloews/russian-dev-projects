@@ -28,6 +28,7 @@ pub enum AgentRole {
 pub struct AgentTask {
     pub schema_version: u16,
     pub task_id: Uuid,
+    pub tenant_id: String,
     pub project_id: String,
     pub job_id: Uuid,
     pub agent_role: AgentRole,
@@ -48,6 +49,8 @@ pub struct AgentTask {
 impl AgentTask {
     pub fn validate(&self, now: DateTime<Utc>) -> Result<(), ContractError> {
         if self.schema_version != CONTRACT_VERSION
+            || self.tenant_id.is_empty()
+            || self.tenant_id.len() > 80
             || self.project_id.is_empty()
             || self.project_id.len() > 80
             || self.objective_ref.is_empty()
@@ -290,15 +293,18 @@ pub fn authorize_tool(
     registry: &ToolRegistry,
     action: &ActionEnvelope,
     context: &PolicyContext<'_>,
+    task_tenant_id: &str,
     task_project_id: &str,
+    task_id: Uuid,
     approval: Option<&Approval>,
     now: DateTime<Utc>,
 ) -> PolicyDecision {
     if action.validate().is_err() || !matches!(action.kind, ActionKind::InvokeTool) {
         return PolicyDecision::Deny("invalid_action");
     }
-    if context.tenant_id.is_empty()
+    if context.tenant_id != task_tenant_id
         || context.project_id != task_project_id
+        || context.task_id != task_id
         || context.actor_id.is_empty()
     {
         return PolicyDecision::Deny("scope_mismatch");
@@ -502,18 +508,18 @@ mod tests {
             granted_capabilities: &capabilities,
         };
         assert_eq!(
-            authorize_tool(&registry, &sample_action(), &context, "project-a", None, Utc::now()),
+            authorize_tool(&registry, &sample_action(), &context, "tenant-a", "project-a", Uuid::nil(), None, Utc::now()),
             PolicyDecision::Allow
         );
 
         let no_tools = BTreeSet::new();
         let denied_context = PolicyContext { allowed_tool_ids: &no_tools, ..context.clone() };
         assert_eq!(
-            authorize_tool(&registry, &sample_action(), &denied_context, "project-a", None, Utc::now()),
+            authorize_tool(&registry, &sample_action(), &denied_context, "tenant-a", "project-a", Uuid::nil(), None, Utc::now()),
             PolicyDecision::Deny("tool_not_in_task_allowlist")
         );
         assert_eq!(
-            authorize_tool(&registry, &sample_action(), &context, "another-project", None, Utc::now()),
+            authorize_tool(&registry, &sample_action(), &context, "tenant-a", "another-project", Uuid::nil(), None, Utc::now()),
             PolicyDecision::Deny("scope_mismatch")
         );
     }
@@ -550,7 +556,7 @@ mod tests {
         };
         let action = sample_action();
         assert_eq!(
-            authorize_tool(&registry, &action, &context, "project-a", None, Utc::now()),
+            authorize_tool(&registry, &action, &context, "tenant-a", "project-a", Uuid::nil(), None, Utc::now()),
             PolicyDecision::RequiresApproval
         );
         let approval = Approval {
@@ -560,7 +566,7 @@ mod tests {
             expires_at: Utc::now() + Duration::minutes(5),
         };
         assert_eq!(
-            authorize_tool(&registry, &action, &context, "project-a", Some(&approval), Utc::now()),
+            authorize_tool(&registry, &action, &context, "tenant-a", "project-a", Uuid::nil(), Some(&approval), Utc::now()),
             PolicyDecision::Allow
         );
         let mut changed = sample_action();
