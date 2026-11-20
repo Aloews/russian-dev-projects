@@ -97,8 +97,8 @@ def make_context(task, tracked):
     source_candidates = [p for _, p in ranked[:8]]
     doc_candidates = [p for p in docs if p in tracked]
     source_listing = (
-        "\\n--- SOURCE/TEST FILE CANDIDATES (choose code edits only from these paths) ---\\n"
-        + "\\n".join(source_candidates) + "\\n"
+        "\n--- SOURCE/TEST FILE CANDIDATES (choose code edits only from these paths) ---\n"
+        + "\n".join(source_candidates) + "\n"
     )
     chunks = []
     total = len(source_listing)
@@ -106,7 +106,7 @@ def make_context(task, tracked):
         body = read_text(path)
         if not body:
             continue
-        chunk = f"\\n--- SOURCE/TEST FILE: {path} ---\\n{scrub(body)}\\n"
+        chunk = f"\n--- SOURCE/TEST FILE: {path} ---\n{scrub(body)}\n"
         if total + len(chunk) > MAX_CONTEXT_CHARS:
             continue
         chunks.append(chunk)
@@ -115,16 +115,16 @@ def make_context(task, tracked):
         body = read_text(path)
         if not body:
             continue
-        chunk = f"\\n--- PROJECT DOC: {path} (context only; do not edit) ---\\n{scrub(body)}\\n"
+        chunk = f"\n--- PROJECT DOC: {path} (context only; do not edit) ---\n{scrub(body)}\n"
         if total + len(chunk) > MAX_CONTEXT_CHARS:
             continue
         chunks.append(chunk)
         total += len(chunk)
     verification = read_text("PRODUCT_FACTORY_VERIFICATION.md")
     if verification and total < MAX_CONTEXT_CHARS:
-        evidence = "\\n--- FAILED VERIFICATION EVIDENCE ---\\n" + scrub(verification)
+        evidence = "\n--- FAILED VERIFICATION EVIDENCE ---\n" + scrub(verification)
         chunks.append(evidence[:MAX_CONTEXT_CHARS - total])
-    return source_listing + "\\n".join(chunks)
+    return source_listing + "\n".join(chunks)
 
 EDIT_SCHEMA = {
     "type": "object",
