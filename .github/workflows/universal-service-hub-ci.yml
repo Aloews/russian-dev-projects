@@ -93,6 +93,8 @@ jobs:
       - name: Rust lint
         run: cargo clippy --all-targets -- -D warnings
       - name: Rust tests
+        env:
+          USH_CHECKPOINT_TEST_DATABASE_URL: postgres://ush:ush-test-password@localhost:5432/ush_test
         run: cargo test
       - uses: actions/setup-python@v5
         with:
