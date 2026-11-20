@@ -289,6 +289,7 @@ pub enum PolicyDecision {
     RequiresApproval,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn authorize_tool(
     registry: &ToolRegistry,
     action: &ActionEnvelope,
@@ -665,6 +666,7 @@ pub enum AgentRunResult {
     AwaitingApproval { tool_id: String, action_digest: String, turns_used: u16, tool_calls_used: u16 },
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_agent_loop<M: AgentModel, E: ToolExecutor>(
     task: &AgentTask,
     model: &mut M,
