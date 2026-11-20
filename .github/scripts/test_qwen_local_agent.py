@@ -249,7 +249,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                 context = agent.make_context("API endpoint implementation", ["src/api.py", "docs/MAP.md"])
                 self.assertIn("SOURCE/TEST FILE CANDIDATES", context)
                 self.assertIn("SOURCE/TEST FILE: src/api.py", context)
-                self.assertNotIn("PROJECT DOC: docs/MAP.md", context)
+                self.assertLess(context.index("SOURCE/TEST FILE: src/api.py"), context.index("PROJECT DOC: docs/MAP.md"))
             finally:
                 agent.ROOT = previous_root
 
