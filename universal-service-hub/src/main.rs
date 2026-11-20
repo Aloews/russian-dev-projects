@@ -1441,6 +1441,152 @@ async fn upload_execution_artifact(
     }))))
 }
 
+
+
+fn worker_artifact_lease(headers: &HeaderMap) -> ApiResult<(String, Uuid)> {
+    let worker_id = headers.get("x-ush-worker-id").and_then(|value| value.to_str().ok())
+        .filter(|value| valid_worker_id(value))
+        .ok_or(ApiError(StatusCode::UNAUTHORIZED, "worker_identity_required"))?
+        .to_owned();
+    let lease_token = headers.get("x-ush-lease-token").and_then(|value| value.to_str().ok())
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or(ApiError(StatusCode::UNAUTHORIZED, "worker_lease_required"))?;
+    Ok((worker_id, lease_token))
+}
+
+fn valid_artifact_idempotency_key(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 160
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
+}
+
+async fn upload_worker_execution_artifact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, job_id)): Path<(String, Uuid)>,
+    body: axum::body::Bytes,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let (worker_id, lease_token) = worker_artifact_lease(&headers)?;
+    if body.is_empty() || body.len() > 2 * 1024 * 1024 {
+        return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "artifact_size_limit"));
+    }
+    let content_type = headers.get("content-type").and_then(|value| value.to_str().ok())
+        .ok_or(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "artifact_content_type_required"))?;
+    let artifact_type = headers.get("x-artifact-type").and_then(|value| value.to_str().ok())
+        .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "artifact_type_required"))?;
+    let idempotency_key = headers.get("x-artifact-idempotency-key").and_then(|value| value.to_str().ok())
+        .filter(|value| valid_artifact_idempotency_key(value))
+        .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "artifact_idempotency_key_required"))?;
+    if !artifact_store::valid_artifact_type(artifact_type) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_artifact_type"));
+    }
+    if !artifact_store::valid_content_type(content_type) {
+        return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_artifact_content_type"));
+    }
+
+    // The lease token is a one-job capability. Lock the job row so completion,
+    // re-lease and a concurrent upload cannot race the artifact registration.
+    let mut tx = state.db.begin().await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+    let lease = sqlx::query(
+        "SELECT task_id FROM execution_jobs WHERE project_id=$1 AND id=$2 AND status='leased' \
+         AND lease_owner=$3 AND lease_token=$4 AND lease_expires_at > clock_timestamp() FOR UPDATE"
+    )
+        .bind(&project_id).bind(job_id).bind(&worker_id).bind(lease_token)
+        .fetch_optional(&mut *tx).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "worker_lease_lookup_failed"))?
+        .ok_or(ApiError(StatusCode::CONFLICT, "execution_lease_lost"))?;
+    let task_id: Option<Uuid> = lease.get("task_id");
+    let expected_sha = hex::encode(Sha256::digest(&body));
+
+    if let Some(existing) = sqlx::query(
+        "SELECT id, artifact_type, content_type, content_sha256, size_bytes FROM execution_artifacts \
+         WHERE project_id=$1 AND job_id=$2 AND idempotency_key=$3 FOR SHARE"
+    )
+        .bind(&project_id).bind(job_id).bind(idempotency_key)
+        .fetch_optional(&mut *tx).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_idempotency_lookup_failed"))?
+    {
+        let same = existing.get::<String, _>("artifact_type") == artifact_type
+            && existing.get::<String, _>("content_type") == content_type
+            && existing.get::<String, _>("content_sha256") == expected_sha
+            && existing.get::<i64, _>("size_bytes") == body.len() as i64;
+        if !same {
+            return Err(ApiError(StatusCode::CONFLICT, "artifact_idempotency_conflict"));
+        }
+        let artifact_id: Uuid = existing.get("id");
+        tx.commit().await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+        return Ok((StatusCode::OK, Json(json!({
+            "artifact_id":artifact_id,"job_id":job_id,"size_bytes":body.len(),
+            "sha256":expected_sha,"content_type":content_type,"reused":true
+        }))));
+    }
+
+    let store = state.artifact_store.as_ref()
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "artifact_storage_unconfigured"))?;
+    let stored = store.put(&project_id, job_id, content_type, &body).await
+        .map_err(|error| {
+            tracing::error!(project_id, job_id = %job_id, error = ?error, "worker artifact upload failed");
+            ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_upload_failed")
+        })?;
+
+    // The row lock prevents lease replacement; re-check wall-clock expiry after
+    // the remote write so a slow upload cannot register output after lease expiry.
+    let lease_recheck = sqlx::query(
+        "SELECT 1 FROM execution_jobs WHERE project_id=$1 AND id=$2 AND status='leased' \\
+         AND lease_owner=$3 AND lease_token=$4 AND lease_expires_at > clock_timestamp()"
+    )
+        .bind(&project_id).bind(job_id).bind(&worker_id).bind(lease_token)
+        .fetch_optional(&mut *tx).await;
+    let lease_still_valid = match lease_recheck {
+        Ok(row) => row.is_some(),
+        Err(error) => {
+            let _ = tx.rollback().await;
+            if let Err(cleanup_error) = store.delete(&stored.object_key).await {
+                tracing::error!(artifact_id = %stored.artifact_id, error = ?cleanup_error, "worker artifact cleanup after lease recheck error failed");
+            }
+            tracing::error!(project_id, job_id = %job_id, error = ?error, "worker artifact lease recheck failed");
+            return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "worker_lease_recheck_failed"));
+        }
+    };
+    if !lease_still_valid {
+        let _ = tx.rollback().await;
+        if let Err(error) = store.delete(&stored.object_key).await {
+            tracing::error!(artifact_id = %stored.artifact_id, error = ?error, "expired worker artifact cleanup failed");
+        }
+        return Err(ApiError(StatusCode::CONFLICT, "execution_lease_lost"));
+    }
+
+    let insert = sqlx::query(
+        "INSERT INTO execution_artifacts (id, project_id, job_id, task_id, artifact_type, storage_backend, storage_key, content_sha256, size_bytes, content_type, idempotency_key) \
+         VALUES ($1,$2,$3,$4,$5,'s3',$6,$7,$8,$9,$10)"
+    )
+        .bind(stored.artifact_id).bind(&project_id).bind(job_id).bind(task_id)
+        .bind(artifact_type).bind(&stored.object_key).bind(&stored.sha256)
+        .bind(stored.size_bytes as i64).bind(&stored.content_type).bind(idempotency_key)
+        .execute(&mut *tx).await;
+    if let Err(error) = insert {
+        let _ = tx.rollback().await;
+        if let Err(cleanup_error) = store.delete(&stored.object_key).await {
+            tracing::error!(artifact_id = %stored.artifact_id, error = ?cleanup_error, "worker artifact cleanup after metadata failure failed");
+        }
+        tracing::error!(project_id, job_id = %job_id, error = ?error, "worker artifact metadata registration failed");
+        return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_metadata_registration_failed"));
+    }
+    tx.commit().await.map_err(|_| {
+        // A commit failure is ambiguous; the object is intentionally retained
+        // for reconciliation rather than risking deletion after a committed row.
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_metadata_commit_failed")
+    })?;
+
+    let actor = format!("worker:{worker_id}");
+    audit(&state, &actor, "execution.artifact.worker_upload", "execution_artifact", &stored.artifact_id.to_string(),
+        json!({"project_id":project_id,"job_id":job_id,"artifact_type":artifact_type,"size_bytes":stored.size_bytes,"sha256":stored.sha256})).await;
+    Ok((StatusCode::CREATED, Json(json!({
+        "artifact_id":stored.artifact_id,"job_id":job_id,"size_bytes":stored.size_bytes,
+        "sha256":stored.sha256,"content_type":stored.content_type,"reused":false
+    }))))
+}
+
 async fn download_execution_artifact(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1895,6 +2041,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/projects/{project_id}/delivery/recovery-plan", post(delivery_recovery_plan))
         .route("/v1/projects/{project_id}/jobs", post(enqueue_execution_job))
         .route("/v1/projects/{project_id}/jobs/{job_id}/artifacts", post(upload_execution_artifact))
+        .route("/v1/worker/projects/{project_id}/jobs/{job_id}/artifacts", post(upload_worker_execution_artifact))
         .route("/v1/projects/{project_id}/artifacts/{artifact_id}", get(download_execution_artifact))
         .route("/v1/projects/{project_id}/workers/claim", post(claim_execution_job))
         .route("/v1/projects/{project_id}/jobs/{job_id}/heartbeat", post(heartbeat_execution_job))
@@ -2232,6 +2379,27 @@ mod worker_contract_tests {
         for role in ["admin", "shell", "../implementation", "unknown"] {
             assert!(!valid_agent_role(role));
         }
+    }
+
+    #[test]
+    fn artifact_idempotency_keys_are_bounded_and_unambiguous() {
+        assert!(valid_artifact_idempotency_key("output:attempt-1:report"));
+        assert!(!valid_artifact_idempotency_key(""));
+        assert!(!valid_artifact_idempotency_key("../artifact"));
+        assert!(!valid_artifact_idempotency_key("artifact key"));
+        assert!(!valid_artifact_idempotency_key(&"a".repeat(161)));
+    }
+
+    #[test]
+    fn worker_artifact_capability_requires_identity_and_uuid_lease() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ush-worker-id", HeaderValue::from_static("worker-eu-01"));
+        headers.insert("x-ush-lease-token", HeaderValue::from_static("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+        let (worker, token) = worker_artifact_lease(&headers).unwrap();
+        assert_eq!(worker, "worker-eu-01");
+        assert_eq!(token.to_string(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        headers.insert("x-ush-lease-token", HeaderValue::from_static("not-a-uuid"));
+        assert!(worker_artifact_lease(&headers).is_err());
     }
 
     #[test]

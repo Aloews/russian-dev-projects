@@ -681,3 +681,14 @@ The cloud coding workflow was not triggered for these checks because it can call
 - Worker Supervisor v1: `src/bin/ush-worker.rs`, `src/execution_queue.rs`; limited to `system_noop` until project-scoped execution authorization and provider budgets are complete.
 - Artifact adapter/API: `src/artifact_store.rs`, project-scoped upload/download handlers, generated UUID keys, SHA-256 verification, DB manifest/content-type and compensating cleanup. 2 MiB HTTP limit. Worker-to-worker handoff remains not integrated.
 - Workspaces/Git worktrees remain next after durable artifact handoff and specialist dispatcher gates.
+
+
+## Worker artifact handoff — implementation increment
+
+- Branch: `feat/ush-worker-artifact-handoff`, stacked on the exact CI-green S3 adapter test head `5df6f8cf8525efd0cb05552176df8edb14c88527`.
+- Added a worker-only upload capability scoped to project, job, worker ID and the current unexpired lease token. The worker does not receive project/admin API tokens or S3 credentials.
+- The Hub API holds a row lock across upload, rechecks wall-clock lease expiry after the S3 write, registers SHA-256/content type/size metadata and deletes an orphaned object if registration fails.
+- Added per-job idempotency keys; exact retries reuse the existing artifact ID, while different content under the same key conflicts.
+- Acceptance: Rust contract tests; migration smoke; runtime smoke rejects a stale/wrong lease and fails closed when storage is unconfigured. Real worker-to-MinIO/S3 upload is a separate required integration gate before marking the handoff fully verified.
+- Exact-head verification: PR #82 head `6d4df2b1d18fbba3ab9148dbaefba63e54190df7` passed GitHub Actions run #1589 (`44336407133`) on 2026-11-18. All 24 main job steps succeeded, including Rust format/lint/tests, Python/Ruff, migration smoke (including migration 0005), Docker build, worker binary image smoke, Compose runtime startup and container smoke. The runtime smoke rejects a wrong lease token and confirms fail-closed behavior when artifact storage is unconfigured.
+- Status: Hub-side lease-scoped upload endpoint and its deterministic tests are CI-verified on this exact SHA. This does not verify a real worker-to-MinIO/S3 transfer: the worker binary is not wired to call the endpoint, and no live object-store upload is claimed. No production migration, deployment, or merge.

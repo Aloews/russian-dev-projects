@@ -81,3 +81,16 @@ The API supports project-scoped artifact upload and download when an S3-compatib
 - Migration `0004_execution_artifact_content_type.sql` stores content type. Bucket policy must enforce private access and encryption; the service does not generate public URLs.
 
 This API is a durable artifact primitive, not yet a complete agent handoff: workers do not have artifact-store credentials and completion records do not yet automatically bind artifact IDs to job output. That integration is a separate authorization milestone.
+
+
+## Worker-to-Hub artifact handoff — PR in progress
+
+- Added a worker-only upload route that does not accept a project/admin bearer token or any S3 credential.
+- The worker presents its bounded worker ID and the random lease token issued for that exact job. The API locks and validates the active project/job/worker/token tuple and checks lease expiry both before and after the object-store write.
+- The Hub API alone writes to S3, registers the artifact manifest, computes SHA-256 and audits metadata. Stale or expired leases are rejected; failed metadata registration triggers object cleanup.
+- Uploads require a stable per-job idempotency key. A retry with identical artifact type, media type, size and SHA-256 returns the original artifact ID; conflicting reuse returns HTTP 409.
+- The worker endpoint retains the existing 2 MiB request cap. It does not grant workers access to S3, provider credentials, project tokens or administrator credentials.
+- Verification gate: exact-head Rust tests, PostgreSQL migration smoke and runtime smoke for wrong/valid lease capabilities. Successful end-to-end S3 upload from a worker remains gated on a configured S3-compatible integration service and is not claimed by this increment.
+
+
+**Runtime integration boundary:** PR #82 exact head `6d4df2b1d18fbba3ab9148dbaefba63e54190df7` passed GitHub Actions run #1589 (`44336407133`): Rust format/lint/tests, PostgreSQL migration smoke including migration 0005, Docker build, worker binary image smoke, Compose startup and container smoke all succeeded. The smoke rejects a wrong lease token and confirms fail-closed behavior when storage is unconfigured. This verifies the Hub-side lease-scoped upload endpoint and deterministic tests only. The current `ush-worker` binary still executes only `system_noop` and is not wired to call the endpoint. Worker-side HTTP transfer, configured MinIO/S3 integration, successful byte upload/download, and restart/recovery across artifact transfer remain separate acceptance tasks; end-to-end artifact handoff is not operational yet.
