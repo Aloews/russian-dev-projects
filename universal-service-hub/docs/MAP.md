@@ -747,7 +747,7 @@ Next gates:
 - [x] Add migration `0006_agent_checkpoints.sql` with schema version, SHA-256 digest and timestamp columns.
 - [x] Implement atomic compare-and-swap writes requiring the current, unexpired lease fencing token and expected prior sequence.
 - [x] Implement lease-bound restore with schema/scope/sequence/digest verification; missing, corrupt, stale or superseded state fails closed.
-- [x] Add Rust tests for restart round-trip, budget preservation, digest tampering, scope mismatch, unsupported schema, malformed/unbounded metadata and replay sequence rejection.
+- [x] Add Rust tests for restart round-trip, budget preservation, digest tampering, scope mismatch, unsupported schema, malformed/unbounded metadata and replay sequence rejection.\n- [x] Add PostgreSQL integration coverage for persisted restore, concurrent compare-and-swap, checksum tampering and stale-lease fencing; CI supplies an isolated PostgreSQL 16 test database.
 - [ ] Verify the exact branch head with GitHub Actions (Rust format, clippy, tests, migration/PostgreSQL smoke and container checks).
 - [ ] Add database-backed integration coverage for lease expiry/fencing and CAS races before enabling checkpoint persistence in the live agent loop.
 - [ ] Wire checkpoint save/restore into the autonomous agent supervisor only after the above gates pass.
