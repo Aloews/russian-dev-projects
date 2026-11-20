@@ -219,6 +219,7 @@ async fn main() -> anyhow::Result<()> {
     let lease_seconds = bounded_usize("USH_WORKER_LEASE_SECONDS", 60, 10, 300)? as i64;
     let test_pause_ms = bounded_usize("USH_WORKER_TEST_PAUSE_AFTER_CLAIM_MS", 0, 0, 120_000)?;
     let job_types = parse_job_types(&env::var("USH_WORKER_JOB_TYPES").unwrap_or_else(|_| "system_noop".into()))?;
+    let artifact_client = ArtifactClient::from_env()?;
     let worker_prefix = env::var("USH_WORKER_ID").unwrap_or_else(|_| "ush-worker".into());
     if worker_prefix.is_empty() || worker_prefix.len() > 100
         || !worker_prefix.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) {
