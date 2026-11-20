@@ -313,7 +313,8 @@ mod tests {
         );
         let mut replay = original.clone();
         replay.sequence = 1;
-        assert_eq!(replay.validate("project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
+        assert_eq!(replay.validate("project-a", Uuid::from_u128(7)), Ok(()));
+        assert_eq!(validate_next_sequence(1, replay.sequence), Err(CheckpointError::StaleSequence));
         let mut future = original;
         future.schema_version = CHECKPOINT_SCHEMA_VERSION + 1;
         assert_eq!(future.validate("project-a", Uuid::from_u128(7)), Err(CheckpointError::UnsupportedVersion));
