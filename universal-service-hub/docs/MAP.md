@@ -699,3 +699,13 @@ Next gates:
 - The bounded `system_noop` executor uploads a deterministic JSON result artifact with a stable per-job idempotency key, then stores the returned artifact UUID in completion metadata. When the API URL is unset, prior non-artifact behavior remains unchanged. When configured, upload failure is retryable and the job is not reported as succeeded.
 - **Status: IMPLEMENTED; EXACT-HEAD CI NOT YET OBSERVED.** Current PR #97 head: `ce85eff76337cc57bd7775d5376f322ec6a432fb`. The available workflow-run and combined-status queries returned no run/status for this SHA. Do not merge until Rust format/Clippy/tests, migration/runtime smoke and the worker integration checks pass on this exact head.
 - This is the first worker-to-API transfer slice only. It does not yet implement LLM/provider dispatch, real task execution, artifact download in worker, full artifact-aware checkpoint recovery, or production S3 certification.
+
+## Rust Agent Runtime — architecture decision
+
+- Decision confirmed by project owner: build a **native UHS Rust agent runtime** following the architectural principles of Claude Code; do not depend on REA or copy closed-source implementation details.
+- Architecture and delivery plan: `docs/RUST_AGENT_RUNTIME_ARCHITECTURE.md`.
+- The runtime will own the agent loop, structured action protocol, default-deny tool registry, permission engine, budgets, model gateway, artifact-backed checkpoints, specialist DAG dispatch, untrusted-input boundary and privacy-preserving audit.
+- The model proposes structured actions; Rust validates schemas, authorizes exact actions and invokes registered adapters. No model receives ambient filesystem, shell, database, provider-secret or Hub-admin credentials.
+- Explicit privacy requirement: no IDE selection capture, environment/secret scanning, shell-history collection, hidden memory consolidation or prompt/completion telemetry.
+- Delivery sequence: AR-00 inventory → AR-01 contracts → AR-02 policy/tool registry → AR-03 loop/budgets → AR-04 model gateway + AR-05 checkpoints → AR-06 injection boundary → AR-07 specialist dispatch → AR-08 sandbox/worktrees → AR-09 independent security review → AR-10 approval/control UI.
+- **Current evidence boundary:** PR #97 is still draft and its worker artifact client is not yet verified on exact head. It is infrastructure groundwork, not an agent runtime. Do not mark any AR task verified until exact-head CI and the task-specific integration/security tests pass.
