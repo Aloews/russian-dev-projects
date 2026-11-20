@@ -17,6 +17,8 @@ MAX_FILES = 1
 MAX_CONTEXT_CHARS = 6000
 MAX_FILE_CHARS = 1800
 MAX_OUTPUT_TOKENS = 2048
+MAX_CAVEMAN_SKILL_CHARS = 2000
+MAX_REALITY_FIRST_SKILL_CHARS = 4000
 SOURCE_SUFFIXES = (
     ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".go", ".java", ".kt", ".swift", ".cs", ".rb", ".php",
@@ -327,7 +329,7 @@ def main():
     skill = ""
     if skill_path:
         try:
-            skill = Path(skill_path).read_text(encoding="utf-8")[:7000]
+            skill = Path(skill_path).read_text(encoding="utf-8")[:MAX_CAVEMAN_SKILL_CHARS]
         except (OSError, UnicodeError):
             print("::error::Pinned Caveman skill could not be loaded.")
             return 2
@@ -350,7 +352,7 @@ def main():
     reality_path = os.environ.get("REALITY_FIRST_SKILL_PATH", "")
     if reality_path:
         try:
-            reality_skill = Path(reality_path).read_text(encoding="utf-8")[:10000]
+            reality_skill = Path(reality_path).read_text(encoding="utf-8")[:MAX_REALITY_FIRST_SKILL_CHARS]
         except (OSError, UnicodeError):
             print("::error::Reality-First Business skill could not be loaded.")
             return 2
