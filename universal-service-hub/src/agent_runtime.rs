@@ -908,7 +908,9 @@ mod loop_tests {
             next: 0,
         };
         let mut executor = FakeExecutor;
-        let (_, _, context) = context();
+        let allowed = BTreeSet::from(["artifact.read".to_owned()]);
+        let capabilities = BTreeSet::from([Capability::ArtifactRead]);
+        let context = context(&allowed, &capabilities);
         let result = run_agent_loop(
             &task, &mut model, &mut executor, &registry,
             &context, None, &mut budget(&task), Utc::now()
