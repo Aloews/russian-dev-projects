@@ -116,6 +116,7 @@ impl ArtifactStore {
 
         let credentials = Credentials::new(access_key, secret_key, None, None, "ush-artifact-store");
         let mut builder = Builder::new()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
             .region(Region::new(region))
             .credentials_provider(credentials)
             .timeout_config(aws_sdk_s3::config::timeout::TimeoutConfig::builder()
@@ -229,6 +230,16 @@ impl ArtifactStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn s3_client_config_sets_required_behavior_version() {
+        let config = Builder::new()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Credentials::new("test-access", "test-secret", None, None, "test"))
+            .build();
+        let _client = Client::from_conf(config);
+    }
 
     #[test]
     fn keys_are_generated_from_validated_components_and_ids() {
