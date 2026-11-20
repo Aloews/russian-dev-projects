@@ -1,7 +1,8 @@
 #[allow(dead_code)]
 mod artifact_store;
 mod schedule_recovery;
-#[allow(dead_code)]\nmod checkpoint;
+#[allow(dead_code)]
+mod checkpoint;
 #[allow(dead_code)]
 mod agent_runtime;
 
