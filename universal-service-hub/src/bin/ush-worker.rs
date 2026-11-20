@@ -114,6 +114,7 @@ async fn shutdown_signal() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn worker_loop(
     pool: sqlx::PgPool,
     worker_id: String,
