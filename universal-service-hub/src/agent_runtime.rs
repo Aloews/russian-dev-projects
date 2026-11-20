@@ -683,6 +683,14 @@ pub fn run_agent_loop<M: AgentModel, E: ToolExecutor>(
         return Err(RuntimeError::PolicyDenied("scope_mismatch"));
     }
 
+    // A caller may narrow a task budget, but can never enlarge it.
+    budget.turns_remaining = budget.turns_remaining.min(task.turn_budget);
+    budget.tool_calls_remaining = budget.tool_calls_remaining.min(task.tool_call_budget);
+    budget.tokens_remaining = budget.tokens_remaining.min(task.token_budget);
+    if budget.deadline > task.deadline {
+        budget.deadline = task.deadline;
+    }
+
     let mut observations = Vec::new();
     let mut turns_used = 0_u16;
     let mut tool_calls_used = 0_u16;
