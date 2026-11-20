@@ -618,3 +618,140 @@ mod tests {
         assert_eq!(action.validate(), Err(ContractError::InvalidAction));
     }
 }
+
+
+#[derive(Debug, Clone)]
+pub struct ToolObservation {
+    pub tool_id: String,
+    pub output: Value,
+}
+
+pub struct AgentTurnRequest<'a> {
+    pub task: &'a AgentTask,
+    pub observations: &'a [ToolObservation],
+}
+
+pub struct ModelResponse {
+    pub action: ActionEnvelope,
+    pub tokens_used: u32,
+}
+
+/// Provider adapters implement this boundary. Implementations must not log prompts or responses.
+pub trait AgentModel {
+    fn next_action(&mut self, request: &AgentTurnRequest<'_>) -> Result<ModelResponse, RuntimeError>;
+}
+
+/// Tool adapters receive only the validated arguments and a registered tool definition.
+pub trait ToolExecutor {
+    fn execute(&mut self, tool: &ToolDefinition, arguments: &Value) -> Result<Value, RuntimeError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeError {
+    InvalidTask,
+    ModelFailure,
+    InvalidModelAction,
+    PolicyDenied(&'static str),
+    ToolFailure,
+    ToolOutputTooLarge,
+    BudgetExhausted,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentRunResult {
+    Completed { output: Value, turns_used: u16, tool_calls_used: u16 },
+    DelegationRequested { payload: Value, turns_used: u16, tool_calls_used: u16 },
+    AwaitingApproval { tool_id: String, action_digest: String, turns_used: u16, tool_calls_used: u16 },
+}
+
+pub fn run_agent_loop<M: AgentModel, E: ToolExecutor>(
+    task: &AgentTask,
+    model: &mut M,
+    executor: &mut E,
+    registry: &ToolRegistry,
+    policy_context: &PolicyContext<'_>,
+    approval: Option<&Approval>,
+    budget: &mut Budget,
+    now: DateTime<Utc>,
+) -> Result<AgentRunResult, RuntimeError> {
+    task.validate(now).map_err(|_| RuntimeError::InvalidTask)?;
+    if policy_context.tenant_id != task.tenant_id
+        || policy_context.project_id != task.project_id
+        || policy_context.task_id != task.task_id
+    {
+        return Err(RuntimeError::PolicyDenied("scope_mismatch"));
+    }
+
+    let mut observations = Vec::new();
+    let mut turns_used = 0_u16;
+    let mut tool_calls_used = 0_u16;
+
+    loop {
+        budget.consume_turn(Utc::now()).map_err(|_| RuntimeError::BudgetExhausted)?;
+        turns_used = turns_used.saturating_add(1);
+
+        let request = AgentTurnRequest { task, observations: &observations };
+        let response = model.next_action(&request).map_err(|_| RuntimeError::ModelFailure)?;
+        budget.consume_tokens(response.tokens_used, Utc::now())
+            .map_err(|_| RuntimeError::BudgetExhausted)?;
+        response.action.validate().map_err(|_| RuntimeError::InvalidModelAction)?;
+
+        match response.action.kind {
+            ActionKind::Finish => {
+                let output_size = serde_json::to_vec(&response.action.arguments)
+                    .map_err(|_| RuntimeError::InvalidModelAction)?.len();
+                if output_size > MAX_TOOL_OUTPUT_BYTES {
+                    return Err(RuntimeError::ToolOutputTooLarge);
+                }
+                return Ok(AgentRunResult::Completed {
+                    output: response.action.arguments,
+                    turns_used,
+                    tool_calls_used,
+                });
+            }
+            ActionKind::Delegate => {
+                return Ok(AgentRunResult::DelegationRequested {
+                    payload: response.action.arguments,
+                    turns_used,
+                    tool_calls_used,
+                });
+            }
+            ActionKind::InvokeTool => {
+                budget.consume_tool_call(Utc::now()).map_err(|_| RuntimeError::BudgetExhausted)?;
+                let decision = authorize_tool(
+                    registry,
+                    &response.action,
+                    policy_context,
+                    &task.tenant_id,
+                    &task.project_id,
+                    task.task_id,
+                    approval,
+                    Utc::now(),
+                );
+                match decision {
+                    PolicyDecision::Allow => {}
+                    PolicyDecision::Deny(reason) => return Err(RuntimeError::PolicyDenied(reason)),
+                    PolicyDecision::RequiresApproval => {
+                        let tool_id = response.action.tool_id.clone().unwrap_or_default();
+                        return Ok(AgentRunResult::AwaitingApproval {
+                            tool_id,
+                            action_digest: response.action.digest().map_err(|_| RuntimeError::InvalidModelAction)?,
+                            turns_used,
+                            tool_calls_used,
+                        });
+                    }
+                }
+                let tool_id = response.action.tool_id.as_deref().ok_or(RuntimeError::InvalidModelAction)?;
+                let tool = registry.get(tool_id).ok_or(RuntimeError::PolicyDenied("tool_not_registered"))?;
+                let output = executor.execute(tool, &response.action.arguments)?;
+                let output_size = serde_json::to_vec(&output).map_err(|_| RuntimeError::ToolFailure)?.len();
+                if output_size > tool.max_output_bytes || output_size > MAX_TOOL_OUTPUT_BYTES {
+                    return Err(RuntimeError::ToolOutputTooLarge);
+                }
+                tool_calls_used = tool_calls_used.saturating_add(1);
+                observations.push(ToolObservation { tool_id: tool_id.to_owned(), output });
+            }
+        }
+    }
+}
+
