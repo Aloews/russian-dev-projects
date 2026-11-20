@@ -2,7 +2,7 @@ use std::{env, time::Duration};
 
 use anyhow::{Context, bail};
 use aws_credential_types::Credentials;
-use aws_sdk_s3::{config::{Builder, Region}, primitives::ByteStream, Client};
+use aws_sdk_s3::{config::{BehaviorVersion, Builder, Region}, primitives::ByteStream, Client};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use sqlx::PgPool;
@@ -116,6 +116,7 @@ impl ArtifactStore {
 
         let credentials = Credentials::new(access_key, secret_key, None, None, "ush-artifact-store");
         let mut builder = Builder::new()
+            .behavior_version(BehaviorVersion::latest())
             .region(Region::new(region))
             .credentials_provider(credentials)
             .timeout_config(aws_sdk_s3::config::timeout::TimeoutConfig::builder()
@@ -294,4 +295,96 @@ mod tests {
         assert!(safe_component("project-123"));
         assert!(safe_component("project_123"));
     }
+
+    async fn test_store(server: &wiremock::MockServer, max_bytes: usize) -> ArtifactStore {
+        let credentials = Credentials::new("test-access-key", "test-secret-key", None, None, "ush-test");
+        let config = Builder::new()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(credentials)
+            .endpoint_url(server.uri())
+            .force_path_style(true)
+            .build();
+        ArtifactStore {
+            client: Client::from_conf(config),
+            bucket: "ush-test".into(),
+            prefix: "ush-artifacts-v1".into(),
+            max_bytes,
+        }
+    }
+
+    #[tokio::test]
+    async fn s3_put_get_and_delete_use_scoped_keys_and_integrity_metadata() {
+        use wiremock::{matchers::{header, method, path_regex}, Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let store = test_store(&server, 64).await;
+        let job_id = Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+
+        Mock::given(method("PUT"))
+            .and(path_regex(r"^/ush-test/ush-artifacts-v1/project-a/jobs/[^/]+/[^/]+$"))
+            .and(header("x-amz-server-side-encryption", "AES256"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let stored = store.put("project-a", job_id, "text/plain", b"artifact-data").await.unwrap();
+        assert!(stored.object_key.starts_with("ush-artifacts-v1/project-a/jobs/"));
+        assert_eq!(stored.size_bytes, 13);
+        assert_eq!(stored.sha256, hex::encode(Sha256::digest(b"artifact-data")));
+
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/ush-test/ush-artifacts-v1/project-a/jobs/[^/]+/[^/]+$"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/plain")
+                    .set_body_bytes(b"artifact-data".to_vec()),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (downloaded, content_type) = store.get(&stored.object_key).await.unwrap();
+        assert_eq!(downloaded, b"artifact-data");
+        assert_eq!(content_type.as_deref(), Some("text/plain"));
+
+        Mock::given(method("DELETE"))
+            .and(path_regex(r"^/ush-test/ush-artifacts-v1/project-a/jobs/[^/]+/[^/]+$"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        store.delete(&stored.object_key).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn s3_download_enforces_streaming_limit_even_without_trusting_metadata() {
+        use wiremock::{matchers::{method, path_regex}, Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let store = test_store(&server, 8).await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/ush-test/ush-artifacts-v1/project-a/jobs/oversized$"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"123456789".to_vec()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = store.get("ush-artifacts-v1/project-a/jobs/oversized").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn s3_put_rejects_cross_project_path_injection_before_network_io() {
+        use wiremock::MockServer;
+
+        let server = MockServer::start().await;
+        let store = test_store(&server, 64).await;
+        let job_id = Uuid::new_v4();
+        assert!(store.put("../other-project", job_id, "text/plain", b"x").await.is_err());
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
 }
