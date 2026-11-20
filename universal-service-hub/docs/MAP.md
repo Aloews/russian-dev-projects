@@ -738,3 +738,18 @@ Next gates:
 - Repair commit: `55c3c3f8f78f3db610b60fd9e5c6d638e11d8457`; targeted Clippy allow attributes were added to these orchestration functions. This is a narrow lint allowance, not verification.
 - **Current gate:** wait for CI on the updated immutable head; if Clippy succeeds, inspect compile/test output and review policy/runtime issues before beginning AR-05 durable checkpoint work. No merge while checks are red or pending.
 - **AR-05 planned:** durable checkpoint schema and serialization, task/tenant/project scope binding, job lease fencing, idempotent resume, explicit interrupted/failed/awaiting-approval states, recovery tests and migration smoke test. Discovery of current DB/migration/API boundaries is prerequisite; implementation not started.
+
+
+## AR-05 — durable agent checkpoint and recovery
+
+- [x] Add a versioned PostgreSQL checkpoint envelope, separate from legacy worker metadata.
+- [x] Persist only bounded execution metadata: project/job/task scope, monotonic sequence, agent state/phase, remaining budgets, completed step identifiers, artifact IDs and action digest. Prompts, generated content, transcripts, credentials and raw provider output are excluded.
+- [x] Add migration `0006_agent_checkpoints.sql` with schema version, SHA-256 digest and timestamp columns.
+- [x] Implement atomic compare-and-swap writes requiring the current, unexpired lease fencing token and expected prior sequence.
+- [x] Implement lease-bound restore with schema/scope/sequence/digest verification; missing, corrupt, stale or superseded state fails closed.
+- [x] Add Rust tests for restart round-trip, budget preservation, digest tampering, scope mismatch, unsupported schema, malformed/unbounded metadata and replay sequence rejection.
+- [ ] Verify the exact branch head with GitHub Actions (Rust format, clippy, tests, migration/PostgreSQL smoke and container checks).
+- [ ] Add database-backed integration coverage for lease expiry/fencing and CAS races before enabling checkpoint persistence in the live agent loop.
+- [ ] Wire checkpoint save/restore into the autonomous agent supervisor only after the above gates pass.
+
+Current implementation is in `src/checkpoint.rs`; it is a durable storage primitive, not yet a live agent-loop integration. No migration has been applied to a production database. PR remains open and unmerged.
