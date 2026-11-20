@@ -69,6 +69,7 @@ docker run -d --rm --name "$silo_name" \
   -p 127.0.0.1:19000:9000 \
   -e MINIO_ROOT_USER="$access_key" \
   -e MINIO_ROOT_PASSWORD="$secret_key" \
+  -e MINIO_KMS_SECRET_KEY="ush-smoke-key:$(head -c 32 /dev/zero | tr '\\0' 'a' | base64 -w0)" \
   "$silo_image" server /data >/dev/null
 silo_started=1
 
