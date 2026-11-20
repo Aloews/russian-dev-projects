@@ -719,3 +719,13 @@ Next gates:
 - Registered the module in the API binary. This is a first contracts/policy-core slice; it does not yet execute tools, call a model, persist agent checkpoints, or run autonomous agent loops.
 - **Status: CODE WRITTEN; NOT VERIFIED.** Exact current implementation head at this MAP update: `bae73f15ca5fdcff3f11ebc8db3ccb4358a2061e`. Rust fmt/Clippy/tests and exact-head CI have not yet been observed. The available GitHub workflow/status lookup returned no runs or checks for the then-current head; this is missing evidence, not a pass. Do not merge.
 - Next: compile/test this exact head; fix all findings; then AR-03 bounded state-machine executor and deterministic fake-model loop, before enabling any paid provider adapter.
+
+### AR-03 — deterministic bounded agent-loop slice
+
+- Extended `src/agent_runtime.rs` with `AgentModel` and `ToolExecutor` ports, typed model responses, tool observations and a bounded `run_agent_loop`.
+- The loop validates task scope, clamps runtime budgets so they cannot exceed the immutable task limits, validates each model action, authorizes every tool call before execution, enforces tool-call/token/turn/deadline counters and rejects oversized tool/final outputs.
+- External/destructive operations return an approval-required result bound to the exact action digest; they are not executed without an approval supplied by the caller.
+- Added deterministic fake-model/fake-tool tests for finish flow, tool-result handoff into the next turn, and denial of tools outside the task allowlist.
+- **Limitations:** this is a synchronous orchestration core for deterministic testing. It is not yet connected to a live provider, durable checkpoint storage, async cancellation/lease heartbeat, process sandbox or actual registered production tools. Tool timeout is metadata at this stage and is not yet enforced by a process/runtime supervisor.
+- **Status: CODE WRITTEN; NOT VERIFIED.** The implementation code before this MAP-only update is at `73e6c5108fda53ca1086ad45e8fa7e8fc9ee24e3`; exact-head CI, rustfmt, Clippy and Rust tests remain unobserved. No merge.
+- Next: obtain exact-head CI/build evidence; correct any compile/lint/test failures; then implement AR-05 durable checkpoint/recovery and an async runtime supervisor before enabling a live provider adapter.
