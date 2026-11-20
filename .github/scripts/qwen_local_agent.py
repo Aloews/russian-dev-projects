@@ -13,10 +13,10 @@ from pathlib import Path
 ROOT = Path(os.environ.get("TARGET_WORKDIR", "target")).resolve()
 MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
-MAX_FILES = 2
-MAX_CONTEXT_CHARS = 8500
-MAX_FILE_CHARS = 2500
-MAX_OUTPUT_TOKENS = 4096
+MAX_FILES = 1
+MAX_CONTEXT_CHARS = 6000
+MAX_FILE_CHARS = 1800
+MAX_OUTPUT_TOKENS = 2048
 SOURCE_SUFFIXES = (
     ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".go", ".java", ".kt", ".swift", ".cs", ".rb", ".php",
@@ -73,46 +73,63 @@ def scrub(text):
 
 def make_context(task, tracked):
     tokens = set(re.findall(r"[a-zA-Z0-9_/-]{3,}", task.lower()))
-    preferred = [
+    docs = [
         "docs/MAP.md", "docs/DELIVERY_PLAN.md", "docs/AI_AGENT_WORKFLOW.md",
         "AGENTS.md", "README.md", "README.rst",
     ]
-    candidates = [p for p in preferred if p in tracked]
-    ranked = []
     tracked_set = set(tracked)
-    for path in tracked:
-        if not allowed(path, tracked_set) or path in candidates:
-            continue
+    doc_suffixes = {".md", ".mdx", ".yaml", ".yml", ".toml"}
+    source_paths = [
+        p for p in tracked
+        if allowed(p, tracked_set) and Path(p).suffix.lower() not in doc_suffixes
+    ]
+    ranked = []
+    for path in source_paths:
         body = read_text(path)
         if not body:
             continue
         score = sum(4 for token in tokens if token in path.lower())
-        score += sum(1 for token in tokens if token in body[:18000].lower())
-        if score:
-            ranked.append((score, path))
+        score += sum(1 for token in tokens if token in body[:12000].lower())
+        parts = path.lower().split("/")
+        test_priority = 3 if any(part in {"test", "tests", "spec", "specs"} for part in parts) or Path(path).name.lower().startswith(("test_", "tests_")) else 0
+        ranked.append((score + test_priority, path))
     ranked.sort(key=lambda item: (-item[0], item[1]))
-    chosen = candidates + [p for _, p in ranked[:12]]
+    source_candidates = [p for _, p in ranked[:8]]
+    doc_candidates = [p for p in docs if p in tracked]
+    source_listing = (
+        "\\n--- SOURCE/TEST FILE CANDIDATES (choose code edits only from these paths) ---\\n"
+        + "\\n".join(source_candidates) + "\\n"
+    )
     chunks = []
-    total = 0
-    for path in chosen:
+    total = len(source_listing)
+    for path in source_candidates:
         body = read_text(path)
         if not body:
             continue
-        chunk = f"\n--- FILE: {path} ---\n{scrub(body)}\n"
+        chunk = f"\\n--- SOURCE/TEST FILE: {path} ---\\n{scrub(body)}\\n"
+        if total + len(chunk) > MAX_CONTEXT_CHARS:
+            continue
+        chunks.append(chunk)
+        total += len(chunk)
+    for path in doc_candidates:
+        body = read_text(path)
+        if not body:
+            continue
+        chunk = f"\\n--- PROJECT DOC: {path} (context only; do not edit) ---\\n{scrub(body)}\\n"
         if total + len(chunk) > MAX_CONTEXT_CHARS:
             continue
         chunks.append(chunk)
         total += len(chunk)
     verification = read_text("PRODUCT_FACTORY_VERIFICATION.md")
     if verification and total < MAX_CONTEXT_CHARS:
-        evidence = "\n--- FAILED VERIFICATION EVIDENCE ---\n" + scrub(verification)
+        evidence = "\\n--- FAILED VERIFICATION EVIDENCE ---\\n" + scrub(verification)
         chunks.append(evidence[:MAX_CONTEXT_CHARS - total])
-    return "\n".join(chunks)
+    return source_listing + "\\n".join(chunks)
 
 EDIT_SCHEMA = {
     "type": "object",
     "properties": {
-        "review": {"type": "string", "minLength": 80, "maxLength": 2000},
+        "review": {"type": "string", "minLength": 60, "maxLength": 1200},
         "edits": {
             "type": "array",
             "minItems": 1,
@@ -121,8 +138,8 @@ EDIT_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "old": {"type": "string", "maxLength": 1500},
-                    "new": {"type": "string", "minLength": 1, "maxLength": 5000},
+                    "old": {"type": "string", "maxLength": 1200},
+                    "new": {"type": "string", "minLength": 1, "maxLength": 3000},
                 },
                 "required": ["path", "old", "new"],
                 "additionalProperties": False,
@@ -276,7 +293,7 @@ def parse_ollama_response(data):
 
 
 def generation_budget(attempt):
-    return 3072 if attempt == 0 else MAX_OUTPUT_TOKENS
+    return 1536 if attempt == 0 else MAX_OUTPUT_TOKENS
 
 
 def ask_ollama(messages, format_schema=None, max_predict=3072, timeout_seconds=900):
@@ -357,13 +374,13 @@ def main():
     tracked_set = set(tracked)
     validation_error = None
     answer = ""
-    for attempt in range(3):
+    for attempt in range(2):
         try:
             answer = ask_ollama(
                 messages,
                 format_schema=EDIT_SCHEMA,
                 max_predict=generation_budget(attempt),
-                timeout_seconds=900,
+                timeout_seconds=600,
             )
             response_json = json.loads(answer)
             review_text = validate_response(response_json)
@@ -379,7 +396,7 @@ def main():
             return 4
         except IncompleteOllamaResponse as exc:
             validation_error = str(exc)
-            if attempt < 2:
+            if attempt < 1:
                 messages = build_retry_messages(base_messages, validation_error)
                 continue
             print("::error::Qwen response remained incomplete after bounded retry: " + validation_error)
