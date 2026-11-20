@@ -230,6 +230,8 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertEqual(agent.MAX_FILES, 1)
         self.assertEqual(agent.MAX_CONTEXT_CHARS, 6000)
         self.assertEqual(agent.MAX_OUTPUT_TOKENS, 2048)
+        self.assertEqual(agent.MAX_CAVEMAN_SKILL_CHARS, 2000)
+        self.assertEqual(agent.MAX_REALITY_FIRST_SKILL_CHARS, 4000)
         self.assertEqual(agent.EDIT_SCHEMA["properties"]["edits"]["maxItems"], 1)
         self.assertEqual(agent.generation_budget(0), 1536)
         self.assertEqual(agent.generation_budget(1), 2048)
