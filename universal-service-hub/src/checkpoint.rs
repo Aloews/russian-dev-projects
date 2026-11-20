@@ -222,7 +222,7 @@ mod tests {
         sqlx::query("INSERT INTO projects (id, name) VALUES ($1, 'checkpoint integration')")
             .bind(&project_id).execute(&pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO execution_jobs (id, project_id, task_id, job_type, status, idempotency_key, lease_owner, lease_token, lease_expires_at) VALUES ($1,$2,$3,'agent.test','leased',$4,'checkpoint-test',$5,NOW() + INTERVAL '5 minutes')"
+            "INSERT INTO execution_jobs (id, project_id, job_type, status, idempotency_key, lease_owner, lease_token, lease_expires_at) VALUES ($1,$2,'agent.test','leased',$3,'checkpoint-test',$4,NOW() + INTERVAL '5 minutes')"
         )
         .bind(job_id).bind(&project_id).bind(task_id).bind(format!("checkpoint-{job_id}"))
         .bind(lease_token).execute(&pool).await.unwrap();
