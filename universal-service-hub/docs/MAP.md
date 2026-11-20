@@ -709,3 +709,13 @@ Next gates:
 - Explicit privacy requirement: no IDE selection capture, environment/secret scanning, shell-history collection, hidden memory consolidation or prompt/completion telemetry.
 - Delivery sequence: AR-00 inventory → AR-01 contracts → AR-02 policy/tool registry → AR-03 loop/budgets → AR-04 model gateway + AR-05 checkpoints → AR-06 injection boundary → AR-07 specialist dispatch → AR-08 sandbox/worktrees → AR-09 independent security review → AR-10 approval/control UI.
 - **Current evidence boundary:** PR #97 is still draft and its worker artifact client is not yet verified on exact head. It is infrastructure groundwork, not an agent runtime. Do not mark any AR task verified until exact-head CI and the task-specific integration/security tests pass.
+
+## Rust Agent Runtime — AR-00 / AR-01 / AR-02 first implementation slice
+
+- Implementation branch: `feat/ush-rust-agent-runtime-contracts`, stacked on PR #97's worker/artifact groundwork.
+- Added `src/agent_runtime.rs` with versioned task and action envelopes, strict unknown-field rejection, bounded serialized payloads, typed tool input contracts, tool registry, capability/risk types, approval-digest checks, execution budget counters and an explicit agent state-transition graph.
+- Authorization is default-deny and binds the request to tenant, project and task scope; it also checks task tool allowlist, registered tool/version, granted capability and typed input. External/destructive side effects require an unexpired approval bound to the exact action digest and target, issued by a different actor.
+- Added unit tests for registry duplicate rejection, default-deny allowlist behavior, tenant/project/task scope mismatch, tool input type/unknown-key rejection, approval digest binding, budget exhaustion, invalid state transitions and malformed action versions.
+- Registered the module in the API binary. This is a first contracts/policy-core slice; it does not yet execute tools, call a model, persist agent checkpoints, or run autonomous agent loops.
+- **Status: CODE WRITTEN; NOT VERIFIED.** Exact current implementation head at this MAP update: `833e7c63e12091e5b060e6306a56e79607674f36`. Rust fmt/Clippy/tests and exact-head CI have not yet been observed. Do not merge.
+- Next: compile/test this exact head; fix all findings; then AR-03 bounded state-machine executor and deterministic fake-model loop, before enabling any paid provider adapter.
