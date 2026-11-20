@@ -122,6 +122,7 @@ async fn worker_loop(
     lease_seconds: i64,
     test_pause: Duration,
     mut shutdown: watch::Receiver<bool>,
+    artifact_client: Option<ArtifactClient>,
 ) {
     loop {
         if *shutdown.borrow() { break; }
