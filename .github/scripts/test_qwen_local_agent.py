@@ -13,6 +13,9 @@ agent = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(agent)
 
 
+ROOT = Path(__file__).resolve().parents[2]
+ACTION = ROOT / ".github" / "actions" / "product-factory-agent" / "action.yml"
+
 class QwenEditSafetyTests(unittest.TestCase):
     def test_source_file_is_allowed(self):
         self.assertTrue(agent.allowed("src/main.py", {"src/main.py"}))
@@ -167,6 +170,55 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+    def test_retry_does_not_replay_malformed_model_output(self):
+        base = [
+            {"role": "system", "content": "system contract"},
+            {"role": "user", "content": "original objective"},
+        ]
+        malformed = '{"review":"unterminated'
+        retry = agent.build_retry_messages(base, "Unterminated string", "")
+        self.assertEqual(retry[:2], base)
+        self.assertNotIn(malformed, json.dumps(retry))
+        self.assertIn("Discard that response", retry[-1]["content"])
+        self.assertIn("complete JSON object", retry[-1]["content"])
+
+    def test_retry_keeps_bounded_existing_file_evidence(self):
+        base = [{"role": "user", "content": "objective"}]
+        evidence = "EXISTING FILE: src/main.py\nVALUE = 1\n"
+        retry = agent.build_retry_messages(base, "old text mismatch", evidence)
+        self.assertIn("VALUE = 1", retry[-1]["content"])
+
+    def test_retry_prompt_caps_error_and_existing_file_context(self):
+        retry = agent.build_retry_messages(
+            [{"role": "user", "content": "objective"}],
+            "E" * 1000,
+            "C" * 6000,
+        )
+        self.assertLess(len(retry[-1]["content"]), 6000)
+        self.assertNotIn("E" * 301, retry[-1]["content"])
+
+    def test_response_validation_rejects_missing_review_before_editing(self):
+        with self.assertRaisesRegex(ValueError, "review report"):
+            agent.validate_response({
+                "review": "too short",
+                "edits": [{"path": "src/main.py", "old": "A", "new": "B"}],
+            })
+
+    def test_response_validation_rejects_documentation_only_candidate(self):
+        with self.assertRaisesRegex(ValueError, "no source or test edits"):
+            agent.validate_response({
+                "review": "A" * 100,
+                "edits": [{"path": "docs/MAP.md", "old": "A", "new": "B"}],
+            })
+
+    def test_qwen_generation_budget_is_bounded_for_small_model(self):
+        self.assertEqual(agent.MAX_FILES, 2)
+        self.assertEqual(agent.MAX_CONTEXT_CHARS, 8500)
+        self.assertEqual(agent.MAX_OUTPUT_TOKENS, 4096)
+        self.assertEqual(agent.EDIT_SCHEMA["properties"]["edits"]["maxItems"], 2)
+        self.assertEqual(agent.generation_budget(0), 3072)
+        self.assertEqual(agent.generation_budget(1), 4096)
+        self.assertEqual(agent.generation_budget(2), 4096)
 
 class ProductFactoryRecoveryTests(unittest.TestCase):
     def test_ollama_length_termination_is_reported_as_incomplete(self):
@@ -191,14 +243,58 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
         self.assertGreater(agent.generation_budget(1), agent.generation_budget(0))
 
     def test_qwen_output_limits_are_bounded(self):
-        self.assertEqual(agent.MAX_FILES, 3)
-        self.assertEqual(agent.EDIT_SCHEMA["properties"]["review"]["maxLength"], 1800)
+        self.assertEqual(agent.MAX_FILES, 2)
+        self.assertEqual(agent.EDIT_SCHEMA["properties"]["review"]["maxLength"], 2000)
 
     def test_agent_session_explicitly_adds_target_workspace(self):
         action_path = SCRIPT.parents[1] / "actions" / "product-factory-agent" / "action.yml"
         action = action_path.read_text(encoding="utf-8")
         self.assertIn('--add-dir "${{ github.workspace }}/target"', action)
         self.assertIn('"additionalDirectories": ["${{ github.workspace }}/target"]', action)
+
+class ProductFactoryAgentPermissionTests(unittest.TestCase):
+    def test_agent_has_explicit_workspace_scoped_file_permissions(self):
+        action = ACTION.read_text(encoding="utf-8")
+        settings = action.split("settings: |", 1)[1].split("\n    - name:", 1)[0]
+        for rule in (
+            "Read(./**)",
+            "Write(./**)",
+            "Edit(./**)",
+            "Glob(./**)",
+            "Grep(./**)",
+        ):
+            with self.subTest(rule=rule):
+                self.assertIn(f'"{rule}"', settings)
+
+    def test_sensitive_read_and_write_denials_remain(self):
+        action = ACTION.read_text(encoding="utf-8")
+        settings = action.split("settings: |", 1)[1].split("\n    - name:", 1)[0]
+        for rule in (
+            "Read(./.env)",
+            "Read(./**/.env)",
+            "Read(./.git/**)",
+            "Read(./.mcp.json)",
+            "Write(./.env)",
+            "Write(./.git/**)",
+            "Write(./.github/workflows/**)",
+            "Write(./.github/actions/**)",
+            "Edit(./.github/workflows/**)",
+            "Edit(./.github/actions/**)",
+        ):
+            with self.subTest(rule=rule):
+                self.assertIn(f'"{rule}"', settings)
+
+    def test_reads_and_writes_remain_confined_to_working_directories(self):
+        action = ACTION.read_text(encoding="utf-8")
+        settings = action.split("settings: |", 1)[1].split("\n    - name:", 1)[0]
+        self.assertIn('"blockReadsOutsideWorkingDirectories": true', settings)
+        self.assertIn('"blockWritesOutsideWorkingDirectories": true', settings)
+
+    def test_agent_is_started_in_target_product_working_directory(self):
+        action = ACTION.read_text(encoding="utf-8")
+        self.assertIn("CLAUDE_WORKING_DIR: " + "$" + "{{ github.workspace }}/target", action)
+        self.assertIn("Verify target workspace source files are readable", action)
+        self.assertIn('test -r "target/$path"', action)
 
 
 if __name__ == "__main__":

@@ -13,9 +13,10 @@ from pathlib import Path
 ROOT = Path(os.environ.get("TARGET_WORKDIR", "target")).resolve()
 MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
-MAX_FILES = 3
-MAX_CONTEXT_CHARS = 10000
+MAX_FILES = 2
+MAX_CONTEXT_CHARS = 8500
 MAX_FILE_CHARS = 2500
+MAX_OUTPUT_TOKENS = 4096
 SOURCE_SUFFIXES = (
     ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".go", ".java", ".kt", ".swift", ".cs", ".rb", ".php",
@@ -90,7 +91,7 @@ def make_context(task, tracked):
         if score:
             ranked.append((score, path))
     ranked.sort(key=lambda item: (-item[0], item[1]))
-    chosen = candidates + [p for _, p in ranked[:8]]
+    chosen = candidates + [p for _, p in ranked[:12]]
     chunks = []
     total = 0
     for path in chosen:
@@ -103,14 +104,15 @@ def make_context(task, tracked):
         chunks.append(chunk)
         total += len(chunk)
     verification = read_text("PRODUCT_FACTORY_VERIFICATION.md")
-    if verification:
-        chunks.append("\n--- FAILED VERIFICATION EVIDENCE ---\n" + scrub(verification[:12000]))
+    if verification and total < MAX_CONTEXT_CHARS:
+        evidence = "\n--- FAILED VERIFICATION EVIDENCE ---\n" + scrub(verification)
+        chunks.append(evidence[:MAX_CONTEXT_CHARS - total])
     return "\n".join(chunks)
 
 EDIT_SCHEMA = {
     "type": "object",
     "properties": {
-        "review": {"type": "string", "minLength": 1, "maxLength": 1800},
+        "review": {"type": "string", "minLength": 80, "maxLength": 2000},
         "edits": {
             "type": "array",
             "minItems": 1,
@@ -119,8 +121,8 @@ EDIT_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "old": {"type": "string", "maxLength": 4000},
-                    "new": {"type": "string", "minLength": 1, "maxLength": 8000},
+                    "old": {"type": "string", "maxLength": 1500},
+                    "new": {"type": "string", "minLength": 1, "maxLength": 5000},
                 },
                 "required": ["path", "old", "new"],
                 "additionalProperties": False,
@@ -158,6 +160,41 @@ def rejected_existing_file_context(answer):
             + ("\n[FILE CONTENT TRUNCATED]\n" if len(current) > 12000 else "")
         )
     return "\n".join(sections)
+
+
+def validate_response(response_json):
+    if not isinstance(response_json, dict):
+        raise ValueError("Qwen response must be a JSON object")
+    review_text = response_json.get("review")
+    if not isinstance(review_text, str) or len(review_text.strip()) < 80:
+        raise ValueError("Qwen review report is missing or too short")
+    if "timed out" in review_text.lower():
+        raise ValueError("Qwen review report contains an execution error")
+    edits = response_json.get("edits")
+    if not isinstance(edits, list) or not edits or len(edits) > MAX_FILES:
+        raise ValueError("Qwen response has no edits or exceeds the edit limit")
+    source_edits = [
+        edit for edit in edits
+        if isinstance(edit, dict)
+        and isinstance(edit.get("path"), str)
+        and Path(edit["path"]).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}
+    ]
+    if not source_edits:
+        raise ValueError("Qwen response contains no source or test edits")
+    return review_text
+
+
+def build_retry_messages(base_messages, validation_error, existing_file_evidence=""):
+    """Build a clean retry without replaying malformed or oversized model output."""
+    instruction = (
+        "Your previous response failed validation: " + str(validation_error)[:300] + ". "
+        "Discard that response and produce a fresh, complete JSON object matching the schema. "
+        "Keep the review under 1200 characters and make at most two small source/test edits. "
+        "For an existing file, old must be an exact unique snippet from the evidence. "
+        "For a new file, old must be empty. Never include markdown fences or unescaped newlines inside JSON strings. "
+        "Do not claim tests were run.\n" + existing_file_evidence[:5000]
+    )
+    return [*base_messages, {"role": "user", "content": instruction}]
 
 
 def apply_edits(edits, tracked):
@@ -238,7 +275,7 @@ def parse_ollama_response(data):
 
 
 def generation_budget(attempt):
-    return 3072 if attempt == 0 else 4096
+    return 3072 if attempt == 0 else MAX_OUTPUT_TOKENS
 
 
 def ask_ollama(messages, format_schema=None, max_predict=3072, timeout_seconds=900):
@@ -320,7 +357,7 @@ def main():
     tracked_set = set(tracked)
     validation_error = None
     answer = ""
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             answer = ask_ollama(
                 messages,
@@ -329,65 +366,36 @@ def main():
                 timeout_seconds=900,
             )
             response_json = json.loads(answer)
+            review_text = validate_response(response_json)
             changed_paths = apply_edits(response_json.get("edits"), tracked_set)
             if not changed_paths:
                 raise ValueError("Qwen returned no source or test edits")
             source_changes = [path for path in changed_paths if Path(path).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}]
             if not source_changes:
                 raise ValueError("Qwen returned documentation-only edits")
-            review_text = response_json.get("review")
-            if not isinstance(review_text, str) or len(review_text.strip()) < 80 or len(review_text) > 1800 or "timed out" in review_text.lower():
-                raise ValueError("Qwen review report is missing, too long or contains an execution error")
             break
         except (TimeoutError, urllib.error.URLError) as exc:
             print("::error::Qwen inference timed out or could not connect: " + type(exc).__name__ + ": " + str(exc)[:500])
             return 4
         except IncompleteOllamaResponse as exc:
             validation_error = str(exc)
-            if attempt < 1:
-                messages = base_messages + [{
-                    "role": "user",
-                    "content": (
-                        "The previous response reached the generation limit. Return a smaller valid JSON object only: "
-                        "review must be 80-1000 characters and edits must contain at most two minimal changes. "
-                        "Preserve exact unique old snippets for existing files. Do not use markdown or prose."
-                    ),
-                }]
+            if attempt < 2:
+                messages = build_retry_messages(base_messages, validation_error)
                 continue
             print("::error::Qwen response remained incomplete after bounded retry: " + validation_error)
             return 4
         except json.JSONDecodeError as exc:
-            validation_error = (
-                "invalid JSON at line=" + str(exc.lineno) + ", column=" + str(exc.colno) + ", char=" + str(exc.pos)
-            )
-            if attempt < 1:
-                messages = base_messages + [{
-                    "role": "user",
-                    "content": (
-                        "Your previous response was not valid JSON (" + validation_error + "). "
-                        "Return compact valid JSON only, with review no longer than 1000 characters and at most two edits. "
-                        "Escape all quotes and newlines inside JSON strings. No markdown fences or prose."
-                    ),
-                }]
+            validation_error = "invalid JSON at line=" + str(exc.lineno) + ", column=" + str(exc.colno) + ", char=" + str(exc.pos)
+            if attempt < 2:
+                messages = build_retry_messages(base_messages, validation_error)
                 continue
             print("::error::Qwen response remained invalid after bounded retry: " + validation_error)
             return 4
         except (KeyError, ValueError, OSError, UnicodeError) as exc:
             validation_error = str(exc)[:1000]
-            if attempt < 1:
+            if attempt < 2:
                 existing_file_evidence = rejected_existing_file_context(answer)
-                messages = base_messages + [
-                    {"role": "assistant", "content": answer[:8000]},
-                    {"role": "user", "content": (
-                        "Your previous JSON edit was rejected: " + validation_error + ". "
-                        "For every path shown below as an existing file, old MUST be a non-empty exact unique snippet copied verbatim from that file. "
-                        "Never use old='' for an existing or tracked path unless the proposed complete replacement preserves at least 92 percent of the existing file. "
-                        "If you cannot produce an exact replacement, omit that file and choose a different existing source/test file. "
-                        "Do not recreate, truncate or overwrite existing files. Keep the patch minimal. "
-                        + existing_file_evidence
-                        + "\\nReturn only corrected JSON matching the schema."
-                    )},
-                ]
+                messages = build_retry_messages(base_messages, validation_error, existing_file_evidence)
                 continue
             print("::error::Qwen multi-role engineering pass failed validation: " + validation_error)
             return 4
@@ -396,7 +404,7 @@ def main():
     report_path.write_text(
         "# Qwen2.5-Coder 3B multi-role engineering review\n\n"
         + "OBJECTIVE: " + task + "\n\n"
-        + review_text[:1800] + "\n",
+        + review_text[:2000] + "\n",
         encoding="utf-8",
     )
     print("Qwen multi-role engineering council completed in one inference pass.")
