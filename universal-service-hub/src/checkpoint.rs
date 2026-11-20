@@ -180,7 +180,7 @@ impl CheckpointStore {
         let value: Value = row.try_get("agent_checkpoint").map_err(|_| CheckpointError::Database)?;
         let digest: Option<String> = row.try_get("agent_checkpoint_sha256").map_err(|_| CheckpointError::Database)?;
         let checkpoint = AgentCheckpoint::decode_and_verify(
-            value, digest.ok_or(CheckpointError::IntegrityMismatch)?, project_id, job_id
+            value, &digest.ok_or(CheckpointError::IntegrityMismatch)?, project_id, job_id
         )?;
         if checkpoint.sequence != version { return Err(CheckpointError::IntegrityMismatch); }
         Ok(Some(checkpoint))
