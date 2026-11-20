@@ -74,7 +74,14 @@ pub enum CheckpointError {
     NotFound,
 }
 
-fn validate_next_sequence(expected: i64, actual: i64) -> Result<(), CheckpointError> {\n    if expected < 0 || expected.checked_add(1) != Some(actual) {\n        return Err(CheckpointError::StaleSequence);\n    }\n    Ok(())\n}\n\nimpl AgentCheckpoint {
+fn validate_next_sequence(expected: i64, actual: i64) -> Result<(), CheckpointError> {
+    if expected < 0 || expected.checked_add(1) != Some(actual) {
+        return Err(CheckpointError::StaleSequence);
+    }
+    Ok(())
+}
+
+impl AgentCheckpoint {
     pub fn validate(&self, expected_project: &str, expected_job: Uuid) -> Result<(), CheckpointError> {
         if self.schema_version != CHECKPOINT_SCHEMA_VERSION {
             return Err(CheckpointError::UnsupportedVersion);
