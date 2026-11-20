@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+mod artifact_store;
 mod schedule_recovery;
 
 use std::{env, net::{IpAddr, SocketAddr}, str::FromStr, sync::Arc, time::{Duration, Instant}};
@@ -27,6 +29,7 @@ struct AppState {
     admin_token: Arc<String>,
     http: reqwest::Client,
     infisical: Option<InfisicalClient>,
+    artifact_store: Option<artifact_store::ArtifactStore>,
     rate_limit_per_minute: i64,
 }
 
@@ -1372,6 +1375,118 @@ fn valid_worker_id(value: &str) -> bool {
         value.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
+async fn upload_execution_artifact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, job_id)): Path<(String, Uuid)>,
+    body: axum::body::Bytes,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let principal = require_operator(&state, &headers).await?;
+    if !can_manage_delivery_schedule(&principal, &project_id) {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch"));
+    }
+    let store = state.artifact_store.as_ref()
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "artifact_storage_unconfigured"))?;
+    if body.is_empty() || body.len() > 2 * 1024 * 1024 {
+        return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "artifact_size_limit"));
+    }
+    let content_type = headers.get("content-type").and_then(|v| v.to_str().ok())
+        .ok_or(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "artifact_content_type_required"))?;
+    let artifact_type = headers.get("x-artifact-type").and_then(|v| v.to_str().ok())
+        .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "artifact_type_required"))?;
+    let task_id = match headers.get("x-task-id") {
+        Some(value) => Some(Uuid::parse_str(value.to_str().map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task_id"))?)
+            .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task_id"))?),
+        None => None,
+    };
+    if !artifact_store::valid_artifact_type(artifact_type) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_artifact_type"));
+    }
+    if !artifact_store::valid_content_type(content_type) {
+        return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_artifact_content_type"));
+    }
+
+    let job_row = sqlx::query("SELECT task_id FROM execution_jobs WHERE project_id=$1 AND id=$2")
+        .bind(&project_id).bind(job_id).fetch_optional(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_job_lookup_failed"))?;
+    let job_row = job_row.ok_or(ApiError(StatusCode::NOT_FOUND, "execution_job_not_found"))?;
+    let job_task_id: Option<Uuid> = job_row.get("task_id");
+    if task_id.is_some() && task_id != job_task_id {
+        return Err(ApiError(StatusCode::CONFLICT, "artifact_task_mismatch"));
+    }
+    let task_id = job_task_id;
+    if let Some(task_id) = task_id {
+        let task_exists = sqlx::query("SELECT 1 FROM project_tasks WHERE project_id=$1 AND id=$2")
+            .bind(&project_id).bind(task_id).fetch_optional(&state.db).await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_task_lookup_failed"))?;
+        if task_exists.is_none() { return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_task_integrity_failed")); }
+    }
+    let artifact = store.put_and_register(&state.db, artifact_store::ArtifactRegistration {
+        project_id: &project_id,
+        job_id,
+        task_id,
+        artifact_type,
+        content_type,
+        bytes: &body,
+    })
+        .await.map_err(|error| {
+            tracing::error!(project_id, job_id = %job_id, error = ?error, "artifact upload failed");
+            ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_upload_failed")
+        })?;
+    audit(&state, &principal.actor, "execution.artifact.upload", "execution_artifact", &artifact.artifact_id.to_string(),
+        json!({"project_id":project_id,"job_id":job_id,"artifact_type":artifact_type,"size_bytes":artifact.size_bytes,"sha256":artifact.sha256})).await;
+    Ok((StatusCode::CREATED, Json(json!({
+        "artifact_id":artifact.artifact_id,"job_id":job_id,"size_bytes":artifact.size_bytes,
+        "sha256":artifact.sha256,"content_type":artifact.content_type
+    }))))
+}
+
+async fn download_execution_artifact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, artifact_id)): Path<(String, Uuid)>,
+) -> ApiResult<Response> {
+    let principal = require_operator(&state, &headers).await?;
+    if !can_manage_delivery_schedule(&principal, &project_id) {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch"));
+    }
+    let store = state.artifact_store.as_ref()
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "artifact_storage_unconfigured"))?;
+    let row = sqlx::query("SELECT storage_key, content_sha256, size_bytes, content_type, job_id FROM execution_artifacts WHERE project_id=$1 AND id=$2")
+        .bind(&project_id).bind(artifact_id).fetch_optional(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_lookup_failed"))?
+        .ok_or(ApiError(StatusCode::NOT_FOUND, "artifact_not_found"))?;
+    let key: String = row.get("storage_key");
+    let expected_sha: String = row.get("content_sha256");
+    let expected_size: i64 = row.get("size_bytes");
+    let content_type: String = row.get("content_type");
+    let job_id: Option<Uuid> = row.get("job_id");
+    let (bytes, stored_content_type) = store.get(&key).await.map_err(|error| {
+        tracing::error!(artifact_id = %artifact_id, error = ?error, "artifact download failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_download_failed")
+    })?;
+    let actual_sha = hex::encode(Sha256::digest(&bytes));
+    if bytes.len() as i64 != expected_size || actual_sha != expected_sha {
+        return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_integrity_check_failed"));
+    }
+    let response_content_type = stored_content_type.unwrap_or(content_type);
+    let content_type_header = HeaderValue::from_str(&response_content_type)
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_content_type"))?;
+    audit(&state, &principal.actor, "execution.artifact.download", "execution_artifact", &artifact_id.to_string(),
+        json!({"project_id":project_id,"job_id":job_id,"size_bytes":expected_size,"sha256":expected_sha})).await;
+    let mut response = Response::new(axum::body::Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert("content-type", content_type_header);
+    response.headers_mut().insert("x-artifact-sha256", HeaderValue::from_str(&expected_sha)
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_hash"))?);
+    response.headers_mut().insert("content-length", HeaderValue::from_str(&expected_size.to_string())
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_size"))?);
+    response.headers_mut().insert("content-disposition", HeaderValue::from_static("attachment; filename=artifact"));
+    response.headers_mut().insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    response.headers_mut().insert("cache-control", HeaderValue::from_static("private, no-store"));
+    Ok(response)
+}
+
 async fn enqueue_execution_job(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1451,7 +1566,7 @@ async fn claim_execution_job(
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_recovery_failed"))?;
 
     let row = sqlx::query(
-        "SELECT id,task_id,job_type,payload,checkpoint,attempt_count,max_attempts,priority FROM execution_jobs WHERE project_id=$1 AND status IN ('queued','retry_wait') AND available_at<=NOW() AND attempt_count<max_attempts ORDER BY priority DESC,available_at,created_at LIMIT 1 FOR UPDATE SKIP LOCKED"
+        "SELECT j.id,j.task_id,j.job_type,j.payload,j.checkpoint,j.attempt_count,j.max_attempts,j.priority,t.title AS task_title,t.objective AS task_objective,t.owner_role AS task_owner_role FROM execution_jobs j LEFT JOIN project_tasks t ON t.project_id=j.project_id AND t.id=j.task_id WHERE j.project_id=$1 AND j.status IN ('queued','retry_wait') AND j.available_at<=NOW() AND j.attempt_count<j.max_attempts ORDER BY j.priority DESC,j.available_at,j.created_at LIMIT 1 FOR UPDATE OF j SKIP LOCKED"
     ).bind(&project_id).fetch_optional(&mut *tx).await
       .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_claim_failed"))?;
     let Some(row) = row else {
@@ -1463,6 +1578,9 @@ async fn claim_execution_job(
     let job_type: String = row.get("job_type");
     let payload: Value = row.get("payload");
     let checkpoint: Value = row.get("checkpoint");
+    let task_title: Option<String> = row.try_get("task_title").ok();
+    let task_objective: Option<String> = row.try_get("task_objective").ok();
+    let task_owner_role: Option<String> = row.try_get("task_owner_role").ok();
     let attempt_number: i32 = row.get::<i32,_>("attempt_count") + 1;
     let lease_token = Uuid::new_v4();
     let updated = sqlx::query(
@@ -1485,6 +1603,7 @@ async fn claim_execution_job(
     Ok(Json(json!({"job":{
         "id":job_id,"project_id":project_id,"task_id":task_id,"job_type":job_type,
         "payload":payload,"checkpoint":checkpoint,"attempt":attempt_number,
+        "task_context":task_id.map(|_| json!({"title":task_title,"objective":task_objective,"owner_role":task_owner_role})),
         "worker_id":body.worker_id,"lease_token":lease_token,
         "lease_expires_at":updated.get::<DateTime<Utc>,_>("lease_expires_at")
     }})))
@@ -1590,10 +1709,18 @@ async fn complete_execution_job(
     if attempt_update.rows_affected()!=1 { return Err(ApiError(StatusCode::CONFLICT, "execution_attempt_not_running")); }
     let handoff_id = if let (Some(role),Some(kind),Some(key)) = (&body.next_agent_role,&body.next_job_type,&body.next_idempotency_key) {
         let next_payload = json!({"agent_role":role,"source_job_id":job_id,"input_artifact_ids":body.output_artifact_ids});
-        let inserted = sqlx::query("INSERT INTO execution_jobs (project_id,task_id,job_type,status,priority,idempotency_key,payload,max_attempts) SELECT $1,$2,$3,'queued',100,$4,$5,3 WHERE NOT EXISTS (SELECT 1 FROM execution_jobs WHERE project_id=$1 AND idempotency_key=$4) RETURNING id")
-            .bind(&project_id).bind(task_id).bind(kind).bind(key).bind(next_payload).fetch_optional(&mut *tx).await
+        let inserted = sqlx::query("INSERT INTO execution_jobs (project_id,task_id,job_type,status,priority,idempotency_key,payload,max_attempts) VALUES ($1,$2,$3,'queued',100,$4,$5,3) ON CONFLICT (project_id,idempotency_key) DO NOTHING RETURNING id")
+            .bind(&project_id).bind(task_id).bind(kind).bind(key).bind(&next_payload).fetch_optional(&mut *tx).await
             .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_handoff_failed"))?;
-        inserted.map(|r|r.get::<Uuid,_>("id"))
+        if let Some(row) = inserted {
+            Some(row.get::<Uuid,_>("id"))
+        } else {
+            let existing = sqlx::query("SELECT id FROM execution_jobs WHERE project_id=$1 AND idempotency_key=$2 AND job_type=$3 AND task_id IS NOT DISTINCT FROM $4 AND payload=$5")
+                .bind(&project_id).bind(key).bind(kind).bind(task_id).bind(&next_payload).fetch_optional(&mut *tx).await
+                .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_handoff_lookup_failed"))?
+                .ok_or(ApiError(StatusCode::CONFLICT, "handoff_idempotency_payload_mismatch"))?;
+            Some(existing.get::<Uuid,_>("id"))
+        }
     } else { None };
     sqlx::query("INSERT INTO project_events (project_id,task_id,event_type,actor,metadata) VALUES ($1,$2,'execution.job.succeeded',$3,$4)")
         .bind(&project_id).bind(task_id).bind(&body.worker_id)
@@ -1627,9 +1754,10 @@ async fn fail_execution_job(
         .ok_or(ApiError(StatusCode::CONFLICT, "execution_lease_lost"))?;
     let status: String = row.get("status");
     let attempt_status = if body.retryable { "retryable_failure" } else { "permanent_failure" };
-    sqlx::query("UPDATE execution_attempts SET status=$1,finished_at=NOW(),duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint),error_code=$2 WHERE project_id=$3 AND job_id=$4 AND lease_token=$5 AND status='running'")
+    let attempt_update = sqlx::query("UPDATE execution_attempts SET status=$1,finished_at=NOW(),duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint),error_code=$2 WHERE project_id=$3 AND job_id=$4 AND lease_token=$5 AND status='running'")
         .bind(attempt_status).bind(&body.error_code).bind(&project_id).bind(job_id).bind(body.lease_token)
         .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_attempt_update_failed"))?;
+    if attempt_update.rows_affected()!=1 { return Err(ApiError(StatusCode::CONFLICT, "execution_attempt_not_running")); }
     sqlx::query("INSERT INTO project_events (project_id,event_type,actor,metadata) VALUES ($1,'execution.job.failed',$2,$3)")
         .bind(&project_id).bind(&body.worker_id).bind(json!({"job_id":job_id,"error_code":body.error_code,"status":status}))
         .execute(&mut *tx).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_event_write_failed"))?;
@@ -1747,7 +1875,10 @@ async fn main() -> anyhow::Result<()> {
         ((None, None, None, None), "env") if runtime_environment != "production" => None,
         _ => anyhow::bail!("Infisical backend requires client ID, client secret, project ID and environment"),
     };
-    let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical, rate_limit_per_minute };
+    let artifact_configured = ["USH_ARTIFACT_BUCKET", "USH_ARTIFACT_REGION", "USH_ARTIFACT_ACCESS_KEY_ID", "USH_ARTIFACT_SECRET_ACCESS_KEY"]
+        .iter().any(|name| env::var(name).ok().is_some_and(|value| !value.trim().is_empty()));
+    let artifact_store = if artifact_configured { Some(artifact_store::ArtifactStore::from_env()?) } else { None };
+    let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical, artifact_store, rate_limit_per_minute };
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -1763,6 +1894,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/ai/chat", post(ai_chat))
         .route("/v1/projects/{project_id}/delivery/recovery-plan", post(delivery_recovery_plan))
         .route("/v1/projects/{project_id}/jobs", post(enqueue_execution_job))
+        .route("/v1/projects/{project_id}/jobs/{job_id}/artifacts", post(upload_execution_artifact))
+        .route("/v1/projects/{project_id}/artifacts/{artifact_id}", get(download_execution_artifact))
         .route("/v1/projects/{project_id}/workers/claim", post(claim_execution_job))
         .route("/v1/projects/{project_id}/jobs/{job_id}/heartbeat", post(heartbeat_execution_job))
         .route("/v1/projects/{project_id}/jobs/{job_id}/checkpoint", put(checkpoint_execution_job))

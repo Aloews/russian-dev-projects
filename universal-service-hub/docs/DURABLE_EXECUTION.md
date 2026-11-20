@@ -72,3 +72,17 @@ A worker that loses its lease must treat the job as cancelled locally: every mut
 - Queue API and lease lifecycle handlers are implemented on `feat/ush-worker-runtime-core`; exact-head CI and PostgreSQL smoke are pending.
 - Continuous worker supervisor, specialized-agent dispatch, durable artifact upload/download, metrics, alerts and dashboards remain outstanding.
 - No production migration, deployment or provider invocation has occurred.
+
+
+## Follow-up integrity hardening
+
+- Worker claim now returns the linked task's title, objective and owner role alongside the job checkpoint, so a future executor can construct a bounded role-specific context without placing task instructions into the queue's metadata payload.
+- The task context is fetched through a same-project join; jobs without a task receive no task context.
+- Specialist handoff uses the unique project/idempotency constraint as the concurrency arbiter. A duplicate request reuses the prior handoff only when job type, task and payload match exactly; mismatched reuse is a conflict.
+- Failure completion now requires exactly one matching running attempt row. A missing/mismatched attempt aborts the transaction rather than leaving the job and attempt ledger inconsistent.
+
+## Worker supervisor implementation increment
+
+A separate `ush-worker` binary now provides bounded polling loops, a strict non-billable `system_noop` capability allowlist, transactional expired-lease recovery, attempt-ledger reconciliation, graceful shutdown and a dedicated worker database connection. It is packaged in the same image but runs as a separate process. It does not invoke AI providers or process specialist roles. Production TLS is certificate/hostname verified, and the worker does not run migrations. See [WORKER_RUNTIME.md](./WORKER_RUNTIME.md).
+
+The worker binary and its source are implementation evidence only. End-to-end PostgreSQL concurrency, process-restart recovery, least-privilege deployment and container execution remain CI/release acceptance gates until proven on the exact head.

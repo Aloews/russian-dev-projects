@@ -14,6 +14,27 @@ services:
       retries: 20
     restart: unless-stopped
 
+  worker:
+    image: universal-service-hub:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/ush-worker"]
+    environment:
+      USH_WORKER_DATABASE_URL: ${USH_WORKER_DATABASE_URL:-}
+      USH_ENVIRONMENT: ${USH_ENVIRONMENT:-development}
+      USH_WORKER_ID: ${USH_WORKER_ID:-ush-worker}
+      USH_WORKER_CONCURRENCY: ${USH_WORKER_CONCURRENCY:-2}
+      USH_WORKER_POLL_MS: ${USH_WORKER_POLL_MS:-1000}
+      USH_WORKER_LEASE_SECONDS: ${USH_WORKER_LEASE_SECONDS:-60}
+      USH_WORKER_JOB_TYPES: ${USH_WORKER_JOB_TYPES:-system_noop}
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["worker"]
+
   hub:
     image: universal-service-hub:local
     build:
@@ -25,6 +46,13 @@ services:
       USH_DATABASE_URL: postgres://ush:${USH_DB_PASSWORD:?Run ./scripts/dev-up.sh to generate local credentials}@postgres:5432/ush
       USH_API_TOKEN: ${USH_API_TOKEN:?Run ./scripts/dev-up.sh to generate local credentials}
       USH_RATE_LIMIT_PER_MINUTE: ${USH_RATE_LIMIT_PER_MINUTE:-120}
+      USH_ARTIFACT_BUCKET: ${USH_ARTIFACT_BUCKET:-}
+      USH_ARTIFACT_REGION: ${USH_ARTIFACT_REGION:-}
+      USH_ARTIFACT_ENDPOINT: ${USH_ARTIFACT_ENDPOINT:-}
+      USH_ARTIFACT_ACCESS_KEY_ID: ${USH_ARTIFACT_ACCESS_KEY_ID:-}
+      USH_ARTIFACT_SECRET_ACCESS_KEY: ${USH_ARTIFACT_SECRET_ACCESS_KEY:-}
+      USH_ARTIFACT_PREFIX: ${USH_ARTIFACT_PREFIX:-ush-artifacts-v1}
+      USH_ARTIFACT_MAX_BYTES: ${USH_ARTIFACT_MAX_BYTES:-20971520}
       HOST: 0.0.0.0
       PORT: 8000
       RUST_LOG: info
