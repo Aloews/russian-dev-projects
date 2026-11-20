@@ -256,7 +256,7 @@ mod tests {
         let left = store.save(make(2), 1, lease_token);
         let right = store.save(make(2), 1, lease_token);
         let (left, right) = tokio::join!(left, right);
-        assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+        assert_eq!((if left.is_ok() { 1 } else { 0 }) + (if right.is_ok() { 1 } else { 0 }), 1);
         let failure = if left.is_err() { left.unwrap_err() } else { right.unwrap_err() };
         assert_eq!(failure, CheckpointError::LeaseLost);
 
