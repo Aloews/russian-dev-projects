@@ -755,3 +755,190 @@ pub fn run_agent_loop<M: AgentModel, E: ToolExecutor>(
     }
 }
 
+
+
+#[cfg(test)]
+mod loop_tests {
+    use super::*;
+    use chrono::Duration;
+    use serde_json::json;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    struct FakeModel {
+        responses: Vec<ModelResponse>,
+        next: usize,
+    }
+
+    impl AgentModel for FakeModel {
+        fn next_action(&mut self, _request: &AgentTurnRequest<'_>) -> Result<ModelResponse, RuntimeError> {
+            let response = self.responses.get(self.next).cloned().ok_or(RuntimeError::ModelFailure)?;
+            self.next += 1;
+            Ok(response)
+        }
+    }
+
+    struct FakeExecutor;
+
+    impl ToolExecutor for FakeExecutor {
+        fn execute(&mut self, _tool: &ToolDefinition, _arguments: &Value) -> Result<Value, RuntimeError> {
+            Ok(json!({"content":"fixture"}))
+        }
+    }
+
+    fn task() -> AgentTask {
+        AgentTask {
+            schema_version: CONTRACT_VERSION,
+            task_id: Uuid::nil(),
+            tenant_id: "tenant-a".into(),
+            project_id: "project-a".into(),
+            job_id: Uuid::new_v4(),
+            agent_role: AgentRole::Researcher,
+            objective_ref: "objective:fixture".into(),
+            input_artifact_ids: vec![],
+            allowed_tool_ids: vec!["artifact.read".into()],
+            model_policy_id: "test-policy".into(),
+            turn_budget: 4,
+            tool_call_budget: 2,
+            token_budget: 1000,
+            deadline: Utc::now() + Duration::minutes(2),
+            idempotency_key: "test-task-1".into(),
+            acceptance_criteria: vec!["return fixture output".into()],
+        }
+    }
+
+    fn action(kind: ActionKind, tool_id: Option<&str>, args: Value) -> ActionEnvelope {
+        ActionEnvelope {
+            schema_version: CONTRACT_VERSION,
+            action_id: Uuid::new_v4(),
+            kind,
+            tool_id: tool_id.map(str::to_owned),
+            tool_version: tool_id.map(|_| 1),
+            arguments: args,
+            reason_code: None,
+        }
+    }
+
+    fn context() -> (BTreeSet<String>, BTreeSet<Capability>, PolicyContext<'static>) {
+        let allowed = Box::leak(Box::new(BTreeSet::from(["artifact.read".to_owned()])));
+        let caps = Box::leak(Box::new(BTreeSet::from([Capability::ArtifactRead])));
+        let context = PolicyContext {
+            tenant_id: "tenant-a",
+            project_id: "project-a",
+            task_id: Uuid::nil(),
+            actor_id: "agent-a",
+            allowed_tool_ids: allowed,
+            granted_capabilities: caps,
+        };
+        (allowed.clone(), caps.clone(), context)
+    }
+
+    fn budget(task: &AgentTask) -> Budget {
+        Budget {
+            turns_remaining: task.turn_budget,
+            tool_calls_remaining: task.tool_call_budget,
+            tokens_remaining: task.token_budget,
+            deadline: task.deadline,
+        }
+    }
+
+    #[test]
+    fn fake_model_can_finish_without_tool_execution() {
+        let task = task();
+        let mut model = FakeModel {
+            responses: vec![ModelResponse {
+                action: action(ActionKind::Finish, None, json!({"answer":"done"})),
+                tokens_used: 12,
+            }],
+            next: 0,
+        };
+        let mut executor = FakeExecutor;
+        let (_, _, context) = context();
+        let result = run_agent_loop(
+            &task, &mut model, &mut executor, &ToolRegistry::default(),
+            &context, None, &mut budget(&task), Utc::now()
+        ).unwrap();
+        assert_eq!(result, AgentRunResult::Completed {
+            output: json!({"answer":"done"}),
+            turns_used: 1,
+            tool_calls_used: 0,
+        });
+    }
+
+    #[test]
+    fn fake_model_tool_call_is_validated_then_result_returns_to_next_turn() {
+        let task = task();
+        let mut registry = ToolRegistry::default();
+        registry.register(ToolDefinition {
+            tool_id: "artifact.read".into(),
+            version: 1,
+            capability: Capability::ArtifactRead,
+            risk: RiskClass::ReadOnly,
+            input: ToolInputContract {
+                required: BTreeMap::from([("artifact_id".into(), ValueKind::String)]),
+                optional: BTreeMap::new(),
+            },
+            timeout_ms: 1000,
+            max_output_bytes: 1024,
+            idempotent: true,
+        }).unwrap();
+        let mut model = FakeModel {
+            responses: vec![
+                ModelResponse {
+                    action: action(ActionKind::InvokeTool, Some("artifact.read"), json!({"artifact_id":"a-1"})),
+                    tokens_used: 20,
+                },
+                ModelResponse {
+                    action: action(ActionKind::Finish, None, json!({"summary":"fixture"})),
+                    tokens_used: 15,
+                },
+            ],
+            next: 0,
+        };
+        let mut executor = FakeExecutor;
+        let (_, _, context) = context();
+        let result = run_agent_loop(
+            &task, &mut model, &mut executor, &registry,
+            &context, None, &mut budget(&task), Utc::now()
+        ).unwrap();
+        assert_eq!(result, AgentRunResult::Completed {
+            output: json!({"summary":"fixture"}),
+            turns_used: 2,
+            tool_calls_used: 1,
+        });
+    }
+
+    #[test]
+    fn fake_model_cannot_execute_tool_outside_task_allowlist() {
+        let task = task();
+        let mut registry = ToolRegistry::default();
+        registry.register(ToolDefinition {
+            tool_id: "artifact.read".into(),
+            version: 1,
+            capability: Capability::ArtifactRead,
+            risk: RiskClass::ReadOnly,
+            input: ToolInputContract {
+                required: BTreeMap::from([("artifact_id".into(), ValueKind::String)]),
+                optional: BTreeMap::new(),
+            },
+            timeout_ms: 1000,
+            max_output_bytes: 1024,
+            idempotent: true,
+        }).unwrap();
+        let mut model = FakeModel {
+            responses: vec![ModelResponse {
+                action: action(ActionKind::InvokeTool, Some("artifact.read"), json!({"artifact_id":"a-1"})),
+                tokens_used: 10,
+            }],
+            next: 0,
+        };
+        let mut executor = FakeExecutor;
+        let (_, _, mut context) = context();
+        let empty = BTreeSet::new();
+        context.allowed_tool_ids = &empty;
+        let result = run_agent_loop(
+            &task, &mut model, &mut executor, &registry,
+            &context, None, &mut budget(&task), Utc::now()
+        );
+        assert_eq!(result, Err(RuntimeError::PolicyDenied("tool_not_in_task_allowlist")));
+    }
+}
