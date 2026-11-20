@@ -753,3 +753,14 @@ Next gates:
 - [ ] Wire checkpoint save/restore into the autonomous agent supervisor only after the above gates pass.
 
 Current implementation is in `src/checkpoint.rs`; it is a durable storage primitive, not yet a live agent-loop integration. No migration has been applied to a production database. PR remains open and unmerged.
+
+
+### AR-05 verification log — 2026-11-20
+
+- [x] PR #97 exact-head CI passed: `12a17dedd7f2d01b825c59d1bd189dfa7de24c1`, run [44775084301](https://github.com/Aloews/russian-dev-projects/actions/runs/44775084301).
+- [x] Initial PR #98 compile failure reproduced from run [44778363276](https://github.com/Aloews/russian-dev-projects/actions/runs/44778363276): `decode_and_verify` requires `&str`, but the stored optional digest was passed as owned `String`.
+- [x] Corrected the exact call site and verified the branch file now passes a borrowed digest. Fix commit: `102c42ae84fc341a058e3b4d51d3f79140e25df0`.
+- [ ] Latest exact-head CI run [44780698267](https://github.com/Aloews/russian-dev-projects/actions/runs/44780698267) is still in progress at `Rust lint`; Rust tests, PostgreSQL-backed checkpoint integration test, Python Alembic migration smoke, and remaining integration checks have not run yet.
+- [ ] Do not claim PostgreSQL migration or integration-test success until those CI steps complete successfully.
+- [ ] Do not connect checkpoint writes to the agent execution loop until the schema/test gate is green. The existing synchronous agent loop currently keeps tool observations as in-memory `Value` objects; safe restart requires durable artifact-backed observation references and idempotent tool replay, not just saving a budget snapshot.
+- [ ] Next implementation gate: introduce artifact-backed observation persistence/restore and idempotency-key propagation in the agent executor; then add restart tests proving a completed tool action is not duplicated and the restored agent receives the same observation sequence.
