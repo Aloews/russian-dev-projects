@@ -74,7 +74,7 @@ pub enum CheckpointError {
     NotFound,
 }
 
-fn validate_next_sequence(expected: i64, actual: i64) -> Result<(), CheckpointError> {\n    if expected < 0 || actual != expected + 1 {\n        return Err(CheckpointError::StaleSequence);\n    }\n    Ok(())\n}\n\nimpl AgentCheckpoint {
+fn validate_next_sequence(expected: i64, actual: i64) -> Result<(), CheckpointError> {\n    if expected < 0 || expected.checked_add(1) != Some(actual) {\n        return Err(CheckpointError::StaleSequence);\n    }\n    Ok(())\n}\n\nimpl AgentCheckpoint {
     pub fn validate(&self, expected_project: &str, expected_job: Uuid) -> Result<(), CheckpointError> {
         if self.schema_version != CHECKPOINT_SCHEMA_VERSION {
             return Err(CheckpointError::UnsupportedVersion);
@@ -135,21 +135,21 @@ impl CheckpointStore {
 
     pub async fn save(
         &self,
-        mut checkpoint: AgentCheckpoint,
+        checkpoint: AgentCheckpoint,
         expected_sequence: i64,
         lease_token: Uuid,
     ) -> Result<AgentCheckpoint, CheckpointError> {
         if expected_sequence < 0 || checkpoint.sequence != expected_sequence + 1 {
             return Err(CheckpointError::StaleSequence);
         }
-        checkpoint.validate(&checkpoint.project_id.clone(), checkpoint.job_id)?;
+        checkpoint.validate(checkpoint.project_id.as_str(), checkpoint.job_id)?;
         let digest = checkpoint.digest()?;
         let json = serde_json::to_value(&checkpoint).map_err(|_| CheckpointError::Invalid)?;
         let row = sqlx::query(
-            "UPDATE execution_jobs SET agent_checkpoint = $1, agent_checkpoint_version = $2, agent_checkpoint_sha256 = $3, agent_checkpoint_updated_at = NOW(), updated_at = NOW() WHERE project_id = $4 AND id = $5 AND status = 'leased' AND lease_token = $6 AND lease_expires_at > NOW() AND agent_checkpoint_version = $7 RETURNING agent_checkpoint_version"
+            "UPDATE execution_jobs SET agent_checkpoint = $1, agent_checkpoint_version = $2, agent_checkpoint_sha256 = $3, agent_checkpoint_updated_at = NOW(), updated_at = NOW() WHERE project_id = $4 AND id = $5 AND status = 'leased' AND lease_token = $6 AND lease_expires_at > NOW() AND agent_checkpoint_version = $7 AND (task_id IS NULL OR task_id = $8) RETURNING agent_checkpoint_version"
         )
         .bind(json).bind(checkpoint.sequence).bind(&digest).bind(&checkpoint.project_id)
-        .bind(checkpoint.job_id).bind(lease_token).bind(expected_sequence)
+        .bind(checkpoint.job_id).bind(lease_token).bind(expected_sequence).bind(checkpoint.task_id)
         .fetch_optional(&self.db).await.map_err(|_| CheckpointError::Database)?;
         if row.is_none() { return Err(CheckpointError::LeaseLost); }
         Ok(checkpoint)
