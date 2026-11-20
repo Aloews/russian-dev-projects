@@ -522,6 +522,14 @@ mod tests {
             authorize_tool(&registry, &sample_action(), &context, "tenant-a", "another-project", Uuid::nil(), None, Utc::now()),
             PolicyDecision::Deny("scope_mismatch")
         );
+        assert_eq!(
+            authorize_tool(&registry, &sample_action(), &context, "tenant-b", "project-a", Uuid::nil(), None, Utc::now()),
+            PolicyDecision::Deny("scope_mismatch")
+        );
+        assert_eq!(
+            authorize_tool(&registry, &sample_action(), &context, "tenant-a", "project-a", Uuid::new_v4(), None, Utc::now()),
+            PolicyDecision::Deny("scope_mismatch")
+        );
     }
 
     #[test]
@@ -572,7 +580,7 @@ mod tests {
         let mut changed = sample_action();
         changed.arguments = json!({"artifact_id":"different"});
         assert_eq!(
-            authorize_tool(&registry, &changed, &context, "project-a", Some(&approval), Utc::now()),
+            authorize_tool(&registry, &changed, &context, "tenant-a", "project-a", Uuid::nil(), Some(&approval), Utc::now()),
             PolicyDecision::RequiresApproval
         );
     }
