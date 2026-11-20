@@ -224,7 +224,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO execution_jobs (id, project_id, job_type, status, idempotency_key, lease_owner, lease_token, lease_expires_at) VALUES ($1,$2,'agent.test','leased',$3,'checkpoint-test',$4,NOW() + INTERVAL '5 minutes')"
         )
-        .bind(job_id).bind(&project_id).bind(task_id).bind(format!("checkpoint-{job_id}"))
+        .bind(job_id).bind(&project_id).bind(format!("checkpoint-{job_id}"))
         .bind(lease_token).execute(&pool).await.unwrap();
 
         let store = CheckpointStore::new(pool.clone());
