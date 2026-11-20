@@ -690,3 +690,12 @@ Next gates:
 2. Wire the worker client to the lease-scoped upload API; add idempotency, artifact persistence in completion/checkpoints, and restart/crash recovery integration.
 3. Implement project-authorized specialist dispatch with budget/idempotency and actual provider invocation.
 4. Begin workspace/repository schema and Git worktree manager only after gates above, following `docs/WORKSPACES_GIT_WORKTREES.md`: persistent root, exact SHA, one-writer lease/fencing, credential-safe access, crash reconciliation and quarantine.
+
+## Worker-to-artifact client — PR #97
+
+- Branch: `feat/ush-worker-artifact-client-v1`, based on the S3 API smoke merge commit `9e4174bba5038432e305f366c3f3da3741ab1747`.
+- The Rust worker now has an optional `USH_WORKER_API_BASE_URL` client for the lease-scoped endpoint `POST /v1/worker/projects/{project_id}/jobs/{job_id}/artifacts`.
+- Requests carry only the per-job worker ID and current lease token; the worker receives no project/admin bearer token or S3 credentials. The client enforces HTTPS (loopback HTTP only for local development), a 15-second timeout and no redirects.
+- The bounded `system_noop` executor uploads a deterministic JSON result artifact with a stable per-job idempotency key, then stores the returned artifact UUID in completion metadata. When the API URL is unset, prior non-artifact behavior remains unchanged. When configured, upload failure is retryable and the job is not reported as succeeded.
+- **Status: IMPLEMENTED; EXACT-HEAD CI NOT YET OBSERVED.** Current PR #97 head: `ce85eff76337cc57bd7775d5376f322ec6a432fb`. The available workflow-run and combined-status queries returned no run/status for this SHA. Do not merge until Rust format/Clippy/tests, migration/runtime smoke and the worker integration checks pass on this exact head.
+- This is the first worker-to-API transfer slice only. It does not yet implement LLM/provider dispatch, real task execution, artifact download in worker, full artifact-aware checkpoint recovery, or production S3 certification.
