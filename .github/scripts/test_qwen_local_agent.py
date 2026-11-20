@@ -227,13 +227,31 @@ class QwenEditSafetyTests(unittest.TestCase):
             })
 
     def test_qwen_generation_budget_is_bounded_for_small_model(self):
-        self.assertEqual(agent.MAX_FILES, 2)
-        self.assertEqual(agent.MAX_CONTEXT_CHARS, 8500)
-        self.assertEqual(agent.MAX_OUTPUT_TOKENS, 4096)
-        self.assertEqual(agent.EDIT_SCHEMA["properties"]["edits"]["maxItems"], 2)
-        self.assertEqual(agent.generation_budget(0), 3072)
-        self.assertEqual(agent.generation_budget(1), 4096)
-        self.assertEqual(agent.generation_budget(2), 4096)
+        self.assertEqual(agent.MAX_FILES, 1)
+        self.assertEqual(agent.MAX_CONTEXT_CHARS, 6000)
+        self.assertEqual(agent.MAX_OUTPUT_TOKENS, 2048)
+        self.assertEqual(agent.EDIT_SCHEMA["properties"]["edits"]["maxItems"], 1)
+        self.assertEqual(agent.generation_budget(0), 1536)
+        self.assertEqual(agent.generation_budget(1), 2048)
+        self.assertEqual(agent.generation_budget(2), 2048)
+
+    def test_source_and_test_context_are_prioritized_before_docs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "src/api.py"
+                doc = agent.ROOT / "docs/MAP.md"
+                source.parent.mkdir(parents=True)
+                doc.parent.mkdir(parents=True)
+                source.write_text("def api():\\n    return True\\n" + "# code\\n" * 100, encoding="utf-8")
+                doc.write_text("# project map\\n" + "documentation-only context\\n" * 400, encoding="utf-8")
+                context = agent.make_context("API endpoint implementation", ["src/api.py", "docs/MAP.md"])
+                self.assertIn("SOURCE/TEST FILE CANDIDATES", context)
+                self.assertIn("SOURCE/TEST FILE: src/api.py", context)
+                self.assertNotIn("PROJECT DOC: docs/MAP.md", context)
+            finally:
+                agent.ROOT = previous_root
 
 class ProductFactoryRecoveryTests(unittest.TestCase):
     def test_ollama_length_termination_is_reported_as_incomplete(self):
@@ -253,13 +271,13 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
         )
 
     def test_retry_generation_budget_increases_instead_of_shrinking(self):
-        self.assertEqual(agent.generation_budget(0), 3072)
-        self.assertEqual(agent.generation_budget(1), 4096)
+        self.assertEqual(agent.generation_budget(0), 1536)
+        self.assertEqual(agent.generation_budget(1), 2048)
         self.assertGreater(agent.generation_budget(1), agent.generation_budget(0))
 
     def test_qwen_output_limits_are_bounded(self):
-        self.assertEqual(agent.MAX_FILES, 2)
-        self.assertEqual(agent.EDIT_SCHEMA["properties"]["review"]["maxLength"], 2000)
+        self.assertEqual(agent.MAX_FILES, 1)
+        self.assertEqual(agent.EDIT_SCHEMA["properties"]["review"]["maxLength"], 1200)
 
     def test_agent_session_explicitly_adds_target_workspace(self):
         action_path = SCRIPT.parents[1] / "actions" / "product-factory-agent" / "action.yml"
