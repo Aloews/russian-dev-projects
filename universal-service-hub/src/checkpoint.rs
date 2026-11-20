@@ -139,7 +139,7 @@ impl CheckpointStore {
         expected_sequence: i64,
         lease_token: Uuid,
     ) -> Result<AgentCheckpoint, CheckpointError> {
-        if expected_sequence < 0 || checkpoint.sequence != expected_sequence + 1 {
+        if validate_next_sequence(expected_sequence, checkpoint.sequence).is_err() {
             return Err(CheckpointError::StaleSequence);
         }
         checkpoint.validate(checkpoint.project_id.as_str(), checkpoint.job_id)?;
@@ -160,11 +160,12 @@ impl CheckpointStore {
         project_id: &str,
         job_id: Uuid,
         lease_token: Uuid,
+        task_id: Uuid,
     ) -> Result<Option<AgentCheckpoint>, CheckpointError> {
         let row = sqlx::query(
-            "SELECT agent_checkpoint, agent_checkpoint_version, agent_checkpoint_sha256 FROM execution_jobs WHERE project_id = $1 AND id = $2 AND status = 'leased' AND lease_token = $3 AND lease_expires_at > NOW()"
+            "SELECT agent_checkpoint, agent_checkpoint_version, agent_checkpoint_sha256 FROM execution_jobs WHERE project_id = $1 AND id = $2 AND status = 'leased' AND lease_token = $3 AND lease_expires_at > NOW() AND (task_id IS NULL OR task_id = $4)"
         )
-        .bind(project_id).bind(job_id).bind(lease_token)
+        .bind(project_id).bind(job_id).bind(lease_token).bind(task_id)
         .fetch_optional(&self.db).await.map_err(|_| CheckpointError::Database)?;
         let Some(row) = row else { return Err(CheckpointError::LeaseLost); };
         let version: i64 = row.try_get("agent_checkpoint_version").map_err(|_| CheckpointError::Database)?;
