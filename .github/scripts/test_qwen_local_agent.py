@@ -244,7 +244,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                 doc = agent.ROOT / "docs/MAP.md"
                 source.parent.mkdir(parents=True)
                 doc.parent.mkdir(parents=True)
-                source.write_text("def api():\\n    return True\\n" + "# code\\n" * 100, encoding="utf-8")
+                source.write_text("def api():\n    return True\n" + "# code\n" * 100, encoding="utf-8")
                 doc.write_text("# project map\\n" + "documentation-only context\\n" * 400, encoding="utf-8")
                 context = agent.make_context("API endpoint implementation", ["src/api.py", "docs/MAP.md"])
                 self.assertIn("SOURCE/TEST FILE CANDIDATES", context)
