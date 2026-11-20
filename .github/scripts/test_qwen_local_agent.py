@@ -17,6 +17,21 @@ ROOT = Path(__file__).resolve().parents[2]
 ACTION = ROOT / ".github" / "actions" / "product-factory-agent" / "action.yml"
 
 class QwenEditSafetyTests(unittest.TestCase):
+    def test_retry_prompt_requires_concrete_source_or_test_change(self):
+        retry = agent.build_retry_messages(
+            [{"role": "user", "content": "objective"}],
+            "Qwen response contains no source or test edits",
+        )
+        self.assertIn("exactly one concrete implementation edit", retry[-1]["content"])
+        self.assertIn("do not choose documentation", retry[-1]["content"])
+
+    def test_validation_error_requires_concrete_source_edit(self):
+        with self.assertRaisesRegex(ValueError, "small concrete implementation change"):
+            agent.validate_response({
+                "review": "A" * 100,
+                "edits": [{"path": "docs/MAP.md", "old": "A", "new": "B"}],
+            })
+
     def test_source_file_is_allowed(self):
         self.assertTrue(agent.allowed("src/main.py", {"src/main.py"}))
 
