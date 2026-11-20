@@ -729,3 +729,12 @@ Next gates:
 - **Limitations:** this is a synchronous orchestration core for deterministic testing. It is not yet connected to a live provider, durable checkpoint storage, async cancellation/lease heartbeat, process sandbox or actual registered production tools. Tool timeout is metadata at this stage and is not yet enforced by a process/runtime supervisor.
 - **Status: CODE WRITTEN; NOT VERIFIED.** The implementation code before this MAP-only update is at `73e6c5108fda53ca1086ad45e8fa7e8fc9ee24e3`; exact-head CI, rustfmt, Clippy and Rust tests remain unobserved. No merge.
 - Next: obtain exact-head CI/build evidence; correct any compile/lint/test failures; then implement AR-05 durable checkpoint/recovery and an async runtime supervisor before enabling a live provider adapter.
+
+
+## Rust Agent Runtime verification repair (2026-11-20)
+
+- AR-03 exact-head CI run #1763 failed at `cargo clippy --all-targets -- -D warnings`; Rust format passed, Rust tests were skipped because lint failed.
+- Evidence: `src/agent_runtime.rs` had two `too_many_arguments` lint findings, on `authorize_tool` and `run_agent_loop`.
+- Repair commit: `55c3c3f8f78f3db610b60fd9e5c6d638e11d8457`; targeted Clippy allow attributes were added to these orchestration functions. This is a narrow lint allowance, not verification.
+- **Current gate:** wait for CI on the updated immutable head; if Clippy succeeds, inspect compile/test output and review policy/runtime issues before beginning AR-05 durable checkpoint work. No merge while checks are red or pending.
+- **AR-05 planned:** durable checkpoint schema and serialization, task/tenant/project scope binding, job lease fencing, idempotent resume, explicit interrupted/failed/awaiting-approval states, recovery tests and migration smoke test. Discovery of current DB/migration/API boundaries is prerequisite; implementation not started.
