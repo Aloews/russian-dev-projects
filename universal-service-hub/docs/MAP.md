@@ -678,6 +678,15 @@ The cloud coding workflow was not triggered for these checks because it can call
 
 ## Worker runtime and artifact storage
 
-- Worker Supervisor v1: `src/bin/ush-worker.rs`, `src/execution_queue.rs`; limited to `system_noop` until project-scoped execution authorization and provider budgets are complete.
-- Artifact adapter/API: `src/artifact_store.rs`, project-scoped upload/download handlers, generated UUID keys, SHA-256 verification, DB manifest/content-type and compensating cleanup. 2 MiB HTTP limit. Worker-to-worker handoff remains not integrated.
-- Workspaces/Git worktrees remain next after durable artifact handoff and specialist dispatcher gates.
+- **PR #77 merged:** commit `2940e84e45795984f5b1f65868768af18056ede2`, exact-head CI run #1730 succeeded. The bounded supervisor, queue lease recovery, process restart acceptance and image checks are in the feature base. Capability is still limited to non-billable `system_noop`; no model calls or specialist dispatch.
+- **PR #81 merged into the worker feature branch:** commit `3f3fd2d8606dc10de6fe75de389fa4afc33362da`, run #1587 succeeded. Adds Wiremock AWS SDK HTTP-contract tests for SSE-S3 PUT, GET, DELETE, streaming size limits and invalid path rejection.
+- **PR #82 merged into its artifact-handoff stack branch:** commit `f5d5511d82e7bc65d87047b9180aef352f030cbc`, run #1709 succeeded. Hub-side lease-bound upload endpoint, idempotency and migration 0005 smoke. The worker process is not wired to call the endpoint; no real S3 transfer is confirmed.
+- **PR #80 S3 API smoke failure:** run #1583 (44291673336) was missing preserved container diagnostics; root cause unknown at that point.
+- **PR #94 failure diagnosed:** exact head `55310c3f5bda9543f16f4005c3dbead39b6c72a1`, run #1734 (44728577550) allocated a runner and passed Rust/Python checks, migration smoke, Docker build and worker image smoke, but failed the actual S3 upload. Preserved logs show Silo rejected SSE-S3: `NotImplemented — Server side encryption specified but KMS is not configured`. API startup, PostgreSQL and Silo readiness were successful; this was a test-fixture KMS configuration gap.
+- **Repair PR #95:** branch `test/ush-s3-smoke-kms-20261120`, created from the exact PR #81 merge commit `3f3fd2d8606dc10de6fe75de389fa4afc33362da`. Adds the isolated S3 API smoke script with a test-only static KMS key generated from 32 ephemeral bytes, adds the smoke step to CI, and keeps the production adapter's required SSE-S3 header unchanged. Exact-head CI is pending and the smoke result must still be proven.
+
+Next gates:
+1. Green exact-head CI plus real upload/download byte equality and SHA-256, authorization and tenant isolation, validation/size bounds, and tampered-object rejection against the ephemeral S3-compatible fixture.
+2. Wire worker artifact upload through the Hub endpoint using lease capability, with idempotency and restart/crash-recovery tests; worker must never receive project/admin or S3 credentials.
+3. Project-authorized specialist dispatch with budget/idempotency controls and actual provider invocation tests.
+4. Then workspace/repository schema and Git worktree manager per `docs/WORKSPACES_GIT_WORKTREES.md`: persistent root, exact SHA, single-writer lease/fencing, credential-safe provider access, crash reconciliation and quarantine.
