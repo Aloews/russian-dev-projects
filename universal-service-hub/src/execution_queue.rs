@@ -108,8 +108,63 @@ pub async fn enqueue(pool: &PgPool, project_id: &str, request: &EnqueueRequest) 
     Ok((job, created))
 }
 
+/// Reconciles expired leases transactionally before new work is claimed.
+pub async fn recover_expired_leases(pool: &PgPool, allowed_job_types: &[String]) -> Result<u64, QueueError> {
+    let mut tx = pool.begin().await.map_err(|_| QueueError::Database)?;
+    let rows = sqlx::query(
+        "SELECT project_id, id, attempt_count, lease_token
+         FROM execution_jobs
+         WHERE status = 'leased' AND lease_expires_at <= NOW()
+           AND ($1::text[] IS NULL OR job_type = ANY($1))
+         ORDER BY lease_expires_at
+         LIMIT 100
+         FOR UPDATE SKIP LOCKED"
+    ).bind(if allowed_job_types.is_empty() { None::<Vec<String>> } else { Some(allowed_job_types.to_vec()) })
+     .fetch_all(&mut *tx).await.map_err(|_| QueueError::Database)?;
+    for row in &rows {
+        let project_id: String = row.try_get("project_id").map_err(|_| QueueError::Database)?;
+        let job_id: Uuid = row.try_get("id").map_err(|_| QueueError::Database)?;
+        let attempt: i32 = row.try_get("attempt_count").map_err(|_| QueueError::Database)?;
+        let token: Uuid = row.try_get("lease_token").map_err(|_| QueueError::Database)?;
+        let updated_job = sqlx::query(
+            "UPDATE execution_jobs SET
+                status = CASE WHEN attempt_count < max_attempts THEN 'retry_wait' ELSE 'dead_letter' END,
+                available_at = CASE WHEN attempt_count < max_attempts
+                    THEN NOW() + (LEAST(300, (5 * power(2, GREATEST(0, attempt_count-1)))::integer) * INTERVAL '1 second')
+                    ELSE available_at END,
+                lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
+                last_error_code = 'worker_lease_expired',
+                finished_at = CASE WHEN attempt_count < max_attempts THEN NULL ELSE NOW() END,
+                updated_at = NOW()
+             WHERE project_id=$1 AND id=$2 AND status='leased' AND lease_token=$3"
+        ).bind(&project_id).bind(job_id).bind(token)
+         .execute(&mut *tx).await.map_err(|_| QueueError::Database)?;
+        if updated_job.rows_affected() != 1 { return Err(QueueError::Database); }
+        let updated_attempt = sqlx::query(
+            "UPDATE execution_attempts SET status='lease_expired', finished_at=NOW(),
+             duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint),
+             error_code='worker_lease_expired'
+             WHERE project_id=$1 AND job_id=$2 AND attempt_number=$3 AND lease_token=$4 AND status='running'"
+        ).bind(&project_id).bind(job_id).bind(attempt).bind(token)
+         .execute(&mut *tx).await.map_err(|_| QueueError::Database)?;
+        if updated_attempt.rows_affected() != 1 { return Err(QueueError::Database); }
+    }
+    tx.commit().await.map_err(|_| QueueError::Database)?;
+    Ok(rows.len() as u64)
+}
+
 /// Atomically leases one due job and records its attempt. The lease token fences stale workers.
 pub async fn claim(pool: &PgPool, worker_id: &str, lease_seconds: i64) -> Result<Option<Lease>, QueueError> {
+    claim_for_types(pool, worker_id, lease_seconds, &[]).await
+}
+
+/// Claims only explicitly enabled job types. An empty allowlist preserves the legacy all-types behavior.
+pub async fn claim_for_types(
+    pool: &PgPool,
+    worker_id: &str,
+    lease_seconds: i64,
+    allowed_job_types: &[String],
+) -> Result<Option<Lease>, QueueError> {
     if worker_id.is_empty() || worker_id.len() > 160 || !(5..=3600).contains(&lease_seconds) {
         return Err(QueueError::InvalidInput);
     }
@@ -119,14 +174,16 @@ pub async fn claim(pool: &PgPool, worker_id: &str, lease_seconds: i64) -> Result
         "WITH candidate AS ( \
             SELECT id FROM execution_jobs \
             WHERE status IN ('queued','retry_wait') AND available_at <= NOW() AND attempt_count < max_attempts \
+              AND ($4::text[] IS NULL OR job_type = ANY($4)) \
             ORDER BY priority DESC, available_at, created_at \
             FOR UPDATE SKIP LOCKED LIMIT 1 \
          ) \
          UPDATE execution_jobs j SET status='leased', lease_owner=$1, lease_token=$2, \
             lease_expires_at=NOW() + ($3 * INTERVAL '1 second'), heartbeat_at=NOW(), \
             attempt_count=j.attempt_count+1, updated_at=NOW() \
-         FROM candidate c WHERE j.id=c.id RETURNING j.*"
+         FROM candidate c WHERE j.id=c.id RETURNING j.id,j.project_id,j.task_id,j.job_type,j.status,j.priority,j.attempt_count,j.max_attempts,j.available_at,j.created_at,j.lease_expires_at"
     ).bind(worker_id).bind(token).bind(lease_seconds)
+     .bind(if allowed_job_types.is_empty() { None::<Vec<String>> } else { Some(allowed_job_types.to_vec()) })
      .fetch_optional(&mut *tx).await.map_err(|_| QueueError::Database)?;
 
     let Some(row) = row else { tx.commit().await.map_err(|_| QueueError::Database)?; return Ok(None); };
@@ -176,12 +233,13 @@ pub async fn complete(pool: &PgPool, job_id: Uuid, token: Uuid, result_metadata:
      .ok_or(QueueError::NotFoundOrLeaseLost)?;
     let project_id: String = row.try_get("project_id").map_err(|_| QueueError::Database)?;
     let attempt: i32 = row.try_get("attempt_count").map_err(|_| QueueError::Database)?;
-    sqlx::query(
+    let attempt_update = sqlx::query(
         "UPDATE execution_attempts SET status='succeeded', finished_at=NOW(), \
-         duration_ms=(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint, result_metadata=$4 \
+         duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint), result_metadata=$4 \
          WHERE project_id=$1 AND job_id=$2 AND attempt_number=$3 AND lease_token=$5 AND status='running'"
     ).bind(&project_id).bind(job_id).bind(attempt).bind(result_metadata).bind(token)
      .execute(&mut *tx).await.map_err(|_| QueueError::Database)?;
+    if attempt_update.rows_affected() != 1 { return Err(QueueError::Database); }
     tx.commit().await.map_err(|_| QueueError::Database)?;
     Ok(())
 }
@@ -210,12 +268,13 @@ pub async fn fail(pool: &PgPool, job_id: Uuid, token: Uuid, error_code: &str, re
     let attempt: i32 = row.try_get("attempt_count").map_err(|_| QueueError::Database)?;
     let status: String = row.try_get("status").map_err(|_| QueueError::Database)?;
     let attempt_status = if status == "retry_wait" { "retryable_failure" } else { "permanent_failure" };
-    sqlx::query(
+    let attempt_update = sqlx::query(
         "UPDATE execution_attempts SET status=$4, finished_at=NOW(), \
-         duration_ms=(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint, error_code=$5 \
+         duration_ms=GREATEST(0,(EXTRACT(EPOCH FROM (NOW()-started_at))*1000)::bigint), error_code=$5 \
          WHERE project_id=$1 AND job_id=$2 AND attempt_number=$3 AND lease_token=$6 AND status='running'"
     ).bind(&project_id).bind(job_id).bind(attempt).bind(attempt_status).bind(error_code).bind(token)
      .execute(&mut *tx).await.map_err(|_| QueueError::Database)?;
+    if attempt_update.rows_affected() != 1 { return Err(QueueError::Database); }
     tx.commit().await.map_err(|_| QueueError::Database)?;
     Ok(())
 }

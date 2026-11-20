@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+mod artifact_store;
 mod schedule_recovery;
 
 use std::{env, net::{IpAddr, SocketAddr}, str::FromStr, sync::Arc, time::{Duration, Instant}};
@@ -27,6 +29,7 @@ struct AppState {
     admin_token: Arc<String>,
     http: reqwest::Client,
     infisical: Option<InfisicalClient>,
+    artifact_store: Option<artifact_store::ArtifactStore>,
     rate_limit_per_minute: i64,
 }
 
@@ -1372,6 +1375,118 @@ fn valid_worker_id(value: &str) -> bool {
         value.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
+async fn upload_execution_artifact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, job_id)): Path<(String, Uuid)>,
+    body: axum::body::Bytes,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let principal = require_operator(&state, &headers).await?;
+    if !can_manage_delivery_schedule(&principal, &project_id) {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch"));
+    }
+    let store = state.artifact_store.as_ref()
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "artifact_storage_unconfigured"))?;
+    if body.is_empty() || body.len() > 2 * 1024 * 1024 {
+        return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "artifact_size_limit"));
+    }
+    let content_type = headers.get("content-type").and_then(|v| v.to_str().ok())
+        .ok_or(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "artifact_content_type_required"))?;
+    let artifact_type = headers.get("x-artifact-type").and_then(|v| v.to_str().ok())
+        .ok_or(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "artifact_type_required"))?;
+    let task_id = match headers.get("x-task-id") {
+        Some(value) => Some(Uuid::parse_str(value.to_str().map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task_id"))?)
+            .map_err(|_| ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_task_id"))?),
+        None => None,
+    };
+    if !artifact_store::valid_artifact_type(artifact_type) {
+        return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "invalid_artifact_type"));
+    }
+    if !artifact_store::valid_content_type(content_type) {
+        return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_artifact_content_type"));
+    }
+
+    let job_row = sqlx::query("SELECT task_id FROM execution_jobs WHERE project_id=$1 AND id=$2")
+        .bind(&project_id).bind(job_id).fetch_optional(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_job_lookup_failed"))?;
+    let job_row = job_row.ok_or(ApiError(StatusCode::NOT_FOUND, "execution_job_not_found"))?;
+    let job_task_id: Option<Uuid> = job_row.get("task_id");
+    if task_id.is_some() && task_id != job_task_id {
+        return Err(ApiError(StatusCode::CONFLICT, "artifact_task_mismatch"));
+    }
+    let task_id = job_task_id;
+    if let Some(task_id) = task_id {
+        let task_exists = sqlx::query("SELECT 1 FROM project_tasks WHERE project_id=$1 AND id=$2")
+            .bind(&project_id).bind(task_id).fetch_optional(&state.db).await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_task_lookup_failed"))?;
+        if task_exists.is_none() { return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_task_integrity_failed")); }
+    }
+    let artifact = store.put_and_register(&state.db, artifact_store::ArtifactRegistration {
+        project_id: &project_id,
+        job_id,
+        task_id,
+        artifact_type,
+        content_type,
+        bytes: &body,
+    })
+        .await.map_err(|error| {
+            tracing::error!(project_id, job_id = %job_id, error = ?error, "artifact upload failed");
+            ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_upload_failed")
+        })?;
+    audit(&state, &principal.actor, "execution.artifact.upload", "execution_artifact", &artifact.artifact_id.to_string(),
+        json!({"project_id":project_id,"job_id":job_id,"artifact_type":artifact_type,"size_bytes":artifact.size_bytes,"sha256":artifact.sha256})).await;
+    Ok((StatusCode::CREATED, Json(json!({
+        "artifact_id":artifact.artifact_id,"job_id":job_id,"size_bytes":artifact.size_bytes,
+        "sha256":artifact.sha256,"content_type":artifact.content_type
+    }))))
+}
+
+async fn download_execution_artifact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, artifact_id)): Path<(String, Uuid)>,
+) -> ApiResult<Response> {
+    let principal = require_operator(&state, &headers).await?;
+    if !can_manage_delivery_schedule(&principal, &project_id) {
+        return Err(ApiError(StatusCode::FORBIDDEN, "project_scope_mismatch"));
+    }
+    let store = state.artifact_store.as_ref()
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "artifact_storage_unconfigured"))?;
+    let row = sqlx::query("SELECT storage_key, content_sha256, size_bytes, content_type, job_id FROM execution_artifacts WHERE project_id=$1 AND id=$2")
+        .bind(&project_id).bind(artifact_id).fetch_optional(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_lookup_failed"))?
+        .ok_or(ApiError(StatusCode::NOT_FOUND, "artifact_not_found"))?;
+    let key: String = row.get("storage_key");
+    let expected_sha: String = row.get("content_sha256");
+    let expected_size: i64 = row.get("size_bytes");
+    let content_type: String = row.get("content_type");
+    let job_id: Option<Uuid> = row.get("job_id");
+    let (bytes, stored_content_type) = store.get(&key).await.map_err(|error| {
+        tracing::error!(artifact_id = %artifact_id, error = ?error, "artifact download failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_download_failed")
+    })?;
+    let actual_sha = hex::encode(Sha256::digest(&bytes));
+    if bytes.len() as i64 != expected_size || actual_sha != expected_sha {
+        return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_integrity_check_failed"));
+    }
+    let response_content_type = stored_content_type.unwrap_or(content_type);
+    let content_type_header = HeaderValue::from_str(&response_content_type)
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_content_type"))?;
+    audit(&state, &principal.actor, "execution.artifact.download", "execution_artifact", &artifact_id.to_string(),
+        json!({"project_id":project_id,"job_id":job_id,"size_bytes":expected_size,"sha256":expected_sha})).await;
+    let mut response = Response::new(axum::body::Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert("content-type", content_type_header);
+    response.headers_mut().insert("x-artifact-sha256", HeaderValue::from_str(&expected_sha)
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_hash"))?);
+    response.headers_mut().insert("content-length", HeaderValue::from_str(&expected_size.to_string())
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_size"))?);
+    response.headers_mut().insert("content-disposition", HeaderValue::from_static("attachment; filename=artifact"));
+    response.headers_mut().insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    response.headers_mut().insert("cache-control", HeaderValue::from_static("private, no-store"));
+    Ok(response)
+}
+
 async fn enqueue_execution_job(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1760,7 +1875,10 @@ async fn main() -> anyhow::Result<()> {
         ((None, None, None, None), "env") if runtime_environment != "production" => None,
         _ => anyhow::bail!("Infisical backend requires client ID, client secret, project ID and environment"),
     };
-    let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical, rate_limit_per_minute };
+    let artifact_configured = ["USH_ARTIFACT_BUCKET", "USH_ARTIFACT_REGION", "USH_ARTIFACT_ACCESS_KEY_ID", "USH_ARTIFACT_SECRET_ACCESS_KEY"]
+        .iter().any(|name| env::var(name).ok().is_some_and(|value| !value.trim().is_empty()));
+    let artifact_store = if artifact_configured { Some(artifact_store::ArtifactStore::from_env()?) } else { None };
+    let state = AppState { db, admin_token: Arc::new(admin_token), http, infisical, artifact_store, rate_limit_per_minute };
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -1776,6 +1894,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/ai/chat", post(ai_chat))
         .route("/v1/projects/{project_id}/delivery/recovery-plan", post(delivery_recovery_plan))
         .route("/v1/projects/{project_id}/jobs", post(enqueue_execution_job))
+        .route("/v1/projects/{project_id}/jobs/{job_id}/artifacts", post(upload_execution_artifact))
+        .route("/v1/projects/{project_id}/artifacts/{artifact_id}", get(download_execution_artifact))
         .route("/v1/projects/{project_id}/workers/claim", post(claim_execution_job))
         .route("/v1/projects/{project_id}/jobs/{job_id}/heartbeat", post(heartbeat_execution_job))
         .route("/v1/projects/{project_id}/jobs/{job_id}/checkpoint", put(checkpoint_execution_job))

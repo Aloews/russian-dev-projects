@@ -664,3 +664,20 @@ The cloud coding workflow was not triggered for these checks because it can call
 - Handoff idempotency now relies on the database unique constraint and verifies exact payload equality on duplicate keys; conflicting key reuse returns a conflict instead of racing through a `NOT EXISTS` check.
 - Failure handling now verifies exactly one running attempt is finalized, preserving consistency between the job row and attempt ledger.
 - Exact-head CI is pending. This change does not yet start a continuously polling process or invoke an LLM. A worker supervisor, object-store-backed artifacts and real specialist dispatch remain the next implementation milestones.
+
+## Worker supervisor implementation — PR in progress
+
+- Branch: `feat/ush-worker-supervisor-v1`, based on the exact CI-green PR #76 head.
+- Adds a separate `ush-worker` Rust binary and packages it in the API image.
+- Adds job-type-filtered claims and transactional expired-lease/attempt reconciliation.
+- Worker concurrency and polling are bounded; SIGINT stops the supervisor gracefully.
+- Worker uses a dedicated `USH_WORKER_DATABASE_URL`; production requires TLS `verify-full`; worker does not run migrations or receive the Hub API/admin token.
+- Capability is intentionally limited to non-billable `system_noop`. No provider invocation, specialist dispatch, artifact bytes or production service is claimed.
+- Required next evidence: exact-head Rust CI, PostgreSQL concurrency/recovery tests, container smoke, and a process-kill/restart test.
+
+
+## Worker runtime and artifact storage
+
+- Worker Supervisor v1: `src/bin/ush-worker.rs`, `src/execution_queue.rs`; limited to `system_noop` until project-scoped execution authorization and provider budgets are complete.
+- Artifact adapter/API: `src/artifact_store.rs`, project-scoped upload/download handlers, generated UUID keys, SHA-256 verification, DB manifest/content-type and compensating cleanup. 2 MiB HTTP limit. Worker-to-worker handoff remains not integrated.
+- Workspaces/Git worktrees remain next after durable artifact handoff and specialist dispatcher gates.
