@@ -631,6 +631,7 @@ pub struct AgentTurnRequest<'a> {
     pub observations: &'a [ToolObservation],
 }
 
+#[derive(Debug, Clone)]
 pub struct ModelResponse {
     pub action: ActionEnvelope,
     pub tokens_used: u32,
@@ -818,18 +819,18 @@ mod loop_tests {
         }
     }
 
-    fn context() -> (BTreeSet<String>, BTreeSet<Capability>, PolicyContext<'static>) {
-        let allowed = Box::leak(Box::new(BTreeSet::from(["artifact.read".to_owned()])));
-        let caps = Box::leak(Box::new(BTreeSet::from([Capability::ArtifactRead])));
-        let context = PolicyContext {
+    fn context<'a>(
+        allowed_tool_ids: &'a BTreeSet<String>,
+        granted_capabilities: &'a BTreeSet<Capability>,
+    ) -> PolicyContext<'a> {
+        PolicyContext {
             tenant_id: "tenant-a",
             project_id: "project-a",
             task_id: Uuid::nil(),
             actor_id: "agent-a",
-            allowed_tool_ids: allowed,
-            granted_capabilities: caps,
-        };
-        (allowed.clone(), caps.clone(), context)
+            allowed_tool_ids,
+            granted_capabilities,
+        }
     }
 
     fn budget(task: &AgentTask) -> Budget {
@@ -852,7 +853,9 @@ mod loop_tests {
             next: 0,
         };
         let mut executor = FakeExecutor;
-        let (_, _, context) = context();
+        let allowed = BTreeSet::from(["artifact.read".to_owned()]);
+        let capabilities = BTreeSet::from([Capability::ArtifactRead]);
+        let context = context(&allowed, &capabilities);
         let result = run_agent_loop(
             &task, &mut model, &mut executor, &ToolRegistry::default(),
             &context, None, &mut budget(&task), Utc::now()
@@ -932,9 +935,9 @@ mod loop_tests {
             next: 0,
         };
         let mut executor = FakeExecutor;
-        let (_, _, mut context) = context();
         let empty = BTreeSet::new();
-        context.allowed_tool_ids = &empty;
+        let capabilities = BTreeSet::from([Capability::ArtifactRead]);
+        let context = context(&empty, &capabilities);
         let result = run_agent_loop(
             &task, &mut model, &mut executor, &registry,
             &context, None, &mut budget(&task), Utc::now()
