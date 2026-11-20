@@ -180,7 +180,7 @@ def validate_response(response_json):
         and Path(edit["path"]).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}
     ]
     if not source_edits:
-        raise ValueError("Qwen response contains no source or test edits")
+        raise ValueError("Qwen response contains no source or test edits; choose one relevant source/test file and make a small concrete implementation change")
     return review_text
 
 
@@ -189,10 +189,11 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
     instruction = (
         "Your previous response failed validation: " + str(validation_error)[:300] + ". "
         "Discard that response and produce a fresh, complete JSON object matching the schema. "
-        "Keep the review under 1200 characters and make at most two small source/test edits. "
-        "For an existing file, old must be an exact unique snippet from the evidence. "
-        "For a new file, old must be empty. Never include markdown fences or unescaped newlines inside JSON strings. "
-        "Do not claim tests were run.\n" + existing_file_evidence[:5000]
+        "The previous answer had no valid source/test change. This time make exactly one concrete implementation edit "
+        "in a source or test file from the provided context; do not choose documentation. Keep the review under 1000 characters. "
+        "For an existing file, old must be an exact unique snippet from the evidence. For a new file, old must be empty. "
+        "Never include markdown fences or unescaped newlines inside JSON strings. Do not claim tests were run.\n"
+        + existing_file_evidence[:5000]
     )
     return [*base_messages, {"role": "user", "content": instruction}]
 
@@ -340,14 +341,13 @@ def main():
     if skill:
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
     system += (
-        "\n\nYou are a coordinated Qwen2.5-Coder 3B engineering council. In ONE inference pass, "
-        "perform six explicitly separated roles: (1) architecture analyst, (2) product and user-journey analyst, "
-        "(3) security/privacy analyst, (4) QA/test analyst, (5) implementation engineer, and "
-        "(6) independent post-change reviewer. First reason through architecture, product, security and QA; "
-        "then make only the smallest coherent implementation changes; finally review your proposed changes "
-        "for regressions and missing tests. The 'review' field must contain concise findings for each role, "
-        "evidence-backed file references, acceptance criteria and any remaining unknowns. "
-        "Do not claim tests were run. Return only JSON matching the schema, including both review and edits."
+        "\n\nUse a compact engineering workflow appropriate for a 3B coding model: inspect evidence, "
+        "choose exactly one small concrete source/test improvement, implement it, and sanity-review the proposed diff. "
+        "Do not simulate multiple independent agents or write a long role-play council. This is one inference pass, "
+        "not independent verification. The edits array MUST include at least one source or test file; documentation-only "
+        "changes are rejected. Prefer an existing source/test file present in the supplied context and use one exact, "
+        "unique old snippet. The review field should briefly identify the selected file, risk, test needed and unknowns. "
+        "Do not claim tests were run. Return only JSON matching the schema."
     )
     messages = [
         {"role": "system", "content": system},
