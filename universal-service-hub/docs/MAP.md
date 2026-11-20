@@ -678,17 +678,15 @@ The cloud coding workflow was not triggered for these checks because it can call
 
 ## Worker runtime and artifact storage
 
-- Worker Supervisor v1: `src/bin/ush-worker.rs`, `src/execution_queue.rs`; limited to `system_noop` until project-scoped execution authorization and provider budgets are complete.
-- Artifact adapter/API: `src/artifact_store.rs`, project-scoped upload/download handlers, generated UUID keys, SHA-256 verification, DB manifest/content-type and compensating cleanup. 2 MiB HTTP limit. Worker-to-worker handoff remains not integrated.
-- Workspaces/Git worktrees remain next after durable artifact handoff and specialist dispatcher gates.
+- **PR #77 merged** into `fix/ush-worker-handoff-integrity`: `2940e84e45795984f5b1f65868768af18056ede2`; exact-head CI #1730 passed all steps. Worker supervisor, bounded leases and restart recovery are implemented, but capability remains `system_noop` only. It is not an AI agent executor.
+- **PR #81 merged** into `feat/ush-worker-supervisor-v1`: `3f3fd2d8606dc10de6fe75de389fa4afc33362da`; run #1587 passed. Adds Wiremock S3 client HTTP-contract tests, not real Silo object integration.
+- **PR #82 merged** into `test/ush-artifact-s3-http-integration`: `f5d5511d82e7bc65d87047b9180aef352f030cbc`; exact-head run #1709 passed. Adds the lease-scoped Hub artifact upload endpoint, idempotency and migration 0005 smoke. Worker client is still not wired to call this endpoint.
+- **Actual S3 smoke failure, run #1734:** PR #94 head `55310c3f5bda9543f16f4005c3dbead39b6c72a1` passed Rust/Python checks, migration smoke, Docker build and worker image smoke but failed object upload. Runner allocated; PostgreSQL and Silo ready. Logs show Silo rejected SSE-S3 because KMS was not configured (`NotImplemented`). Root cause is test fixture configuration, not application startup.
+- **Repair branch #95** configured a test-only static KMS key, generated from 32 ephemeral bytes, but no CI run is observable on exact head `4a953b7ca917be0beed39b8ca4ff94a69ac056b2`; it is not verified.
+- **Combined stack branch:** `feat/ush-artifact-api-smoke-merged-stack-20261120` starts at merged PR #82 SHA `f5d5511d82e7bc65d87047b9180aef352f030cbc`, then copies the corrected smoke harness, adds it to CI, and updates this MAP. It must pass CI and real S3-compatible upload/download, auth/tenant isolation, bounds, and corruption rejection before the artifact API integration is verified.
 
-
-## Worker artifact handoff — implementation increment
-
-- Branch: `feat/ush-worker-artifact-handoff`, stacked on the exact CI-green S3 adapter test head `5df6f8cf8525efd0cb05552176df8edb14c88527`.
-- Added a worker-only upload capability scoped to project, job, worker ID and the current unexpired lease token. The worker does not receive project/admin API tokens or S3 credentials.
-- The Hub API holds a row lock across upload, rechecks wall-clock lease expiry after the S3 write, registers SHA-256/content type/size metadata and deletes an orphaned object if registration fails.
-- Added per-job idempotency keys; exact retries reuse the existing artifact ID, while different content under the same key conflicts.
-- Acceptance: Rust contract tests; migration smoke; runtime smoke rejects a stale/wrong lease and fails closed when storage is unconfigured. Real worker-to-MinIO/S3 upload is a separate required integration gate before marking the handoff fully verified.
-- Exact-head verification: PR #82 head `6d4df2b1d18fbba3ab9148dbaefba63e54190df7` passed GitHub Actions run #1589 (`44336407133`) on 2026-11-18. All 24 main job steps succeeded, including Rust format/lint/tests, Python/Ruff, migration smoke (including migration 0005), Docker build, worker binary image smoke, Compose runtime startup and container smoke. The runtime smoke rejects a wrong lease token and confirms fail-closed behavior when artifact storage is unconfigured.
-- Status: Hub-side lease-scoped upload endpoint and its deterministic tests are CI-verified on this exact SHA. This does not verify a real worker-to-MinIO/S3 transfer: the worker binary is not wired to call the endpoint, and no live object-store upload is claimed. No production migration, deployment, or merge.
+Next gates:
+1. Run exact-head CI on the combined stack and verify the Silo SSE-S3 fixture accepts the test KMS config; then pass upload/download byte equality and SHA, authorization and tenant isolation, validation/size bounds, tampered-object integrity rejection.
+2. Wire the worker client to the lease-scoped upload API; add idempotency, artifact persistence in completion/checkpoints, and restart/crash recovery integration.
+3. Implement project-authorized specialist dispatch with budget/idempotency and actual provider invocation.
+4. Begin workspace/repository schema and Git worktree manager only after gates above, following `docs/WORKSPACES_GIT_WORKTREES.md`: persistent root, exact SHA, one-writer lease/fencing, credential-safe access, crash reconciliation and quarantine.
