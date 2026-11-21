@@ -146,8 +146,17 @@ runs:
             "candidate_sha": candidate,
             "tested_sha": current,
             "changed_paths": paths,
-            "required_check_ids": [gate["id"] for gate in summary["test_gates"]],
+            "required_check_ids": ["tests"] + [gate["id"] for gate in summary["test_gates"]],
             "checks": [{
+                "id": "tests",
+                "executed": True,
+                "exit_code": 0,
+                "tests_discovered": discovered,
+                "candidate_sha": candidate,
+                "command": "aggregate of independently parsed test gates",
+                "artifact": "verification.log",
+                "artifact_sha256": digest,
+            }] + [{
                 "id": gate["id"],
                 "executed": True,
                 "exit_code": 0,
