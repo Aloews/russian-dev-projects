@@ -38,7 +38,12 @@ class AdversarialCompletionTests(unittest.TestCase):
             ))
 
     def test_01_implementation_claim_without_changed_files(self):
-        self.assertTrue(validate(copy.deepcopy(BASE), SHA, []))
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            manifest = copy.deepcopy(BASE)
+            self.attach_integration_artifacts(manifest, workspace)
+            errors = validate(manifest, SHA, [], workspace=workspace)
+            self.assertTrue(any("no changed files" in error for error in errors))
 
     def test_code_level_does_not_claim_runtime_integration(self):
         code = copy.deepcopy(BASE)
