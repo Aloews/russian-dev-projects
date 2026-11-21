@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import os
 import json
 import tempfile
+from contextlib import redirect_stdout
+from types import SimpleNamespace
+from unittest.mock import patch
 import unittest
 from pathlib import Path
 
@@ -283,6 +288,38 @@ class QwenEditSafetyTests(unittest.TestCase):
                 agent.ROOT = previous_root
 
 class ProductFactoryRecoveryTests(unittest.TestCase):
+    def _run_main_with_responses(self, responses):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            agent.ROOT = Path(directory)
+            (agent.ROOT / ".git").mkdir()
+            git_result = SimpleNamespace(stdout="src/main.py\ntests/test_qwen_local_agent.py\n")
+            try:
+                with (
+                    patch.object(agent, "git", return_value=git_result),
+                    patch.object(agent, "make_context", return_value="bounded source context"),
+                    patch.object(agent, "ask_ollama", side_effect=responses) as ask,
+                    patch.dict(os.environ, {
+                        "OBJECTIVE": "retry-exhaustion regression",
+                        "CAVEMAN_SKILL_PATH": "",
+                        "REALITY_FIRST_SKILL_PATH": "",
+                    }),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    result = agent.main()
+                self.assertEqual(ask.call_count, agent.MAX_GENERATION_ATTEMPTS)
+                self.assertFalse((Path(directory) / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md").exists())
+                return result
+            finally:
+                agent.ROOT = previous_root
+
+    def test_main_returns_after_final_invalid_json_without_unbound_review(self):
+        self.assertEqual(self._run_main_with_responses(["not-json", "not-json"]), 4)
+
+    def test_main_returns_after_final_validation_error_without_unbound_review(self):
+        invalid = json.dumps({"review": "short", "edits": []})
+        self.assertEqual(self._run_main_with_responses([invalid, invalid]), 4)
+
     def test_ollama_length_termination_is_reported_as_incomplete(self):
         with self.assertRaisesRegex(agent.IncompleteOllamaResponse, "num_predict limit"):
             agent.parse_ollama_response({
