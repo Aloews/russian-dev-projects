@@ -9,7 +9,6 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-
 TEST_GATE = re.compile(
     r"^(?:Rust|Python|Go|Gradle|Maven|Frontend|Browser end-to-end) tests$",
     re.IGNORECASE,
