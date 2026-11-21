@@ -739,3 +739,10 @@ Tracked by [Issue #63](https://github.com/Aloews/russian-dev-projects/issues/63)
 - **Merge acceptance:** exact-candidate CI must pass; diff must be reviewed against the current base; changed files/commits must match task scope; no unexplained merge commits, conflict resolutions or unrelated history. Stale-branch CI is not merge evidence.
 - **Fail-closed behavior:** missing comparison data, unavailable base, failed merge-base calculation, or threshold breach blocks agent dispatch/PR creation/merge and creates a durable escalation event for an operator.
 - **Implementation status:** this is a mandatory design requirement for the UHS orchestrator, not an implemented runtime guard yet. Add database evidence fields/events, enforce the guard in dispatch and completion/merge gates, and test stale-base, 21-behind, 51-divergent, unrelated-history and clean-branch cases before enabling workers.
+
+
+### Trusted workflow supply-chain hardening (2026-11-21)
+
+- Third-party actions in the trusted OIDC reusable workflow and its CI workflow are pinned to immutable commit SHAs rather than mutable version tags.
+- Exact PR-head CI must rerun after this change; the earlier green run does not validate the pinned-action revision.
+- The workflow remains draft-only. No live OIDC submission or persisted receipt is claimed until a configured GitHub Actions run successfully posts to the Hub and a database read-back confirms the immutable receipt.
