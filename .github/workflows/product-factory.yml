@@ -4,15 +4,6 @@ name: Autonomous Product Factory
 # AUREL staging database and auth environment configuration confirmed for Vercel Preview/Development.
 
 "on":
-  push:
-    branches:
-      - feat/ush-autonomous-product-factory
-    paths:
-      - .github/workflows/product-factory.yml
-      - .github/actions/product-factory-agent/**
-      - .github/actions/product-factory-qwen-agent/**
-      - .github/actions/product-factory-verify/**
-      - .github/scripts/**
   workflow_dispatch:
     inputs:
       target_repo:
