@@ -6,7 +6,6 @@ import hashlib
 import json
 import re
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 TEST_GATE = re.compile(
@@ -16,6 +15,8 @@ TEST_GATE = re.compile(
 
 
 def _xml_counts(workspace: Path) -> tuple[int, int, int] | None:
+    import xml.etree.ElementTree as ET
+
     files = []
     for pattern in (
         "build/test-results/test/TEST-*.xml",
