@@ -71,6 +71,10 @@ class AdversarialCompletionTests(unittest.TestCase):
         self.rejected(lambda m: m["retry"].update(provider_acceptance_known=False))
 
     def attach_integration_artifacts(self, manifest, workspace):
+        test_artifact = workspace / manifest["checks"][0]["artifact"]
+        test_artifact.parent.mkdir(parents=True, exist_ok=True)
+        test_artifact.write_text("8 passed", encoding="utf-8")
+        manifest["checks"][0]["artifact_sha256"] = hashlib.sha256(test_artifact.read_bytes()).hexdigest()
         records = [
             (manifest["api"], "artifact", "artifact_sha256", "api.json"),
             (manifest["database"], "readback_artifact", "readback_sha256", "db.json"),
