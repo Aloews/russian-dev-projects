@@ -60,6 +60,9 @@ jobs:
       TARGET_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').target_branch || github.event.inputs.target_branch || 'factory/elite-estate-rc3' }}
       BASE_BRANCH: ${{ fromJSON(github.event.issue.body || '{}').base_branch || github.event.inputs.base_branch || 'foundation/luxury-estate-platform' }}
       OBJECTIVE: ${{ fromJSON(github.event.issue.body || '{}').objective || github.event.inputs.objective || 'Complete the Elite Estate vertical slice to release-candidate quality. Implement real user journeys, security, tests and documentation. Do not merge or deploy.' }}
+      STARIMG_BASE_URL: ${{ vars.STARIMG_BASE_URL || 'https://ai.starimg.ru' }}
+      STARIMG_FABLE_MODEL: ${{ vars.STARIMG_FABLE_MODEL }}
+      STARIMG_CLAUDE_MODEL: ${{ vars.STARIMG_CLAUDE_MODEL }}
 
     steps:
       - name: Check out Product Factory control repository
@@ -133,7 +136,127 @@ jobs:
             Deliver one bounded, testable increment for this product objective: ${{ env.OBJECTIVE }}
             Run the architecture, product, security and QA specialist roles before the implementation role. Inspect the actual project map and stack. Do not assume AUREL, Rust or PostgreSQL. Preserve existing architecture and security boundaries. Add regression tests where relevant. Record evidence-backed findings in docs/PRODUCT_FACTORY_QWEN_REVIEW.md for the senior engineer to review. Never fabricate live facts, users, revenue, partners, inventory, approvals or test results.
 
+      - name: Discover Starimg Fable model and verify Anthropic tool calls
+        id: starimg_probe
+        continue-on-error: true
+        env:
+          STARIMG_API_KEY: ${{ secrets.STARIMG_API_KEY }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, re, urllib.error, urllib.request
+          from urllib.parse import urlsplit
+          origin = os.environ["STARIMG_BASE_URL"].rstrip("/")
+          if origin.endswith("/v1"):
+              origin = origin[:-3]
+          parsed_origin = urlsplit(origin)
+          if parsed_origin.scheme != "https" or not parsed_origin.netloc or parsed_origin.username or parsed_origin.password or parsed_origin.query or parsed_origin.fragment or any(ch in origin for ch in "\\r\\n\\t"):
+              raise SystemExit("Starimg base URL must be a clean HTTPS origin.")
+          key = os.environ.get("STARIMG_API_KEY", "")
+          result = {"status": 0, "tool_ok": False, "model": "", "error_type": "missing_key" if not key else "not_probed"}
+          def send(url, body=None, headers=None):
+              request = urllib.request.Request(
+                  url,
+                  data=None if body is None else json.dumps(body).encode("utf-8"),
+                  headers=headers or {},
+                  method="GET" if body is None else "POST",
+              )
+              with urllib.request.urlopen(request, timeout=90) as response:
+                  return response.status, json.loads(response.read().decode("utf-8"))
+          if key:
+              try:
+                  status, catalogue = send(origin + "/v1/models", headers={"Authorization": "Bearer " + key})
+                  entries = catalogue.get("data") or catalogue.get("models") or []
+                  ids = sorted({str(item.get("id")) for item in entries if isinstance(item, dict) and item.get("id")})
+                  explicit_fable = os.environ.get("STARIMG_FABLE_MODEL", "").strip()
+                  explicit_claude = os.environ.get("STARIMG_CLAUDE_MODEL", "").strip()
+                  fables = [model for model in ids if re.search(r"fable.*5[._-]?2|5[._-]?2.*fable", model, re.I)]
+                  claudes = [model for model in ids if re.search(r"claude.*opus|opus.*claude", model, re.I)]
+                  if not claudes:
+                      claudes = [model for model in ids if re.search(r"claude.*sonnet|sonnet.*claude", model, re.I)]
+                  model = explicit_fable or (fables[0] if fables else explicit_claude or (claudes[0] if claudes else ""))
+                  if status != 200 or not model or model not in ids or not re.fullmatch(r"[A-Za-z0-9._:/-]{1,200}", model):
+                      raise RuntimeError("no_verified_fable_or_claude_model")
+                  headers = {
+                      "x-api-key": key,
+                      "anthropic-version": "2023-06-01",
+                      "content-type": "application/json",
+                  }
+                  body = {
+                      "model": model,
+                      "max_tokens": 64,
+                      "messages": [{"role": "user", "content": "Call ping exactly once with value STARIMG_TOOL_OK."}],
+                      "tools": [{
+                          "name": "ping",
+                          "description": "A harmless tool-call compatibility probe.",
+                          "input_schema": {
+                              "type": "object",
+                              "properties": {"value": {"type": "string"}},
+                              "required": ["value"],
+                              "additionalProperties": False,
+                          },
+                      }],
+                      "tool_choice": {"type": "tool", "name": "ping"},
+                  }
+                  status, response = send(origin + "/v1/messages", body, headers)
+                  blocks = response.get("content") or []
+                  tool_ok = status == 200 and any(
+                      isinstance(block, dict) and block.get("type") == "tool_use"
+                      and block.get("name") == "ping"
+                      and (block.get("input") or {}).get("value") == "STARIMG_TOOL_OK"
+                      for block in blocks
+                  )
+                  result = {"status": status, "tool_ok": tool_ok, "model": model, "error_type": None if tool_ok else "tool_call_not_verified"}
+              except urllib.error.HTTPError as error:
+                  result = {"status": error.code, "tool_ok": False, "model": "", "error_type": "provider_http_error"}
+              except Exception as error:
+                  result = {"status": 0, "tool_ok": False, "model": "", "error_type": type(error).__name__}
+          diagnostic = os.path.join(os.environ["RUNNER_TEMP"], "starimg-diagnostics.json")
+          with open(diagnostic, "w", encoding="utf-8") as output:
+              json.dump(result, output, ensure_ascii=False, indent=2)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("tool_ok=" + str(result["tool_ok"]).lower() + "\n")
+              if result["tool_ok"]:
+                  output.write("model=" + result["model"] + "\n")
+                  output.write("base_url=" + origin + "\n")
+          print("Starimg Anthropic Messages: HTTP " + str(result["status"]) + "; tool_call=" + str(result["tool_ok"]) + "; model=" + (result["model"] or "none") + "; error=" + str(result["error_type"] or "none"))
+          PY
+
+      - name: Preserve redacted Starimg diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: starimg-diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/starimg-diagnostics.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Starimg Fable senior engineer implementation
+        if: steps.starimg_probe.outputs.tool_ok == 'true'
+        id: starimg_primary
+        continue-on-error: true
+        uses: ./factory/.github/actions/product-factory-agent
+        with:
+          starimg_api_key: ${{ secrets.STARIMG_API_KEY }}
+          auth_token: ""
+          base_url: ${{ steps.starimg_probe.outputs.base_url }}
+          model: ${{ steps.starimg_probe.outputs.model }}
+          max_turns: "100"
+          max_budget_usd: "15"
+          artifact_name: candidate-0
+          prompt: |
+            You are the senior staff engineer and final implementation authority using the Starimg model that passed a live Anthropic Messages tool-call probe. A local Qwen multi-role team has already reviewed the project and may have created an initial candidate. Read docs/PRODUCT_FACTORY_QWEN_REVIEW.md if present, inspect the actual changed files, challenge its conclusions and repair defects before verification.
+            Target repository: ${{ env.TARGET_REPO }}
+            Working branch: ${{ env.TARGET_BRANCH }}
+            PR base: ${{ env.BASE_BRANCH }}
+            Objective: ${{ env.OBJECTIVE }}
+
+            Preserve the existing product architecture and all tenant/security invariants. Use only the provisioned Neon staging database and existing Vercel project. Never expose secrets, broaden database grants, trust client-supplied organization IDs, invent data or partners, or change production/SSO settings. Keep production deployment disabled.
+            Inspect the actual repository, project map, delivery plan, API, UI, migrations, tests and CI. Read applicable AGENTS.md and Product Factory governance/reality-first skills. Delegate read-only architecture, security and product reviews; reconcile evidence before implementation, then ask reviewer/security agents to inspect the actual diff.
+            Deliver one coherent, testable user-facing vertical slice, not a plan or placeholder. Add regression tests, update docs/MAP.md and the delivery plan with exact behavior and remaining blockers. Use only Read, Write, Edit, Glob, Grep and Agent tools. Do not use shell, network, credentials, Git push, GitHub API, deployment, merge or production data. Do not claim tests passed. Do not write explanatory function descriptions into production-facing code. Finish with source, tests and documentation saved; the workflow owns verification and publication.
+
       - name: OpenRouter Anthropic tool-call compatibility check
+        if: steps.starimg_primary.outcome != 'success'
         id: openrouter_smoke
         continue-on-error: true
         env:
@@ -216,7 +339,7 @@ jobs:
           retention-days: 7
 
       - name: OpenRouter Claude Sonnet 4.5 senior engineer implementation
-        if: steps.openrouter_smoke.outputs.tool_ok == 'true'
+        if: steps.starimg_primary.outcome != 'success' && steps.openrouter_smoke.outputs.tool_ok == 'true'
         id: openrouter_primary
         continue-on-error: true
         uses: ./factory/.github/actions/product-factory-agent
@@ -229,7 +352,7 @@ jobs:
           max_budget_usd: "15"
           artifact_name: candidate-0
           prompt: |
-            You are the senior staff engineer and final implementation authority. Fable and Starimg are disabled; use the verified OpenRouter Claude Sonnet 4.5 route. A local Qwen2.5-Coder 3B multi-role team has already reviewed the project and may have created an initial candidate. Read docs/PRODUCT_FACTORY_QWEN_REVIEW.md if present, inspect the actual changed files, challenge its conclusions and repair defects before verification. If the Qwen team failed or made no useful changes, implement the bounded vertical slice yourself.
+            You are the senior staff engineer and final implementation authority. The Starimg implementation attempt did not complete successfully; use the verified OpenRouter Claude Sonnet 4.5 route. A local Qwen2.5-Coder 3B multi-role team has already reviewed the project and may have created an initial candidate. Read docs/PRODUCT_FACTORY_QWEN_REVIEW.md if present, inspect the actual changed files, challenge its conclusions and repair defects before verification. If the Qwen team failed or made no useful changes, implement the bounded vertical slice yourself.
             Target repository: ${{ env.TARGET_REPO }}
             Working branch: ${{ env.TARGET_BRANCH }}
             PR base: ${{ env.BASE_BRANCH }}
@@ -251,7 +374,7 @@ jobs:
             Finish with all intended source, test and documentation changes saved in the working tree. Do not commit, push, open a PR, merge or deploy; the workflow owns publication after verification.
 
       - name: Local Qwen2.5-Coder 3B fallback
-        if: steps.openrouter_primary.outcome != 'success'
+        if: steps.starimg_primary.outcome != 'success' && steps.openrouter_primary.outcome != 'success'
         timeout-minutes: 25
         uses: ./factory/.github/actions/product-factory-qwen-agent
         with:
