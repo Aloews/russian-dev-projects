@@ -46,6 +46,7 @@ class StarimgProbeTests(unittest.TestCase):
             result = starimg_probe.probe("https://ai.starimg.ru/v1", "secret-value")
         self.assertTrue(result["tool_ok"])
         self.assertEqual(result["model"], "fable-5.2")
+        self.assertEqual(result["model_source"], "catalogue_fable")
         self.assertEqual(result["base_url"], "https://ai.starimg.ru")
         self.assertEqual(request.call_count, 2)
         self.assertNotIn("secret-value", json.dumps(result))
@@ -66,17 +67,42 @@ class StarimgProbeTests(unittest.TestCase):
         self.assertTrue(result["tool_ok"])
         self.assertEqual(result["model"], "claude-opus-4.1")
 
-    def test_explicit_fable_model_must_exist_in_live_catalogue(self):
+    def test_explicit_fable_model_is_probed_without_catalogue_request(self):
+        message = {
+            "content": [
+                {"type": "tool_use", "name": "ping", "input": {"value": "STARIMG_TOOL_OK"}}
+            ]
+        }
         with patch.object(
             starimg_probe.urllib.request,
             "urlopen",
-            return_value=FakeResponse({"data": [{"id": "fable-5.1"}]}),
-        ):
+            return_value=FakeResponse(message),
+        ) as request:
+            result = starimg_probe.probe(
+                "https://ai.starimg.ru", "secret-value", fable_model="fable-5.2"
+            )
+        self.assertTrue(result["tool_ok"])
+        self.assertEqual(result["model"], "fable-5.2")
+        self.assertEqual(result["model_source"], "explicit_fable")
+        self.assertEqual(request.call_count, 1)
+        self.assertTrue(request.call_args.args[0].full_url.endswith("/v1/messages"))
+
+
+    def test_explicit_model_still_fails_when_messages_endpoint_returns_402(self):
+        error = urllib.error.HTTPError(
+            "https://ai.starimg.ru/v1/messages",
+            402,
+            "payment required",
+            {},
+            None,
+        )
+        with patch.object(starimg_probe.urllib.request, "urlopen", side_effect=error):
             result = starimg_probe.probe(
                 "https://ai.starimg.ru", "secret-value", fable_model="fable-5.2"
             )
         self.assertFalse(result["tool_ok"])
-        self.assertEqual(result["error_type"], "configured_fable_model_not_found")
+        self.assertEqual(result["status"], 402)
+        self.assertEqual(result["error_type"], "provider_http_error")
 
     def test_invalid_https_origin_is_rejected_before_network(self):
         with patch.object(starimg_probe.urllib.request, "urlopen") as request:
