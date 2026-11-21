@@ -38,6 +38,7 @@ def probe(
         "base_url": "",
         "error_type": "missing_key" if not api_key else "not_probed",
         "model_source": "",
+        "configured_model_present": bool(fable_model or claude_model),
     }
     if not api_key:
         return result
@@ -154,7 +155,10 @@ def probe(
             model_source=model_source if tool_ok else "",
         )
     except urllib.error.HTTPError as error:
-        result.update(status=error.code, error_type="provider_http_error")
+        result.update(
+            status=error.code,
+            error_type="provider_payment_required" if error.code == 402 else "provider_http_error",
+        )
     except (TimeoutError, ConnectionError, urllib.error.URLError, OSError):
         result["error_type"] = "provider_connection_error"
     except (ValueError, TypeError, KeyError, json.JSONDecodeError):
