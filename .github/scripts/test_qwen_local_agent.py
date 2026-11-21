@@ -145,6 +145,39 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+
+    def test_symlink_parent_cannot_redirect_into_protected_repository_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                protected = agent.ROOT / ".github/workflows"
+                protected.mkdir(parents=True)
+                (agent.ROOT / "src").mkdir()
+                (agent.ROOT / "src/link").symlink_to(protected, target_is_directory=True)
+                with self.assertRaises(ValueError):
+                    agent.apply_edits(
+                        [{"path": "src/link/release.yml", "old": "", "new": "name: unsafe\\n"}],
+                        set(),
+                    )
+                self.assertFalse((protected / "release.yml").exists())
+            finally:
+                agent.ROOT = previous_root
+
+    def test_read_context_does_not_follow_symlinked_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                protected = agent.ROOT / ".github/workflows"
+                protected.mkdir(parents=True)
+                (protected / "secret.py").write_text("SECRET = 'do-not-read'\\n", encoding="utf-8")
+                (agent.ROOT / "src").mkdir()
+                (agent.ROOT / "src/link").symlink_to(protected, target_is_directory=True)
+                self.assertEqual(agent.read_text("src/link/secret.py"), "")
+            finally:
+                agent.ROOT = previous_root
+
     def test_non_unique_replacement_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT
