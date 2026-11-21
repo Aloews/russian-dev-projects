@@ -58,8 +58,42 @@ class QwenEditSafetyTests(unittest.TestCase):
                     "edits": [{"path": "src/main.py", "old": "", "new": "VALUE = 2\n"}]
                 })
                 context = agent.rejected_existing_file_context(answer)
-                self.assertIn("EXISTING FILE (NOT A NEW FILE)", context)
+                self.assertIn("EXISTING FILE CONFLICT", context)
                 self.assertIn("VALUE = 1", context)
+            finally:
+                agent.ROOT = previous_root
+
+
+    def test_ambiguous_replacement_context_includes_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "README.md"
+                source.write_text("# Product\\n\\nA paragraph.\\n\\nA paragraph.\\n", encoding="utf-8")
+                answer = json.dumps({
+                    "edits": [{"path": "README.md", "old": "A paragraph.", "new": "A revised paragraph."}]
+                })
+                context = agent.rejected_existing_file_context(answer)
+                self.assertIn("EXISTING FILE CONFLICT", context)
+                self.assertIn("occurs 2 times", context)
+                self.assertIn("A paragraph.", context)
+            finally:
+                agent.ROOT = previous_root
+
+    def test_missing_replacement_context_includes_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "README.md"
+                source.write_text("# Product\\n\\nActual content.\\n", encoding="utf-8")
+                answer = json.dumps({
+                    "edits": [{"path": "README.md", "old": "Not in file", "new": "Replacement"}]
+                })
+                context = agent.rejected_existing_file_context(answer)
+                self.assertIn("does not occur", context)
+                self.assertIn("Actual content.", context)
             finally:
                 agent.ROOT = previous_root
 
@@ -76,6 +110,38 @@ class QwenEditSafetyTests(unittest.TestCase):
                         set(),
                     )
                 self.assertFalse((Path(outside) / "pwn.py").exists())
+            finally:
+                agent.ROOT = previous_root
+
+
+    def test_contextual_replacement_disambiguates_repeated_snippet(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "README.md"
+                source.write_text("# First\\nA paragraph.\\n# Second\\nA paragraph.\\n", encoding="utf-8")
+                changed = agent.apply_edits(
+                    [{"path": "README.md", "old": "A paragraph.", "new": "Updated.", "before": "# Second\\n"}],
+                    {"README.md"},
+                )
+                self.assertEqual(changed, ["README.md"])
+                self.assertEqual(source.read_text(encoding="utf-8"), "# First\\nA paragraph.\\n# Second\\nUpdated.\\n")
+            finally:
+                agent.ROOT = previous_root
+
+    def test_contextual_replacement_rejects_ambiguous_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "README.md"
+                source.write_text("# First\\nA paragraph.\\n# Second\\nA paragraph.\\n", encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    agent.apply_edits(
+                        [{"path": "README.md", "old": "A paragraph.", "new": "Updated.", "before": "# Missing\\n"}],
+                        {"README.md"},
+                    )
             finally:
                 agent.ROOT = previous_root
 
