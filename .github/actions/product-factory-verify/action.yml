@@ -143,6 +143,9 @@ runs:
         paths = subprocess.check_output(["git", "-C", str(root), "diff", "--name-only", base, candidate], text=True).splitlines()
         if not paths:
             raise SystemExit("Candidate has no source diff")
+        if any("\\n" in item or "\\r" in item for item in paths):
+            raise SystemExit("Candidate path contains a newline; refusing ambiguous diff evidence")
+        (temp / "changed-paths.txt").write_text("\\n".join(paths) + "\\n", encoding="utf-8")
         digest = hashlib.sha256(report.read_bytes()).hexdigest()
         manifest = {
             "verification_level": "CODE_VERIFIED",
@@ -179,12 +182,23 @@ runs:
         }
         (temp / "completion-evidence.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         PY
+        set +e
         python3 factory/universal-service-hub/scripts/validate_completion_evidence.py \
           --manifest "$RUNNER_TEMP/completion-evidence.json" \
           --expected-sha "$CANDIDATE_SHA" \
           --diff-file "$RUNNER_TEMP/changed-paths.txt" \
           --level CODE_VERIFIED \
-          --workspace "$RUNNER_TEMP"
+          --workspace "$RUNNER_TEMP" > "$RUNNER_TEMP/evidence-gate.log" 2>&1
+        rc=$?
+        set -e
+        if [[ "$rc" -ne 0 ]]; then
+          {
+            printf '\n## SHA-bound evidence gate (exit_code=%s)\n' "$rc"
+            cat "$RUNNER_TEMP/evidence-gate.log"
+          } >> "$RUNNER_TEMP/verification.log"
+          cat "$RUNNER_TEMP/evidence-gate.log" >&2
+          exit "$rc"
+        fi
 
     - name: Upload verification report and evidence
       if: always()
@@ -196,5 +210,6 @@ runs:
           ${{ runner.temp }}/completion-evidence.json
           ${{ runner.temp }}/changed-paths.txt
           ${{ runner.temp }}/test-gate-summary.json
+          ${{ runner.temp }}/evidence-gate.log
         if-no-files-found: ignore
         retention-days: 30
