@@ -83,8 +83,15 @@ def _counts(label: str, body: str, workspace: Path) -> tuple[int, int, int] | No
         return None
     # A zero-exit wrapper must not conceal a runner-reported failure.
     failed_matches = [int(value) for value in re.findall(r"(\d+)\s+(?:failed|failures|errors?)", body, re.IGNORECASE)]
+    skipped_matches = [int(value) for value in re.findall(
+        r"(\d+)\s+(?:skipped|pending|ignored|xfailed|xpassed)", body, re.IGNORECASE
+    )]
     best = max(candidates, key=lambda item: item[0])
-    return best[0], best[1], max(best[2], max(failed_matches, default=0))
+    return (
+        best[0],
+        max(best[1], max(skipped_matches, default=0)),
+        max(best[2], max(failed_matches, default=0)),
+    )
 
 
 def parse_report(report: Path, workspace: Path) -> dict:
