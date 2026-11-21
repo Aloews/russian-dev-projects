@@ -76,7 +76,6 @@ class AdversarialCompletionTests(unittest.TestCase):
     def test_manifest_diff_must_match_actual_diff(self):
         self.assertTrue(validate(copy.deepcopy(BASE), SHA, ["src/other.py"]))
 
-
     def test_code_evidence_rejects_missing_artifact(self):
         manifest = copy.deepcopy(BASE)
         manifest["checks"][0]["artifact_sha256"] = "0" * 64
