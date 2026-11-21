@@ -230,6 +230,15 @@ mod tests {
         let lease_token = Uuid::new_v4();
         sqlx::query("INSERT INTO projects (id, name) VALUES ($1, 'checkpoint integration')")
             .bind(&project_id).execute(&pool).await.unwrap();
+        let plan_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO project_plans (id, project_id, version, state, created_by) VALUES ($1, $2, 1, 'active', 'checkpoint-test')"
+        )
+        .bind(plan_id).bind(&project_id).execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO project_tasks (id, project_id, plan_id, task_key, title) VALUES ($1, $2, $3, 'checkpoint-task', 'Checkpoint integration task')"
+        )
+        .bind(task_id).bind(&project_id).bind(plan_id).execute(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO execution_jobs (id, project_id, task_id, job_type, status, idempotency_key, lease_owner, lease_token, lease_expires_at) VALUES ($1,$2,$3,'agent.test','leased',$4,'checkpoint-test',$5,NOW() + INTERVAL '5 minutes')"
         )
