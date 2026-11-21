@@ -237,7 +237,7 @@ def apply_edits(edits, tracked):
             if before or after:
                 raise ValueError("new-file edits cannot include before/after context")
             if current is not None or path in tracked:
-                raise ValueError("new-file edit targets an existing file")
+                raise ValueError("new-file edit targets an existing file: " + path + "; provide a unique non-empty old snippet or omit this edit")
             current = new
         else:
             if current is None:
@@ -366,7 +366,7 @@ def main():
     tracked_set = set(tracked)
     validation_error = None
     answer = ""
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             answer = ask_ollama(
                 messages,
@@ -375,30 +375,49 @@ def main():
                 timeout_seconds=480 if attempt == 0 else 180,
             )
             response_json = json.loads(answer)
-            changed_paths = apply_edits(response_json.get("edits"), tracked_set)
-            if not changed_paths:
-                raise ValueError("Qwen returned no source or test edits")
-            source_changes = [path for path in changed_paths if Path(path).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}]
+            edits = response_json.get("edits")
+            if not isinstance(edits, list) or not edits or any(
+                not isinstance(edit, dict) or not isinstance(edit.get("path"), str)
+                for edit in edits
+            ):
+                raise ValueError("Qwen returned malformed or empty edit paths")
+            proposed_paths = [edit["path"] for edit in edits]
+            source_changes = [
+                path for path in proposed_paths
+                if Path(path.replace("\\\\", "/")).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}
+            ]
             if not source_changes:
                 raise ValueError("Qwen returned documentation-only edits")
             review_text = response_json.get("review")
             if not isinstance(review_text, str) or len(review_text.strip()) < 80 or "timed out" in review_text.lower():
                 raise ValueError("Qwen review report is missing or contains an execution error")
+            changed_paths = apply_edits(edits, tracked_set)
+            if not changed_paths:
+                raise ValueError("Qwen returned no source or test edits")
             break
         except (TimeoutError, urllib.error.URLError) as exc:
             print("::error::Qwen inference timed out or could not connect: " + type(exc).__name__ + ": " + str(exc)[:500])
             return 4
         except (KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
             validation_error = str(exc)[:1000]
-            if attempt == 0:
+            if attempt < 2:
                 existing_file_evidence = rejected_existing_file_context(answer)
+                if "new-file edit targets an existing file" in validation_error:
+                    correction = (
+                        "CRITICAL: you marked an existing file as a new file. For every existing path, old MUST be a non-empty exact snippet copied from the supplied current file. "
+                        "If you cannot identify the intended section, omit that file from edits. Never send old='' for an existing file. "
+                        "For repeated snippets, use exact adjacent before/after context. Do not repeat the rejected edit."
+                    )
+                else:
+                    correction = (
+                        "Correct the JSON using the conflict evidence. For an existing file, old must be an exact unique non-empty snippet copied from that file. "
+                        "Never mark an existing path as a new file. Use old='' only for a path confirmed absent. Do not overwrite or recreate existing files."
+                    )
                 messages.extend([
                     {"role": "assistant", "content": answer[:10000]},
                     {"role": "user", "content": (
                         "Your previous JSON edit was rejected: " + validation_error + ". "
-                        "Correct the JSON. For an existing file, old must be an exact unique non-empty snippet copied from that file; "
-                        "never mark an existing path as a new file. Use old='' only for a path that is confirmed absent. "
-                        "Do not overwrite or recreate existing files. "
+                        + correction
                         + existing_file_evidence
                         + "\\nReturn only the corrected JSON schema."
                     )},
