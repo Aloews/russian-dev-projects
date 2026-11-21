@@ -1,5 +1,5 @@
 name: Product Factory verification
-description: Apply a candidate patch in an isolated runner and execute all release-candidate gates
+description: Apply a candidate patch, run configured gates and validate SHA-bound evidence
 
 inputs:
   target_repo:
@@ -15,11 +15,11 @@ inputs:
 
 outputs:
   passed:
-    description: Whether every configured verification gate passed
-    value: ${{ steps.verify.outcome == 'success' }}
+    description: Whether configured gates and the machine evidence gate passed
+    value: ${{ steps.evidence_gate.outcome == 'success' }}
   repairable:
-    description: Whether the patch applied and verification failed
-    value: ${{ steps.apply_patch.outcome == 'success' && steps.verify.outcome == 'failure' }}
+    description: Whether the patch applied but verification or evidence validation failed
+    value: ${{ steps.apply_patch.outcome == 'success' && steps.evidence_gate.outcome == 'failure' }}
 
 runs:
   using: composite
@@ -40,15 +40,25 @@ runs:
         name: ${{ inputs.candidate_artifact }}
         path: ${{ runner.temp }}/candidate
 
-    - name: Apply patch at recorded base SHA
+    - name: Apply patch and create immutable candidate commit
       id: apply_patch
       shell: bash
       run: |
         set -Eeuo pipefail
         BASE_SHA="$(cat "$RUNNER_TEMP/candidate/base.sha")"
+        [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid recorded base SHA" >&2; exit 2; }
         git -C target checkout --detach "$BASE_SHA"
+        git -C target apply --check "$RUNNER_TEMP/candidate/candidate.patch"
         git -C target apply "$RUNNER_TEMP/candidate/candidate.patch"
+        git -C target add -A
+        git -C target diff --cached --check
+        git -C target diff --cached --quiet && { echo "Empty candidate patch" >&2; exit 2; }
+        git -C target -c user.name="Product Factory Verification" -c user.email="product-factory@users.noreply.github.com" commit -m "test: materialize isolated Product Factory candidate" >/dev/null
+        CANDIDATE_SHA="$(git -C target rev-parse HEAD)"
+        git -C target diff --name-only "$BASE_SHA" "$CANDIDATE_SHA" > "$RUNNER_TEMP/changed-paths.txt"
+        test -s "$RUNNER_TEMP/changed-paths.txt"
         echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+        echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
@@ -78,11 +88,86 @@ runs:
         rc=$?
         exit "$rc"
 
-    - name: Upload verification report
+    - name: Validate SHA-bound CODE_VERIFIED evidence
+      id: evidence_gate
+      if: always() && steps.apply_patch.outcome == 'success'
+      shell: bash
+      env:
+        VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+        CANDIDATE_SHA: ${{ steps.apply_patch.outputs.candidate_sha }}
+      run: |
+        set -Eeuo pipefail
+        python3 - <<'PY'
+        import hashlib, json, os, re, subprocess, sys
+        from pathlib import Path
+
+        root = Path("target")
+        report = Path(os.environ["RUNNER_TEMP"]) / "verification.log"
+        if not report.is_file():
+            raise SystemExit("Verification log missing; fail closed")
+        log = report.read_text(encoding="utf-8", errors="replace")
+        if os.environ["VERIFY_OUTCOME"] != "success":
+            raise SystemExit("Configured verification gates did not all pass")
+        patterns = [
+            r"test result: ok\.\s+(\d+) passed",
+            r"(\d+) passed(?:,|\s+in\s+)",
+            r"ℹ tests\s+(\d+)",
+            r"# tests\s+(\d+)",
+        ]
+        counts = [int(n) for pattern in patterns for n in re.findall(pattern, log, re.I)]
+        go_packages = re.findall(r"^ok\s+\S+\s+[0-9.]+s?$", log, re.M)
+        discovered = max(counts, default=1 if go_packages else 0)
+        if discovered <= 0:
+            raise SystemExit("No positive test count found in test output; zero/unknown tests are not accepted")
+        candidate = os.environ["CANDIDATE_SHA"]
+        if not re.fullmatch(r"[0-9a-f]{40}", candidate):
+            raise SystemExit("Candidate SHA is invalid")
+        current = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+        if current != candidate:
+            raise SystemExit("Candidate SHA changed after verification")
+        dirty = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"], text=True).strip()
+        if dirty:
+            raise SystemExit("Verification modified the candidate working tree; refusing ambiguous tested SHA")
+        base = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD^"], text=True).strip()
+        paths = subprocess.check_output(["git", "-C", str(root), "diff", "--name-only", base, candidate], text=True).splitlines()
+        if not paths:
+            raise SystemExit("Candidate has no source diff")
+        digest = hashlib.sha256(report.read_bytes()).hexdigest()
+        manifest = {
+            "verification_level": "CODE_VERIFIED",
+            "candidate_sha": candidate,
+            "tested_sha": current,
+            "changed_paths": paths,
+            "required_check_ids": ["tests"],
+            "checks": [{
+                "id": "tests",
+                "executed": True,
+                "exit_code": 0,
+                "tests_discovered": discovered,
+                "candidate_sha": candidate,
+                "command": "product_factory_verify.sh (test gates in verification.log)",
+                "artifact": "verification.log",
+                "artifact_sha256": digest,
+            }],
+        }
+        temp = Path(os.environ["RUNNER_TEMP"])
+        (temp / "completion-evidence.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        PY
+        python3 factory/universal-service-hub/scripts/validate_completion_evidence.py \
+          --manifest "$RUNNER_TEMP/completion-evidence.json" \
+          --expected-sha "$CANDIDATE_SHA" \
+          --diff-file "$RUNNER_TEMP/changed-paths.txt" \
+          --level CODE_VERIFIED \
+          --workspace "$RUNNER_TEMP"
+
+    - name: Upload verification report and evidence
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: ${{ inputs.verification_artifact }}
-        path: ${{ runner.temp }}/verification.log
+        path: |
+          ${{ runner.temp }}/verification.log
+          ${{ runner.temp }}/completion-evidence.json
+          ${{ runner.temp }}/changed-paths.txt
         if-no-files-found: ignore
         retention-days: 30
