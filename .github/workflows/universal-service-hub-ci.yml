@@ -68,6 +68,12 @@ jobs:
       - name: Product Factory shell syntax
         working-directory: .
         run: bash -n universal-service-hub/scripts/product_factory_verify.sh
+      - name: Adversarial anti-false-completion regression suite
+        working-directory: universal-service-hub
+        run: python3 -m unittest discover -s tests -p 'test_completion_evidence.py' -v
+      - name: Completion evidence validator syntax
+        working-directory: .
+        run: python3 -m py_compile universal-service-hub/scripts/validate_completion_evidence.py
       - name: Product Factory Python agent syntax
         working-directory: .
         run: python3 -m py_compile .github/scripts/qwen_local_agent.py
