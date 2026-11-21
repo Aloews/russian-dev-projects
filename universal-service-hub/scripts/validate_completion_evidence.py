@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
 """Fail-closed validator for SHA-bound Product Factory evidence."""
 from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -33,8 +33,13 @@ def _artifact_error(workspace: Path | None, relative: Any, digest: Any, label: s
     return None
 
 
-def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[str],
-             level: str = "PRODUCTION_VERIFIED", workspace: Path | None = None) -> list[str]:
+def _validate_evidence_structure(
+    manifest: dict[str, Any],
+    expected_sha: str,
+    changed_paths: list[str],
+    level: str,
+    workspace: Path | None,
+) -> list[str]:
     errors: list[str] = []
     if level not in LEVELS:
         return ["unknown verification level"]
@@ -44,6 +49,8 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
         errors.append("candidate SHA does not match the checked-out candidate")
     if manifest.get("tested_sha") != expected_sha:
         errors.append("candidate SHA changed after tests or test evidence targets another SHA")
+    if workspace is None:
+        errors.append("an evidence workspace is required; metadata-only validation is not a verification")
     if not changed_paths:
         errors.append("no changed files: implementation claim has no diff")
     declared = manifest.get("changed_paths")
@@ -51,33 +58,62 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
         errors.append("manifest changed_paths do not exactly match the inspected diff")
 
     required_ids = manifest.get("required_check_ids")
-    if not isinstance(required_ids, list) or not required_ids or "tests" not in required_ids:
-        errors.append("required_check_ids must be non-empty and include tests")
+    valid_required_ids = (
+        isinstance(required_ids, list)
+        and all(isinstance(item, str) and item for item in required_ids)
+    )
+    if (
+        not valid_required_ids
+        or not required_ids
+        or "tests" not in required_ids
+        or len(required_ids) != len(set(required_ids))
+    ):
+        errors.append("required_check_ids must be unique, non-empty strings and include tests")
         required_ids = []
     checks = manifest.get("checks")
     if not isinstance(checks, list):
         checks = []
-    by_id = {c.get("id"): c for c in checks if isinstance(c, dict)}
+    check_ids = [item.get("id") for item in checks if isinstance(item, dict)]
+    valid_check_ids = [item for item in check_ids if isinstance(item, str) and item]
+    if len(valid_check_ids) != len(check_ids):
+        errors.append("every check record must have a non-empty string ID")
+    if len(valid_check_ids) != len(set(valid_check_ids)):
+        errors.append("checks contain duplicate IDs; evidence cannot be resolved unambiguously")
+    by_id = {
+        item.get("id"): item
+        for item in checks
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
     for check_id in required_ids:
         item = by_id.get(check_id)
-        if not item or item.get("executed") is not True or type(item.get("exit_code")) is not int or item.get("exit_code") != 0 or not item.get("command") or not item.get("artifact"):
+        if not item or item.get("executed") is not True or type(item.get("exit_code")) is not int or item.get("exit_code") != 0 or not isinstance(item.get("command"), str) or not item.get("command").strip() or not item.get("artifact"):
             errors.append(f"required check {check_id!r} was not executed successfully")
             continue
+        if check_id == "tests" and "tests_discovered" not in item:
+            errors.append("required tests check has no machine-counted test totals")
         if item.get("candidate_sha") != expected_sha:
             errors.append(f"required check {check_id!r} was not run on the candidate SHA")
-        if check_id == "tests":
+        if "tests_discovered" in item:
             count = item.get("tests_discovered")
+            passed = item.get("tests_passed")
+            skipped = item.get("tests_skipped")
+            failed = item.get("tests_failed", 0)
             if type(count) is not int or count <= 0:
-                errors.append("test command discovered zero tests")
-        if workspace is not None:
-            error = _artifact_error(
-                workspace,
-                item.get("artifact"),
-                item.get("artifact_sha256"),
-                f"check {check_id!r}",
-            )
-            if error:
-                errors.append(error)
+                errors.append(f"check {check_id!r} discovered zero tests")
+            if type(passed) is not int or passed <= 0:
+                errors.append(f"check {check_id!r} has no positively passed tests")
+            if type(skipped) is not int or skipped != 0:
+                errors.append(f"check {check_id!r} contains skipped tests")
+            if type(failed) is not int or failed != 0:
+                errors.append(f"check {check_id!r} contains failed tests")
+        error = _artifact_error(
+            workspace,
+            item.get("artifact"),
+            item.get("artifact_sha256"),
+            f"check {check_id!r}",
+        )
+        if error:
+            errors.append(error)
 
     if level == "CODE_VERIFIED":
         return errors
@@ -135,20 +171,45 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
     return errors
 
 
+
+def validate(
+    manifest: dict[str, Any],
+    expected_sha: str,
+    changed_paths: list[str],
+    level: str = "CODE_VERIFIED",
+    workspace: Path | None = None,
+    trusted_receipt_verified: bool = False,
+) -> list[str]:
+    """Validate evidence; higher levels need a receipt verified outside this manifest.
+
+    trusted_receipt_verified may only be set by a caller that independently verified
+    the signed GitHub OIDC receipt against the Hub receipt store. It must never be
+    derived from a JSON field or artifact supplied by the agent.
+    """
+    if level not in LEVELS:
+        return ["unknown verification level"]
+    if level != "CODE_VERIFIED" and trusted_receipt_verified is not True:
+        return [
+            f"{level} requires a trusted GitHub Actions OIDC receipt verified outside the manifest; "
+            "local files and self-attested booleans cannot promote verification status"
+        ]
+    return _validate_evidence_structure(manifest, expected_sha, changed_paths, level, workspace)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--expected-sha", required=True)
     parser.add_argument("--diff-file", required=True, help="newline-delimited paths from git diff --name-only")
-    parser.add_argument("--level", choices=LEVELS, default="PRODUCTION_VERIFIED")
-    parser.add_argument("--workspace", help="root for verifying evidence artifact bytes and SHA-256")
+    parser.add_argument("--level", choices=LEVELS, default="CODE_VERIFIED")
+    parser.add_argument("--workspace", required=True, help="root for verifying evidence artifact bytes and SHA-256")
     args = parser.parse_args()
     try:
         manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
         changed = [line.strip() for line in Path(args.diff_file).read_text(encoding="utf-8").splitlines() if line.strip()]
         if not isinstance(manifest, dict):
-            raise ValueError("manifest root must be an object")
-    except Exception as exc:
+            raise TypeError("manifest root must be an object")
+    except (OSError, UnicodeError, TypeError, ValueError) as exc:
         print(f"INVALID EVIDENCE: {exc}", file=sys.stderr)
         return 2
     errors = validate(manifest, args.expected_sha, changed, args.level,
