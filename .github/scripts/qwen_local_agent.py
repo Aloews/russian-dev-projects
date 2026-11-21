@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(os.environ.get("TARGET_WORKDIR", "target")).resolve()
 MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
-MAX_FILES = 1
+MAX_FILES = 2
 MAX_CONTEXT_CHARS = 6000
 MAX_FILE_CHARS = 1800
 MAX_OUTPUT_TOKENS = 2048
@@ -58,6 +58,20 @@ def allowed(path, tracked):
     if name.startswith(".") and name not in {".gitignore", ".dockerignore"}:
         return False
     return Path(name).suffix.lower() in SOURCE_SUFFIXES
+
+
+def is_test_path(path):
+    normalized = path.replace("\\", "/").lower()
+    parts = normalized.split("/")
+    name = parts[-1]
+    return (
+        any(part in {"test", "tests", "__tests__"} for part in parts)
+        or name.startswith("test_")
+        or "_test." in name
+        or ".test." in name
+        or ".spec." in name
+)
+
 
 def read_text(path):
     try:
@@ -192,14 +206,23 @@ def validate_response(response_json):
     edits = response_json.get("edits")
     if not isinstance(edits, list) or not edits or len(edits) > MAX_FILES:
         raise ValueError("Qwen response has no edits or exceeds the edit limit")
+    test_edits = [
+        edit for edit in edits
+        if isinstance(edit, dict)
+        and isinstance(edit.get("path"), str)
+        and is_test_path(edit["path"])
+    ]
     source_edits = [
         edit for edit in edits
         if isinstance(edit, dict)
         and isinstance(edit.get("path"), str)
+        and not is_test_path(edit["path"])
         and Path(edit["path"]).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}
     ]
     if not source_edits:
-        raise ValueError("Qwen response contains no source or test edits; choose one relevant source/test file and make a small concrete implementation change")
+        raise ValueError("Qwen response contains no non-test source edit; choose one relevant source file and make a concrete implementation change")
+    if not test_edits:
+        raise ValueError("Qwen response lacks a regression test edit; include a test file for the behavior change")
     return review_text
 
 
@@ -208,8 +231,8 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
     instruction = (
         "Your previous response failed validation: " + str(validation_error)[:300] + ". "
         "Discard that response and produce a fresh, complete JSON object matching the schema. "
-        "The previous answer had no valid source/test change. This time make exactly one concrete implementation edit "
-        "in a source or test file from the provided context; do not choose documentation. Keep the review under 1000 characters. "
+        "The previous answer lacked the required source-plus-test pair. This time make one non-test source edit and one regression-test edit "
+        "in two files from the provided context: one source file and one test file; do not choose documentation. Keep the review under 1000 characters. "
         "For an existing file, old must be an exact unique snippet from the evidence. For a new file, old must be empty. "
         "Never include markdown fences or unescaped newlines inside JSON strings. Do not claim tests were run.\n"
         + existing_file_evidence[:5000]
@@ -346,7 +369,7 @@ def main():
         "Never return a unified diff, markdown fence or explanation. "
         "Never invent live data, credentials, legal approvals, customers, property inventory or tests. "
         "Do not edit workflows, action definitions, dependency manifests, lockfiles, credentials, deployment files, "
-        "production secrets, infrastructure definitions or database migrations. Add tests for behavior changes. "
+        "production secrets, infrastructure definitions or database migrations. Every candidate MUST include one non-test source edit and one regression-test edit; the edit limit is two files. "
         "Do not weaken or delete tests. Keep changes minimal. No extra keys or explanations."
     )
     reality_path = os.environ.get("REALITY_FIRST_SKILL_PATH", "")
@@ -363,9 +386,9 @@ def main():
         "\n\nUse a compact engineering workflow appropriate for a 3B coding model: inspect evidence, "
         "choose exactly one small concrete source/test improvement, implement it, and sanity-review the proposed diff. "
         "Do not simulate multiple independent agents or write a long role-play council. This is one inference pass, "
-        "not independent verification. The edits array MUST include at least one source or test file; documentation-only "
-        "changes are rejected. Prefer an existing source/test file present in the supplied context and use one exact, "
-        "unique old snippet. The review field should briefly identify the selected file, risk, test needed and unknowns. "
+        "not independent verification. The edits array MUST include one non-test source file and one regression-test file; documentation-only "
+        "changes are rejected. Prefer existing source/test files present in the supplied context and use exact unique "
+        "old snippets. The two-file limit is intentional. The review field should briefly identify the selected file, risk, test needed and unknowns. "
         "Do not claim tests were run. Return only JSON matching the schema."
     )
     messages = [

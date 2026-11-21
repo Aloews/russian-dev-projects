@@ -31,7 +31,7 @@ runs:
         ref: ${{ inputs.base_branch }}
         token: ${{ inputs.github_token }}
         path: target
-        fetch-depth: 0
+        fetch-depth: 1
         persist-credentials: false
 
     - name: Download candidate patch
@@ -40,13 +40,15 @@ runs:
         name: ${{ inputs.candidate_artifact }}
         path: ${{ runner.temp }}/candidate
 
-    - name: Apply patch at recorded base SHA
+    - name: Fetch and apply patch at recorded base SHA
       id: apply_patch
       shell: bash
+      env:
+        PRODUCT_FACTORY_GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |
         set -Eeuo pipefail
         BASE_SHA="$(cat "$RUNNER_TEMP/candidate/base.sha")"
-        git -C target checkout --detach "$BASE_SHA"
+        bash factory/.github/scripts/checkout_candidate_base.sh target "$BASE_SHA"
         git -C target apply "$RUNNER_TEMP/candidate/candidate.patch"
         echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
 

@@ -17,20 +17,47 @@ ROOT = Path(__file__).resolve().parents[2]
 ACTION = ROOT / ".github" / "actions" / "product-factory-agent" / "action.yml"
 
 class QwenEditSafetyTests(unittest.TestCase):
-    def test_retry_prompt_requires_concrete_source_or_test_change(self):
+    def test_retry_prompt_requires_source_and_regression_test_pair(self):
         retry = agent.build_retry_messages(
             [{"role": "user", "content": "objective"}],
-            "Qwen response contains no source or test edits",
+            "Qwen response lacks a regression test edit",
         )
-        self.assertIn("exactly one concrete implementation edit", retry[-1]["content"])
+        self.assertIn("one non-test source edit and one regression-test edit", retry[-1]["content"])
         self.assertIn("do not choose documentation", retry[-1]["content"])
 
     def test_validation_error_requires_concrete_source_edit(self):
-        with self.assertRaisesRegex(ValueError, "small concrete implementation change"):
+        with self.assertRaisesRegex(ValueError, "non-test source edit"): 
             agent.validate_response({
                 "review": "A" * 100,
                 "edits": [{"path": "docs/MAP.md", "old": "A", "new": "B"}],
             })
+
+    def test_candidate_requires_regression_test_edit(self):
+        with self.assertRaisesRegex(ValueError, "regression test edit"):
+            agent.validate_response({
+                "review": "A" * 100,
+                "edits": [{"path": "src/api.py", "old": "VALUE = 1", "new": "VALUE = 2"}],
+            })
+
+    def test_source_and_regression_test_edits_are_accepted(self):
+        review = "A" * 100
+        self.assertEqual(
+            agent.validate_response({
+                "review": review,
+                "edits": [
+                    {"path": "src/api.py", "old": "VALUE = 1", "new": "VALUE = 2"},
+                    {"path": "tests/test_api.py", "old": "VALUE = 1", "new": "VALUE = 2"},
+                ],
+            }),
+            review,
+        )
+
+    def test_test_path_detection_covers_common_conventions(self):
+        self.assertTrue(agent.is_test_path("tests/test_api.py"))
+        self.assertTrue(agent.is_test_path("src/api.test.ts"))
+        self.assertTrue(agent.is_test_path("src/api.spec.tsx"))
+        self.assertTrue(agent.is_test_path("src/api_test.rs"))
+        self.assertFalse(agent.is_test_path("src/api.ts"))
 
     def test_source_file_is_allowed(self):
         self.assertTrue(agent.allowed("src/main.py", {"src/main.py"}))
@@ -220,19 +247,19 @@ class QwenEditSafetyTests(unittest.TestCase):
             })
 
     def test_response_validation_rejects_documentation_only_candidate(self):
-        with self.assertRaisesRegex(ValueError, "no source or test edits"):
+        with self.assertRaisesRegex(ValueError, "non-test source edit"): 
             agent.validate_response({
                 "review": "A" * 100,
                 "edits": [{"path": "docs/MAP.md", "old": "A", "new": "B"}],
             })
 
     def test_qwen_generation_budget_is_bounded_for_small_model(self):
-        self.assertEqual(agent.MAX_FILES, 1)
+        self.assertEqual(agent.MAX_FILES, 2)
         self.assertEqual(agent.MAX_CONTEXT_CHARS, 6000)
         self.assertEqual(agent.MAX_OUTPUT_TOKENS, 2048)
         self.assertEqual(agent.MAX_CAVEMAN_SKILL_CHARS, 2000)
         self.assertEqual(agent.MAX_REALITY_FIRST_SKILL_CHARS, 4000)
-        self.assertEqual(agent.EDIT_SCHEMA["properties"]["edits"]["maxItems"], 1)
+        self.assertEqual(agent.EDIT_SCHEMA["properties"]["edits"]["maxItems"], 2)
         self.assertEqual(agent.generation_budget(0), 1536)
         self.assertEqual(agent.generation_budget(1), 2048)
         self.assertEqual(agent.generation_budget(2), 2048)
@@ -278,7 +305,7 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
         self.assertGreater(agent.generation_budget(1), agent.generation_budget(0))
 
     def test_qwen_output_limits_are_bounded(self):
-        self.assertEqual(agent.MAX_FILES, 1)
+        self.assertEqual(agent.MAX_FILES, 2)
         self.assertEqual(agent.EDIT_SCHEMA["properties"]["review"]["maxLength"], 1200)
 
     def test_agent_session_explicitly_adds_target_workspace(self):
