@@ -53,12 +53,15 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
         errors.append("manifest changed_paths do not exactly match the inspected diff")
 
     required_ids = manifest.get("required_check_ids")
+    valid_required_ids = (
+        isinstance(required_ids, list)
+        and all(isinstance(item, str) and item for item in required_ids)
+    )
     if (
-        not isinstance(required_ids, list)
+        not valid_required_ids
         or not required_ids
         or "tests" not in required_ids
-        or any(not isinstance(item, str) or not item for item in required_ids)
-        or len(set(required_ids)) != len(required_ids)
+        or len(required_ids) != len(set(required_ids))
     ):
         errors.append("required_check_ids must be unique, non-empty strings and include tests")
         required_ids = []
@@ -66,9 +69,16 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
     if not isinstance(checks, list):
         checks = []
     check_ids = [item.get("id") for item in checks if isinstance(item, dict)]
-    if len(check_ids) != len(set(check_ids)):
+    valid_check_ids = [item for item in check_ids if isinstance(item, str) and item]
+    if len(valid_check_ids) != len(check_ids):
+        errors.append("every check record must have a non-empty string ID")
+    if len(valid_check_ids) != len(set(valid_check_ids)):
         errors.append("checks contain duplicate IDs; evidence cannot be resolved unambiguously")
-    by_id = {item.get("id"): item for item in checks if isinstance(item, dict)}
+    by_id = {
+        item.get("id"): item
+        for item in checks
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
     for check_id in required_ids:
         item = by_id.get(check_id)
         if not item or item.get("executed") is not True or type(item.get("exit_code")) is not int or item.get("exit_code") != 0 or not isinstance(item.get("command"), str) or not item.get("command").strip() or not item.get("artifact"):
