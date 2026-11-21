@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Fail-closed parser for Product Factory test-gate output."""
 from __future__ import annotations
 
