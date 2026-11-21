@@ -65,13 +65,12 @@ def _counts(label: str, body: str, workspace: Path) -> tuple[int, int, int] | No
         return xml_result
 
     patterns = [
-        (r"test result:\s*ok\.\s*(\d+)\s+passed;\s*\d+\s+failed;\s*(\d+)\s+ignored", "rust"),
-        (r"(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?", "pytest"),
-        (r"Tests:\s*(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?", "jest"),
-        (r"Tests\s+(\d+)\s+passed(?:\s*\|\s*(\d+)\s+skipped)?", "vitest"),
-        (r"(\d+)\s+passing(?:\s*\((\d+)\s+pending\))?", "mocha"),
-        (r"(\d+)\s+passed\s*\(", "playwright"),
-        (r"(\d+)\s+tests?\s+passed", "generic"),
+        (r"(?m)^test result:\s*ok\.\s*(\d+)\s+passed;\s*\d+\s+failed;\s*(\d+)\s+ignored\b", "rust"),
+        (r"(?m)^\s*(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?\s+in\s+[0-9.]+s\s*$", "pytest"),
+        (r"(?m)^Tests:\s*(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?,\s*\d+\s+total\s*$", "jest"),
+        (r"(?m)^Tests\s+(\d+)\s+passed(?:\s*\|\s*(\d+)\s+skipped)?\s*\(\d+\)\s*$", "vitest"),
+        (r"(?m)^\s*(\d+)\s+passing(?:\s*\((\d+)\s+pending\))?\s*$", "mocha"),
+        (r"(?m)^\s*(\d+)\s+passed\s*\(", "playwright"),
     ]
     candidates: list[tuple[int, int, int]] = []
     for pattern, _ in patterns:
