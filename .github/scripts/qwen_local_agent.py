@@ -199,8 +199,6 @@ def apply_edits(edits, tracked):
             raise ValueError("edit before/after context must be text")
         if len(before) > 3000 or len(after) > 3000:
             raise ValueError("edit context exceeds safe text limits")
-        if not isinstance(path, str) or not isinstance(old, str) or not isinstance(new, str) or not new:
-            raise ValueError("edit is missing path, old or new text")
         if not allowed(path, tracked):
             raise ValueError("edit path is outside the source allowlist")
         target = ROOT / path
