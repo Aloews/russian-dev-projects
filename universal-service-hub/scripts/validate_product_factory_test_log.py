@@ -112,6 +112,9 @@ def parse_report(report: Path, workspace: Path) -> dict:
         if failed > 0:
             errors.append(f"{label}: runner reports {failed} failed/error tests")
             continue
+        if skipped > 0:
+            errors.append(f"{label}: runner skipped {skipped} tests; required test gates must execute every discovered test")
+            continue
         if passed <= 0:
             errors.append(f"{label}: zero tests passed (all skipped or no executed tests)")
             continue
