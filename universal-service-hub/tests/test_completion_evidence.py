@@ -140,6 +140,26 @@ class AdversarialCompletionTests(unittest.TestCase):
             artifact.write_text("fabricated", encoding="utf-8")
             self.assertTrue(validate(manifest, SHA, ["src/service.py"], "CODE_VERIFIED", workspace))
 
+
+    def test_boolean_values_are_not_valid_exit_codes_or_test_counts(self):
+        self.rejected(lambda m: m["checks"][0].update(exit_code=True))
+        self.rejected(lambda m: m["checks"][0].update(tests_discovered=True))
+
+    def test_evidence_symlink_cannot_escape_workspace(self):
+        manifest = copy.deepcopy(BASE)
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            outside = workspace.parent / (workspace.name + "-outside-evidence")
+            outside.write_text("8 passed", encoding="utf-8")
+            try:
+                link = workspace / "tests.log"
+                link.symlink_to(outside)
+                manifest["checks"][0]["artifact"] = "tests.log"
+                manifest["checks"][0]["artifact_sha256"] = hashlib.sha256(outside.read_bytes()).hexdigest()
+                self.assertTrue(validate(manifest, SHA, ["src/service.py"], "CODE_VERIFIED", workspace))
+            finally:
+                outside.unlink(missing_ok=True)
+
     def test_wrong_verification_level_is_rejected(self):
         self.assertTrue(validate(copy.deepcopy(BASE), SHA, ["src/service.py"], "MADE_UP"))
 
