@@ -1,6 +1,6 @@
 name: Autonomous Product Factory
 # The push trigger bootstraps this feature-branch workflow without requiring a merge into the default branch.
-# Bootstrap: OpenRouter Claude Sonnet primary + local Qwen fallback; Starimg/Fable disabled.
+# Bootstrap: Starimg Fable (Anthropic Messages) primary after a live tool probe; OpenRouter fallback; local Qwen last-resort.
 # AUREL staging database and auth environment configuration confirmed for Vercel Preview/Development.
 
 "on":
