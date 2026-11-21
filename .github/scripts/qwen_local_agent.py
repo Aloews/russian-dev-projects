@@ -58,6 +58,12 @@ def allowed(path, tracked):
 def read_text(path):
     try:
         p = ROOT / path
+        root = ROOT.resolve()
+        if not p.resolve().is_relative_to(root) or any(
+            (ROOT / Path(*Path(path).parts[:index])).is_symlink()
+            for index in range(1, len(Path(path).parts))
+        ):
+            return ""
         if p.is_symlink() or not p.is_file() or p.stat().st_size > 100000:
             return ""
         return p.read_text(encoding="utf-8")[:MAX_FILE_CHARS]
@@ -150,7 +156,11 @@ def rejected_existing_file_context(answer):
         target = ROOT / path
         try:
             resolved = target.resolve()
-            if not resolved.is_relative_to(ROOT.resolve()) or target.is_symlink() or not target.is_file():
+            parent_symlink = any(
+                (ROOT / Path(*Path(path).parts[:index])).is_symlink()
+                for index in range(1, len(Path(path).parts))
+            )
+            if not resolved.is_relative_to(ROOT.resolve()) or parent_symlink or target.is_symlink() or not target.is_file():
                 continue
             current = target.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
@@ -205,8 +215,11 @@ def apply_edits(edits, tracked):
         resolved_target = target.resolve()
         if not resolved_target.is_relative_to(ROOT.resolve()):
             raise ValueError("edit path resolves outside the target repository")
-        if target.is_symlink():
-            raise ValueError("symbolic-link edits are not permitted")
+        if target.is_symlink() or any(
+            (ROOT / Path(*Path(path).parts[:index])).is_symlink()
+            for index in range(1, len(Path(path).parts))
+        ):
+            raise ValueError("symbolic-link path components are not permitted")
         if path in staged:
             current = staged[path]
         elif target.exists():
@@ -216,6 +229,8 @@ def apply_edits(edits, tracked):
         else:
             current = None
         if old == "":
+            if before or after:
+                raise ValueError("new-file edits cannot include before/after context")
             if current is not None or path in tracked:
                 raise ValueError("new-file edit targets an existing file")
             current = new
