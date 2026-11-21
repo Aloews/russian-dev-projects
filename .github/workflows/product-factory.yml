@@ -559,6 +559,27 @@ jobs:
           name: candidate-2
           path: ${{ runner.temp }}/candidate
 
+      - name: Download verification evidence 0
+        if: always() && needs.verify_0.outputs.passed == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: verification-0
+          path: ${{ runner.temp }}/verified
+
+      - name: Download verification evidence 1
+        if: always() && needs.verify_0.outputs.passed != 'true' && needs.verify_1.outputs.passed == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: verification-1
+          path: ${{ runner.temp }}/verified
+
+      - name: Download verification evidence 2
+        if: always() && needs.verify_0.outputs.passed != 'true' && needs.verify_1.outputs.passed != 'true' && needs.verify_2.outputs.passed == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: verification-2
+          path: ${{ runner.temp }}/verified
+
       - name: Publish verified patch and create or update PR
         shell: bash
         env:
@@ -602,9 +623,19 @@ jobs:
             echo "Sensitive file detected at publication boundary." >&2
             exit 1
           fi
-          git config user.name "Product Factory"
-          git config user.email "product-factory@users.noreply.github.com"
-          git -c core.hooksPath=/dev/null commit -m "feat: publish product code candidate"
+          EXPECTED_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["candidate_sha"])' "$RUNNER_TEMP/verified/completion-evidence.json")"
+          export GIT_AUTHOR_NAME="Product Factory Verification"
+          export GIT_AUTHOR_EMAIL="product-factory@users.noreply.github.com"
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          export GIT_AUTHOR_DATE="2000-01-01T00:00:00 +0000"
+          export GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"
+          git -c user.name="$GIT_AUTHOR_NAME" -c user.email="$GIT_AUTHOR_EMAIL" -c core.hooksPath=/dev/null commit -m "test: materialize isolated Product Factory candidate"
+          PUBLISHED_SHA="$(git rev-parse HEAD)"
+          if [[ "$PUBLISHED_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "Published SHA $PUBLISHED_SHA differs from tested SHA $EXPECTED_SHA; refusing PR publication." >&2
+            exit 1
+          fi
           git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" -c core.hooksPath=/dev/null push origin "HEAD:refs/heads/$TARGET_BRANCH"
           cat > "$RUNNER_TEMP/product-factory-pr.md" <<EOF
           ## Delivery
