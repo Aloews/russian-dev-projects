@@ -17,7 +17,7 @@ TEST_GATE = re.compile(
 )
 
 
-def _xml_counts(workspace: Path) -> tuple[int, int] | None:
+def _xml_counts(workspace: Path) -> tuple[int, int, int] | None:
     files = []
     for pattern in (
         "build/test-results/test/TEST-*.xml",
@@ -27,19 +27,20 @@ def _xml_counts(workspace: Path) -> tuple[int, int] | None:
         files.extend(workspace.glob(pattern))
     if not files:
         return None
-    tests = skipped = 0
+    tests = skipped = failed = 0
     for file in files:
         try:
             root = ET.parse(file).getroot()
             for suite in ([root] if root.tag.endswith("testsuite") else root.findall(".//testsuite")):
                 tests += int(suite.attrib.get("tests", "0"))
                 skipped += int(suite.attrib.get("skipped", "0"))
+                failed += int(suite.attrib.get("failures", "0")) + int(suite.attrib.get("errors", "0"))
         except (ET.ParseError, OSError, ValueError):
             return None
-    return tests - skipped, skipped
+    return tests - skipped - failed, skipped, failed
 
 
-def _counts(label: str, body: str, workspace: Path) -> tuple[int, int] | None:
+def _counts(label: str, body: str, workspace: Path) -> tuple[int, int, int] | None:
     # Structured Go JSON output counts individual tests, not package summaries.
     if label.lower() == "go tests":
         passed = skipped = 0
@@ -55,27 +56,28 @@ def _counts(label: str, body: str, workspace: Path) -> tuple[int, int] | None:
                     passed += 1
                 else:
                     skipped += 1
-        return (passed, skipped) if valid else None
+        return (passed, skipped, 0) if valid else None
 
     xml_result = _xml_counts(workspace) if label.lower() in {"gradle tests", "maven tests"} else None
     if xml_result is not None:
         return xml_result
 
     patterns = [
-        (r"test result:\s*ok\.\s*(\d+)\s+passed(?:;\s*\d+\s+failed)?(?:;\s*(\d+)\s+ignored)?", "rust"),
-        (r"(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?(?:,\s*\d+\s+(?:failed|error))?", "pytest"),
+        (r"test result:\s*ok\.\s*(\d+)\s+passed;\s*(\d+)\s+failed;\s*(\d+)\s+ignored", "rust"),
+        (r"(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?", "pytest"),
         (r"Tests:\s*(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?", "jest"),
         (r"Tests\s+(\d+)\s+passed(?:\s*\|\s*(\d+)\s+skipped)?", "vitest"),
         (r"(\d+)\s+passing(?:\s*\((\d+)\s+pending\))?", "mocha"),
         (r"(\d+)\s+passed\s*\(", "playwright"),
         (r"(\d+)\s+tests?\s+passed", "generic"),
     ]
-    candidates: list[tuple[int, int]] = []
+    candidates: list[tuple[int, int, int]] = []
     for pattern, _ in patterns:
         for match in re.finditer(pattern, body, re.IGNORECASE):
             passed = int(match.group(1))
             skipped = int(match.group(2) or 0) if match.lastindex and match.lastindex >= 2 else 0
-            candidates.append((passed, skipped))
+            failed = int(match.group(3) or 0) if match.lastindex and match.lastindex >= 3 else 0
+            candidates.append((passed, skipped, failed))
     if not candidates:
         return None
     # Prefer the largest explicit passing count; never infer from package/build success.
@@ -103,7 +105,10 @@ def parse_report(report: Path, workspace: Path) -> dict:
         if counts is None:
             errors.append(f"{label}: cannot determine executed test count from supported runner output")
             continue
-        passed, skipped = counts
+        passed, skipped, failed = counts
+        if failed > 0:
+            errors.append(f"{label}: runner reports {failed} failed/error tests")
+            continue
         if passed <= 0:
             errors.append(f"{label}: zero tests passed (all skipped or no executed tests)")
             continue
@@ -115,6 +120,7 @@ def parse_report(report: Path, workspace: Path) -> dict:
             "tests_discovered": passed + skipped,
             "tests_passed": passed,
             "tests_skipped": skipped,
+            "tests_failed": failed,
         })
     if not gates and not errors:
         errors.append("no test gates were executed")
@@ -123,6 +129,7 @@ def parse_report(report: Path, workspace: Path) -> dict:
         "tests_discovered": sum(g["tests_discovered"] for g in gates),
         "tests_passed": sum(g["tests_passed"] for g in gates),
         "tests_skipped": sum(g["tests_skipped"] for g in gates),
+        "tests_failed": sum(g["tests_failed"] for g in gates),
         "errors": errors,
         "report_sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
     }
