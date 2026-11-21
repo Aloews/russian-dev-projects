@@ -30,6 +30,14 @@ class AdversarialCompletionTests(unittest.TestCase):
     def test_01_implementation_claim_without_changed_files(self):
         self.assertTrue(validate(copy.deepcopy(BASE), SHA, []))
 
+    def test_code_level_does_not_claim_runtime_integration(self):
+        code = copy.deepcopy(BASE)
+        code["api"] = {}
+        code["database"] = {}
+        code["ui"] = {}
+        code["deployment"] = {}
+        self.assertEqual(validate(code, SHA, ["src/service.py"], "CODE_VERIFIED"), [])
+
     def test_02_tests_claimed_but_command_not_executed(self):
         self.rejected(lambda m: m["checks"][0].update(executed=False))
 
@@ -65,6 +73,9 @@ class AdversarialCompletionTests(unittest.TestCase):
 
     def test_manifest_diff_must_match_actual_diff(self):
         self.assertTrue(validate(copy.deepcopy(BASE), SHA, ["src/other.py"]))
+
+    def test_wrong_verification_level_is_rejected(self):
+        self.assertTrue(validate(copy.deepcopy(BASE), SHA, ["src/service.py"], "MADE_UP"))
 
 if __name__ == "__main__":
     unittest.main()
