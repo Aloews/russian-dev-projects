@@ -6,8 +6,8 @@ import hashlib
 import json
 import re
 import sys
-from pathlib import Path
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
 TEST_GATE = re.compile(
