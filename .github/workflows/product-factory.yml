@@ -604,7 +604,7 @@ jobs:
           fi
           git config user.name "Product Factory"
           git config user.email "product-factory@users.noreply.github.com"
-          git -c core.hooksPath=/dev/null commit -m "feat: deliver verified product increment"
+          git -c core.hooksPath=/dev/null commit -m "feat: publish product code candidate"
           git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" -c core.hooksPath=/dev/null push origin "HEAD:refs/heads/$TARGET_BRANCH"
           cat > "$RUNNER_TEMP/product-factory-pr.md" <<EOF
           ## Delivery
@@ -612,18 +612,19 @@ jobs:
           - Working branch: $TARGET_BRANCH
           - Base: $BASE_BRANCH
           - Objective: $OBJECTIVE
-          - Verification: all configured gates passed in this workflow.
+          - Verification level: CODE_VERIFIED only; all configured automated code gates passed on this candidate SHA.
+          - Runtime deployment, live integrations, persisted user journey and production readiness: NOT VERIFIED by this workflow.
           - Agent orchestration: OpenRouter Claude Sonnet 4.5 with independent architecture, security, product and code-review agents; local Qwen2.5-Coder fallback. Starimg/Fable disabled.
           - Run evidence: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
-          This PR is not merged or deployed. External credentials, real data, legal approvals and production readiness are not inferred from CI success.
+          This PR is a code candidate only. It is not a delivered product, not a verified running user journey, and is not merged or deployed. CI success does not establish runtime integration, real data, external credentials, legal approvals or production readiness.
           EOF
           TARGET_OWNER="${TARGET_REPO%%/*}"
           PR_NUMBER="$(gh pr list --repo "$TARGET_REPO" --head "$TARGET_OWNER:$TARGET_BRANCH" --state open --json number --jq '.[0].number // empty')"
           if [[ -n "$PR_NUMBER" ]]; then
-            gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --title "${TARGET_REPO}: verified product delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
+            gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --title "${TARGET_REPO}: code candidate — configured checks passed" --body-file "$RUNNER_TEMP/product-factory-pr.md"
           else
-            gh pr create --repo "$TARGET_REPO" --base "$BASE_BRANCH" --head "$TARGET_BRANCH" --title "${TARGET_REPO}: verified product delivery increment" --body-file "$RUNNER_TEMP/product-factory-pr.md"
+            gh pr create --repo "$TARGET_REPO" --base "$BASE_BRANCH" --head "$TARGET_BRANCH" --title "${TARGET_REPO}: code candidate — configured checks passed" --body-file "$RUNNER_TEMP/product-factory-pr.md"
           fi
 
   summary:
@@ -646,7 +647,7 @@ jobs:
           PUBLISH_RESULT: ${{ needs.publish.result }}
         run: |
           if [[ "$PUBLISH_RESULT" == "success" && ( "$VERIFY_0" == "true" || "$VERIFY_1" == "true" || "$VERIFY_2" == "true" ) ]]; then
-            echo "Verified candidate was published as a pull request."
+            echo "Code candidate passed configured automated gates and was published as a PR. Product/runtime completion is NOT VERIFIED."
             exit 0
           fi
           echo "No verified candidate was published. Inspect the verification artifacts and failed job." >&2
