@@ -33,8 +33,13 @@ def _artifact_error(workspace: Path | None, relative: Any, digest: Any, label: s
     return None
 
 
-def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[str],
-             level: str = "PRODUCTION_VERIFIED", workspace: Path | None = None) -> list[str]:
+def _validate_evidence_structure(
+    manifest: dict[str, Any],
+    expected_sha: str,
+    changed_paths: list[str],
+    level: str,
+    workspace: Path | None,
+) -> list[str]:
     errors: list[str] = []
     if level not in LEVELS:
         return ["unknown verification level"]
@@ -166,12 +171,37 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
     return errors
 
 
+
+def validate(
+    manifest: dict[str, Any],
+    expected_sha: str,
+    changed_paths: list[str],
+    level: str = "CODE_VERIFIED",
+    workspace: Path | None = None,
+    trusted_receipt_verified: bool = False,
+) -> list[str]:
+    """Validate evidence; higher levels need a receipt verified outside this manifest.
+
+    trusted_receipt_verified may only be set by a caller that independently verified
+    the signed GitHub OIDC receipt against the Hub receipt store. It must never be
+    derived from a JSON field or artifact supplied by the agent.
+    """
+    if level not in LEVELS:
+        return ["unknown verification level"]
+    if level != "CODE_VERIFIED" and trusted_receipt_verified is not True:
+        return [
+            f"{level} requires a trusted GitHub Actions OIDC receipt verified outside the manifest; "
+            "local files and self-attested booleans cannot promote verification status"
+        ]
+    return _validate_evidence_structure(manifest, expected_sha, changed_paths, level, workspace)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--expected-sha", required=True)
     parser.add_argument("--diff-file", required=True, help="newline-delimited paths from git diff --name-only")
-    parser.add_argument("--level", choices=LEVELS, default="PRODUCTION_VERIFIED")
+    parser.add_argument("--level", choices=LEVELS, default="CODE_VERIFIED")
     parser.add_argument("--workspace", required=True, help="root for verifying evidence artifact bytes and SHA-256")
     args = parser.parse_args()
     try:
