@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from validate_completion_evidence import validate
+from validate_completion_evidence import _validate_evidence_structure, validate
 
 SHA = "a" * 40
 BASE = {
@@ -30,11 +30,12 @@ class AdversarialCompletionTests(unittest.TestCase):
             manifest = copy.deepcopy(BASE)
             self.attach_integration_artifacts(manifest, workspace)
             mutate(manifest)
-            self.assertTrue(validate(
+            self.assertTrue(_validate_evidence_structure(
                 manifest,
                 SHA,
                 changed if changed is not None else ["src/service.py"],
-                workspace=workspace,
+                "PRODUCTION_VERIFIED",
+                workspace,
             ))
 
     def test_01_implementation_claim_without_changed_files(self):
@@ -42,7 +43,7 @@ class AdversarialCompletionTests(unittest.TestCase):
             workspace = Path(directory)
             manifest = copy.deepcopy(BASE)
             self.attach_integration_artifacts(manifest, workspace)
-            errors = validate(manifest, SHA, [], workspace=workspace)
+            errors = _validate_evidence_structure(manifest, SHA, [], "PRODUCTION_VERIFIED", workspace)
             self.assertTrue(any("no changed files" in error for error in errors))
 
     def test_code_level_does_not_claim_runtime_integration(self):
@@ -124,7 +125,7 @@ class AdversarialCompletionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
             self.attach_integration_artifacts(manifest, workspace)
-            self.assertEqual(validate(manifest, SHA, ["src/service.py"], workspace=workspace), [])
+            self.assertEqual(_validate_evidence_structure(manifest, SHA, ["src/service.py"], "PRODUCTION_VERIFIED", workspace), [])
 
     def test_database_readback_artifact_must_match_its_hash(self):
         manifest = copy.deepcopy(BASE)
@@ -147,7 +148,7 @@ class AdversarialCompletionTests(unittest.TestCase):
             workspace = Path(directory)
             manifest = copy.deepcopy(BASE)
             self.attach_integration_artifacts(manifest, workspace)
-            self.assertTrue(validate(manifest, SHA, ["src/other.py"], workspace=workspace))
+            self.assertTrue(_validate_evidence_structure(manifest, SHA, ["src/other.py"], "PRODUCTION_VERIFIED", workspace))
 
     def test_code_evidence_rejects_missing_artifact(self):
         manifest = copy.deepcopy(BASE)
@@ -191,6 +192,51 @@ class AdversarialCompletionTests(unittest.TestCase):
 
     def test_wrong_verification_level_is_rejected(self):
         self.assertTrue(validate(copy.deepcopy(BASE), SHA, ["src/service.py"], "MADE_UP"))
+
+
+    def test_untrusted_manifest_cannot_claim_integration_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            manifest = copy.deepcopy(BASE)
+            self.attach_integration_artifacts(manifest, workspace)
+            errors = validate(manifest, SHA, ["src/service.py"], "INTEGRATION_VERIFIED", workspace)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("trusted GitHub Actions OIDC receipt", errors[0])
+
+    def test_untrusted_manifest_cannot_claim_user_journey_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            manifest = copy.deepcopy(BASE)
+            self.attach_integration_artifacts(manifest, workspace)
+            errors = validate(manifest, SHA, ["src/service.py"], "USER_JOURNEY_VERIFIED", workspace)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("self-attested booleans cannot promote", errors[0])
+
+    def test_untrusted_manifest_cannot_claim_production_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            manifest = copy.deepcopy(BASE)
+            self.attach_integration_artifacts(manifest, workspace)
+            errors = validate(manifest, SHA, ["src/service.py"], "PRODUCTION_VERIFIED", workspace)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("local files and self-attested booleans", errors[0])
+
+    def test_verified_oidc_receipt_allows_structural_integration_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            manifest = copy.deepcopy(BASE)
+            self.attach_integration_artifacts(manifest, workspace)
+            self.assertEqual(
+                validate(
+                    manifest,
+                    SHA,
+                    ["src/service.py"],
+                    "PRODUCTION_VERIFIED",
+                    workspace,
+                    trusted_receipt_verified=True,
+                ),
+                [],
+            )
 
     def test_metadata_only_validation_is_rejected(self):
         manifest = copy.deepcopy(BASE)
