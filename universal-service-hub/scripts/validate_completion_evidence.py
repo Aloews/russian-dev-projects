@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
 """Fail-closed validator for SHA-bound Product Factory evidence."""
 from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -156,8 +156,8 @@ def main() -> int:
         manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
         changed = [line.strip() for line in Path(args.diff_file).read_text(encoding="utf-8").splitlines() if line.strip()]
         if not isinstance(manifest, dict):
-            raise ValueError("manifest root must be an object")
-    except Exception as exc:
+            raise TypeError("manifest root must be an object")
+    except (OSError, UnicodeError, TypeError, ValueError) as exc:
         print(f"INVALID EVIDENCE: {exc}", file=sys.stderr)
         return 2
     errors = validate(manifest, args.expected_sha, changed, args.level,
