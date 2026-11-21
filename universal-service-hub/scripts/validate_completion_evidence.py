@@ -44,6 +44,8 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
         errors.append("candidate SHA does not match the checked-out candidate")
     if manifest.get("tested_sha") != expected_sha:
         errors.append("candidate SHA changed after tests or test evidence targets another SHA")
+    if workspace is None:
+        errors.append("an evidence workspace is required; metadata-only validation is not a verification")
     if not changed_paths:
         errors.append("no changed files: implementation claim has no diff")
     declared = manifest.get("changed_paths")
@@ -51,18 +53,29 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
         errors.append("manifest changed_paths do not exactly match the inspected diff")
 
     required_ids = manifest.get("required_check_ids")
-    if not isinstance(required_ids, list) or not required_ids or "tests" not in required_ids:
-        errors.append("required_check_ids must be non-empty and include tests")
+    if (
+        not isinstance(required_ids, list)
+        or not required_ids
+        or "tests" not in required_ids
+        or any(not isinstance(item, str) or not item for item in required_ids)
+        or len(set(required_ids)) != len(required_ids)
+    ):
+        errors.append("required_check_ids must be unique, non-empty strings and include tests")
         required_ids = []
     checks = manifest.get("checks")
     if not isinstance(checks, list):
         checks = []
-    by_id = {c.get("id"): c for c in checks if isinstance(c, dict)}
+    check_ids = [item.get("id") for item in checks if isinstance(item, dict)]
+    if len(check_ids) != len(set(check_ids)):
+        errors.append("checks contain duplicate IDs; evidence cannot be resolved unambiguously")
+    by_id = {item.get("id"): item for item in checks if isinstance(item, dict)}
     for check_id in required_ids:
         item = by_id.get(check_id)
-        if not item or item.get("executed") is not True or type(item.get("exit_code")) is not int or item.get("exit_code") != 0 or not item.get("command") or not item.get("artifact"):
+        if not item or item.get("executed") is not True or type(item.get("exit_code")) is not int or item.get("exit_code") != 0 or not isinstance(item.get("command"), str) or not item.get("command").strip() or not item.get("artifact"):
             errors.append(f"required check {check_id!r} was not executed successfully")
             continue
+        if check_id == "tests" and "tests_discovered" not in item:
+            errors.append("required tests check has no machine-counted test totals")
         if item.get("candidate_sha") != expected_sha:
             errors.append(f"required check {check_id!r} was not run on the candidate SHA")
         if "tests_discovered" in item:
@@ -78,15 +91,14 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
                 errors.append(f"check {check_id!r} contains skipped tests")
             if type(failed) is not int or failed != 0:
                 errors.append(f"check {check_id!r} contains failed tests")
-        if workspace is not None:
-            error = _artifact_error(
-                workspace,
-                item.get("artifact"),
-                item.get("artifact_sha256"),
-                f"check {check_id!r}",
-            )
-            if error:
-                errors.append(error)
+        error = _artifact_error(
+            workspace,
+            item.get("artifact"),
+            item.get("artifact_sha256"),
+            f"check {check_id!r}",
+        )
+        if error:
+            errors.append(error)
 
     if level == "CODE_VERIFIED":
         return errors
@@ -150,7 +162,7 @@ def main() -> int:
     parser.add_argument("--expected-sha", required=True)
     parser.add_argument("--diff-file", required=True, help="newline-delimited paths from git diff --name-only")
     parser.add_argument("--level", choices=LEVELS, default="PRODUCTION_VERIFIED")
-    parser.add_argument("--workspace", help="root for verifying evidence artifact bytes and SHA-256")
+    parser.add_argument("--workspace", required=True, help="root for verifying evidence artifact bytes and SHA-256")
     args = parser.parse_args()
     try:
         manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
