@@ -114,7 +114,7 @@ runs:
             r"ℹ tests\s+(\d+)",
             r"# tests\s+(\d+)",
             r"Tests\s+(\d+)\s+passed",
-            r"(\d+)\s+passed\s+\\(",
+            r"(\d+)\s+passed\s+\(",
             r"Tests run:\s*(\d+)",
             r"(\d+) tests completed",
         ]
