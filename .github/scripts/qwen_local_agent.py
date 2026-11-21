@@ -120,6 +120,8 @@ EDIT_SCHEMA = {
                     "path": {"type": "string", "minLength": 1, "maxLength": 240},
                     "old": {"type": "string", "maxLength": 6000},
                     "new": {"type": "string", "minLength": 1, "maxLength": 12000},
+                    "before": {"type": "string", "maxLength": 3000},
+                    "after": {"type": "string", "maxLength": 3000},
                 },
                 "required": ["path", "old", "new"],
                 "additionalProperties": False,
@@ -131,17 +133,19 @@ EDIT_SCHEMA = {
 }
 
 def rejected_existing_file_context(answer):
-    """Return bounded current-file evidence when the model incorrectly proposes a new file."""
+    """Return bounded file evidence when a proposed edit conflicts with the actual file."""
     try:
         payload = json.loads(answer)
     except (TypeError, json.JSONDecodeError):
         return ""
     sections = []
-    for edit in payload.get("edits", []) if isinstance(payload, dict) else []:
-        if not isinstance(edit, dict) or edit.get("old") != "":
+    edits = payload.get("edits", []) if isinstance(payload, dict) else []
+    for edit in edits:
+        if not isinstance(edit, dict):
             continue
         path = edit.get("path")
-        if not isinstance(path, str) or not allowed(path, set()):
+        old = edit.get("old")
+        if not isinstance(path, str) or not allowed(path, set()) or not isinstance(old, str):
             continue
         target = ROOT / path
         try:
@@ -151,10 +155,31 @@ def rejected_existing_file_context(answer):
             current = target.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             continue
+        occurrences = current.count(old) if old else 0
+        if old and occurrences == 1:
+            continue
+        if old == "":
+            reason = "The model marked this existing file as a new file."
+        elif occurrences == 0:
+            reason = "The proposed old text does not occur in this file."
+        else:
+            reason = f"The proposed old text occurs {occurrences} times; choose a unique, more specific snippet."
+        if len(current) <= 12000:
+            excerpt = current
+        elif old and occurrences:
+            positions = [match.start() for match in re.finditer(re.escape(old), current)][:4]
+            pieces = []
+            for position in positions:
+                start = max(0, position - 1200)
+                end = min(len(current), position + len(old) + 1200)
+                pieces.append(current[start:end])
+            excerpt = "\n[... occurrence context ...]\n".join(pieces)
+        else:
+            excerpt = current[:12000] + "\n[FILE CONTENT TRUNCATED]\n"
         sections.append(
-            "\n--- EXISTING FILE (NOT A NEW FILE): " + path + " ---\n"
-            + scrub(current[:12000])
-            + ("\n[FILE CONTENT TRUNCATED]\n" if len(current) > 12000 else "")
+            "\n--- EXISTING FILE CONFLICT: " + path + " ---\n"
+            + reason + "\n"
+            + scrub(excerpt)
         )
     return "\n".join(sections)
 
@@ -167,8 +192,13 @@ def apply_edits(edits, tracked):
         if not isinstance(edit, dict):
             raise ValueError("edit item is not an object")
         path, old, new = edit.get("path"), edit.get("old"), edit.get("new")
+        before, after = edit.get("before", ""), edit.get("after", "")
         if not isinstance(path, str) or not isinstance(old, str) or not isinstance(new, str) or not new:
             raise ValueError("edit is missing path, old or new text")
+        if not isinstance(before, str) or not isinstance(after, str):
+            raise ValueError("edit before/after context must be text")
+        if len(before) > 3000 or len(after) > 3000:
+            raise ValueError("edit context exceeds safe text limits")
         if not allowed(path, tracked):
             raise ValueError("edit path is outside the source allowlist")
         target = ROOT / path
@@ -192,9 +222,17 @@ def apply_edits(edits, tracked):
         else:
             if current is None:
                 raise ValueError("update edit targets a missing file")
-            if current.count(old) != 1:
-                raise ValueError("old text must match exactly once in " + path)
-            current = current.replace(old, new, 1)
+            occurrences = current.count(old)
+            if occurrences == 1:
+                current = current.replace(old, new, 1)
+            elif before or after:
+                needle = before + old + after
+                if current.count(needle) != 1:
+                    raise ValueError("before/old/after context must match exactly once in " + path)
+                position = current.index(needle) + len(before)
+                current = current[:position] + new + current[position + len(old):]
+            else:
+                raise ValueError("old text must match exactly once in " + path + "; add exact before/after context")
         if len(current) > 100000 or "\0" in current:
             raise ValueError("edited file exceeds safe text limits")
         staged[path] = current
@@ -252,6 +290,8 @@ def main():
         "Inspect the provided project evidence and project map; infer the actual stack and product domain from files, then choose one small, complete, testable increment. "
         "Return only JSON matching the supplied schema, with an edits array of exact path/old/new replacements. "
         "For existing files, old must be an exact unique snippet copied from the provided file. "
+        "If old occurs more than once, include exact adjacent before and/or after context so before+old+after matches once. "
+        "Never edit README.md unless the objective explicitly requires changing README content; do not use generic headings or repeated paragraphs as old snippets. "
         "For a new file, old must be empty and new must contain the complete file. "
         "Never return a unified diff, markdown fence or explanation. "
         "Never invent live data, credentials, legal approvals, customers, property inventory or tests. "
