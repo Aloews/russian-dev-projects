@@ -61,3 +61,17 @@ Work autonomously within the permissions and safety boundaries below.
 - Distinguish provider probe, code correctness, integration readiness and production readiness.
 - Mark a task `VERIFIED` only with evidence from the exact candidate commit. Otherwise use `IN PROGRESS`, `BLOCKED` or `NOT VERIFIED`.
 - A task is complete only when the intended user outcome is delivered, relevant checks pass, the diff is reviewed, documentation reflects reality and all applicable security/release gates are satisfied.
+
+## Anti-false-completion enforcement (mandatory)
+
+The canonical policy and state machine are in docs/MAP.md under Anti-false-completion control. This section is binding for every coding agent, reviewer, verifier, coordinator and Product Factory workflow.
+
+- Agent prose is an untrusted claim, never evidence. Independently inspect diffs, logs, test artifacts, runtime responses and persisted read-back.
+- Use only the result states defined in the map. Never call code-only CI "product verified", a created deployment "deployed", or a PR "delivered".
+- Bind every check and artifact to the exact immutable candidate SHA. A different SHA, missing log, skipped check, zero-test run or stale artifact is NOT_VERIFIED.
+- A task cannot pass if any required criterion is missing, failed, skipped or unsupported. Parent completion is derived from all required child criteria; agents cannot self-certify.
+- Before publishing a Product Factory PR, label it a code candidate and state the exact configured checks passed. Explicitly state that runtime, integration and user journeys remain unverified unless their dedicated checks actually ran.
+- Before user handover, require a running URL/artifact and successful critical end-to-end journey with persisted data read back. Production claims additionally require READY deployment, exact SHA match and production smoke test.
+- If an agent overstates completion, record FALSE COMPLETION ATTEMPT, downgrade to NOT_VERIFIED, preserve its output as evidence, reject the claim and repair the missing criterion. Do not hide the incident in the summary.
+- Never weaken, skip or delete a failing acceptance test to obtain a green result. After two attempts without acceptance progress, change approach rather than repeat the same attempt.
+- This policy is not considered implemented merely because this text exists. The adversarial regression suite and machine-enforced gates must pass before describing the control itself as enforced.
