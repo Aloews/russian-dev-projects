@@ -43,20 +43,22 @@ def _xml_counts(workspace: Path) -> tuple[int, int, int] | None:
 def _counts(label: str, body: str, workspace: Path) -> tuple[int, int, int] | None:
     # Structured Go JSON output counts individual tests, not package summaries.
     if label.lower() == "go tests":
-        passed = skipped = 0
+        passed = skipped = failed = 0
         valid = False
         for line in body.splitlines():
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(event, dict) and event.get("Test") and event.get("Action") in {"pass", "skip"}:
+            if isinstance(event, dict) and event.get("Test") and event.get("Action") in {"pass", "skip", "fail"}:
                 valid = True
                 if event["Action"] == "pass":
                     passed += 1
-                else:
+                elif event["Action"] == "skip":
                     skipped += 1
-        return (passed, skipped, 0) if valid else None
+                else:
+                    failed += 1
+        return (passed, skipped, failed) if valid else None
 
     xml_result = _xml_counts(workspace) if label.lower() in {"gradle tests", "maven tests"} else None
     if xml_result is not None:
@@ -80,8 +82,10 @@ def _counts(label: str, body: str, workspace: Path) -> tuple[int, int, int] | No
             candidates.append((passed, skipped, failed))
     if not candidates:
         return None
-    # Prefer the largest explicit passing count; never infer from package/build success.
-    return max(candidates, key=lambda item: item[0])
+    # A zero-exit wrapper must not conceal a runner-reported failure.
+    failed_matches = [int(value) for value in re.findall(r"(\d+)\s+(?:failed|failures|errors?)", body, re.IGNORECASE)]
+    best = max(candidates, key=lambda item: item[0])
+    return best[0], best[1], max(best[2], max(failed_matches, default=0))
 
 
 def parse_report(report: Path, workspace: Path) -> dict:
