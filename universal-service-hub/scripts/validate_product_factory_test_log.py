@@ -65,7 +65,7 @@ def _counts(label: str, body: str, workspace: Path) -> tuple[int, int, int] | No
         return xml_result
 
     patterns = [
-        (r"test result:\s*ok\.\s*(\d+)\s+passed;\s*(\d+)\s+failed;\s*(\d+)\s+ignored", "rust"),
+        (r"test result:\s*ok\.\s*(\d+)\s+passed;\s*\d+\s+failed;\s*(\d+)\s+ignored", "rust"),
         (r"(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?", "pytest"),
         (r"Tests:\s*(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?", "jest"),
         (r"Tests\s+(\d+)\s+passed(?:\s*\|\s*(\d+)\s+skipped)?", "vitest"),
