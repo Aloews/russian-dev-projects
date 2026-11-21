@@ -81,3 +81,9 @@ The API supports project-scoped artifact upload and download when an S3-compatib
 - Migration `0004_execution_artifact_content_type.sql` stores content type. Bucket policy must enforce private access and encryption; the service does not generate public URLs.
 
 This API is a durable artifact primitive, not yet a complete agent handoff: workers do not have artifact-store credentials and completion records do not yet automatically bind artifact IDs to job output. That integration is a separate authorization milestone.
+
+## S3-compatible integration smoke
+
+The CI script `scripts/artifact_storage_smoke.sh` starts an isolated, pinned `docker.io/pgsty/silo:RELEASE.2026-11-09T00-00-00Z` server, creates a private test bucket, and launches the built Hub API with temporary test credentials against the CI PostgreSQL database. It verifies byte-exact upload/download, the stored manifest and SHA-256 response header, attachment/no-store/nosniff headers, unauthorized access, viewer denial, cross-project denial, invalid artifact type/content type, task mismatch, the 2 MiB HTTP limit and integrity rejection after deliberate object tampering. The test destroys both containers and uses no cloud account or paid resource.
+
+**Status: IN PROGRESS until all required checks pass on the exact PR head.** The test does not establish compatibility with AWS, R2, B2, Supabase Storage or a production bucket policy, nor does it test retention, backup/restore or TLS custom endpoints. Worker artifact handoff remains unimplemented.
