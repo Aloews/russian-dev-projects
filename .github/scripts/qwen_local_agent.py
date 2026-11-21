@@ -375,15 +375,25 @@ def main():
                 timeout_seconds=480 if attempt == 0 else 180,
             )
             response_json = json.loads(answer)
-            changed_paths = apply_edits(response_json.get("edits"), tracked_set)
-            if not changed_paths:
-                raise ValueError("Qwen returned no source or test edits")
-            source_changes = [path for path in changed_paths if Path(path).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}]
+            edits = response_json.get("edits")
+            if not isinstance(edits, list) or not edits or any(
+                not isinstance(edit, dict) or not isinstance(edit.get("path"), str)
+                for edit in edits
+            ):
+                raise ValueError("Qwen returned malformed or empty edit paths")
+            proposed_paths = [edit["path"] for edit in edits]
+            source_changes = [
+                path for path in proposed_paths
+                if Path(path.replace("\\\\", "/")).suffix.lower() not in {".md", ".mdx", ".yaml", ".yml", ".toml"}
+            ]
             if not source_changes:
                 raise ValueError("Qwen returned documentation-only edits")
             review_text = response_json.get("review")
             if not isinstance(review_text, str) or len(review_text.strip()) < 80 or "timed out" in review_text.lower():
                 raise ValueError("Qwen review report is missing or contains an execution error")
+            changed_paths = apply_edits(edits, tracked_set)
+            if not changed_paths:
+                raise ValueError("Qwen returned no source or test edits")
             break
         except (TimeoutError, urllib.error.URLError) as exc:
             print("::error::Qwen inference timed out or could not connect: " + type(exc).__name__ + ": " + str(exc)[:500])
