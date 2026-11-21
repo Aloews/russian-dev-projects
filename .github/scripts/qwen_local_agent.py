@@ -67,7 +67,7 @@ def read_text(path):
         if p.is_symlink() or not p.is_file() or p.stat().st_size > 100000:
             return ""
         return p.read_text(encoding="utf-8")[:MAX_FILE_CHARS]
-    except (OSError, UnicodeError):
+    except (OSError, UnicodeError, RuntimeError):
         return ""
 
 def scrub(text):
@@ -163,7 +163,7 @@ def rejected_existing_file_context(answer):
             if not resolved.is_relative_to(ROOT.resolve()) or parent_symlink or target.is_symlink() or not target.is_file():
                 continue
             current = target.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
+        except (OSError, UnicodeError, RuntimeError):
             continue
         occurrences = current.count(old) if old else 0
         if old and occurrences == 1:
@@ -212,7 +212,10 @@ def apply_edits(edits, tracked):
         if not allowed(path, tracked):
             raise ValueError("edit path is outside the source allowlist")
         target = ROOT / path
-        resolved_target = target.resolve()
+        try:
+            resolved_target = target.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise ValueError("edit path cannot be safely resolved") from exc
         if not resolved_target.is_relative_to(ROOT.resolve()):
             raise ValueError("edit path resolves outside the target repository")
         if target.is_symlink() or any(
