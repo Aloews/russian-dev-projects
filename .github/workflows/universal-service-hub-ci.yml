@@ -64,6 +64,7 @@ jobs:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - name: Product Factory shell syntax
         working-directory: .
