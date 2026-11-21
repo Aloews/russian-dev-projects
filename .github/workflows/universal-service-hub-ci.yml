@@ -107,8 +107,12 @@ jobs:
         run: ruff check app tests migrations
       - name: Migration smoke test
         env:
-          USH_DATABASE_URL: postgresql+asyncpg://ush:ush-test-password@localhost:5432/ush_test
-        run: alembic upgrade head
+          PGHOST: 127.0.0.1
+          PGPORT: 5432
+          PGUSER: ush
+          PGPASSWORD: ush-test-password
+          USH_MIGRATION_TEST_DB_NAME: ush_migration_test
+        run: bash scripts/ci_migration_smoke.sh
       - name: Tests
         run: pytest -q
       - name: Docker build

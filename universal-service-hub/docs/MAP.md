@@ -681,8 +681,9 @@ The cloud coding workflow was not triggered for these checks because it can call
 - **PR #77 merged** into `fix/ush-worker-handoff-integrity`: `2940e84e45795984f5b1f65868768af18056ede2`; exact-head CI #1730 passed all steps. Worker supervisor, bounded leases and restart recovery are implemented, but capability remains `system_noop` only. It is not an AI agent executor.
 - **PR #81 merged** into `feat/ush-worker-supervisor-v1`: `3f3fd2d8606dc10de6fe75de389fa4afc33362da`; run #1587 passed. Adds Wiremock S3 client HTTP-contract tests, not real Silo object integration.
 - **PR #82 merged** into `test/ush-artifact-s3-http-integration`: `f5d5511d82e7bc65d87047b9180aef352f030cbc`; exact-head run #1709 passed. Adds the lease-scoped Hub artifact upload endpoint, idempotency and migration 0005 smoke. Worker client is still not wired to call this endpoint.
-- **Actual S3 smoke failure, run #1734:** PR #94 head `55310c3f5bda9543f16f4005c3dbead39b6c72a1` passed Rust/Python checks, migration smoke, Docker build and worker image smoke but failed object upload. Runner allocated; PostgreSQL and Silo ready. Logs show Silo rejected SSE-S3 because KMS was not configured (`NotImplemented`). Root cause is test fixture configuration, not application startup.
-- **Repair branch #95** configured a test-only static KMS key, generated from 32 ephemeral bytes, but no CI run is observable on exact head `4a953b7ca917be0beed39b8ca4ff94a69ac056b2`; it is not verified.
+- **PR #80 exact-head failure:** head `e3535d5eed27314b77ec79e52baaa9faa15c8460`, run [#1583 / 44291673336](https://github.com/Aloews/russian-dev-projects/actions/runs/44291673336). Silo reached readiness, but the API never became ready on `127.0.0.1:18001`; cleanup could not find the API container, so this run does not establish the root cause.
+- **PR #94 prior failure:** run [#1734 / 44728577550](https://github.com/Aloews/russian-dev-projects/actions/runs/44728577550) on old head `55310c3f5bda9543f16f4005c3dbead39b6c72a1` passed Rust/Python, migration, Docker build and worker image checks, then Silo rejected SSE-S3 because KMS was not configured (`NotImplemented`). Current PR #94 head `17b38a1f416b10952d68eceb8d7fc5c89c5c1a76` has no workflow run/checks and GitHub reports `mergeable=false`; it is not verified.
+- **PR #95 exact-head verified in the test fixture:** head `4a953b7ca917be0beed39b8ca4ff94a69ac056b2`, run [#1739 / 44755088707](https://github.com/Aloews/russian-dev-projects/actions/runs/44755088707) completed `success`, including the S3-compatible artifact API integration smoke. This is a local Silo fixture, not AWS/cloud certification.
 - **Combined stack branch:** `feat/ush-artifact-api-smoke-merged-stack-20261120` starts at merged PR #82 SHA `f5d5511d82e7bc65d87047b9180aef352f030cbc`, then copies the corrected smoke harness, adds it to CI, and updates this MAP. It must pass CI and real S3-compatible upload/download, auth/tenant isolation, bounds, and corruption rejection before the artifact API integration is verified.
 
 Next gates:
@@ -697,7 +698,7 @@ Next gates:
 - The Rust worker now has an optional `USH_WORKER_API_BASE_URL` client for the lease-scoped endpoint `POST /v1/worker/projects/{project_id}/jobs/{job_id}/artifacts`.
 - Requests carry only the per-job worker ID and current lease token; the worker receives no project/admin bearer token or S3 credentials. The client enforces HTTPS (loopback HTTP only for local development), a 15-second timeout and no redirects.
 - The bounded `system_noop` executor uploads a deterministic JSON result artifact with a stable per-job idempotency key, then stores the returned artifact UUID in completion metadata. When the API URL is unset, prior non-artifact behavior remains unchanged. When configured, upload failure is retryable and the job is not reported as succeeded.
-- **Status: IMPLEMENTED; EXACT-HEAD CI NOT YET OBSERVED.** Current PR #97 head: `ce85eff76337cc57bd7775d5376f322ec6a432fb`. The available workflow-run and combined-status queries returned no run/status for this SHA. Do not merge until Rust format/Clippy/tests, migration/runtime smoke and the worker integration checks pass on this exact head.
+- **Exact-head CI verified:** PR #97 head `12a17dedd7f2d01b825c59d1bd189dfa7de24c1a`; run [#1768 / 44775084301](https://github.com/Aloews/russian-dev-projects/actions/runs/44775084301) completed `success`. This verifies the worker artifact-client contract and `system_noop` upload path on that SHA, not full provider dispatch, worker artifact download or production S3 certification.
 - This is the first worker-to-API transfer slice only. It does not yet implement LLM/provider dispatch, real task execution, artifact download in worker, full artifact-aware checkpoint recovery, or production S3 certification.
 
 ## Rust Agent Runtime — architecture decision
@@ -736,8 +737,9 @@ Next gates:
 - AR-03 exact-head CI run #1763 failed at `cargo clippy --all-targets -- -D warnings`; Rust format passed, Rust tests were skipped because lint failed.
 - Evidence: `src/agent_runtime.rs` had two `too_many_arguments` lint findings, on `authorize_tool` and `run_agent_loop`.
 - Repair commit: `55c3c3f8f78f3db610b60fd9e5c6d638e11d8457`; targeted Clippy allow attributes were added to these orchestration functions. This is a narrow lint allowance, not verification.
-- **Current gate:** wait for CI on the updated immutable head; if Clippy succeeds, inspect compile/test output and review policy/runtime issues before beginning AR-05 durable checkpoint work. No merge while checks are red or pending.
-- **AR-05 planned:** durable checkpoint schema and serialization, task/tenant/project scope binding, job lease fencing, idempotent resume, explicit interrupted/failed/awaiting-approval states, recovery tests and migration smoke test. Discovery of current DB/migration/API boundaries is prerequisite; implementation not started.
+- **AR-05 checkpoint storage primitive is now implemented in PR #98** (`src/checkpoint.rs`, SQLx migration 0006, bounded metadata, CAS lease fencing, restore validation and PostgreSQL tests). It is not yet wired into the agent loop or worker.
+- PR #98 exact head `0608e4a7867fe171bca6441758c0989591af1d1a`, run [#1786 / 44781725891](https://github.com/Aloews/russian-dev-projects/actions/runs/44781725891) failed at `Migration smoke test`; Rust format, Clippy and Rust/PostgreSQL tests passed. The failure is the Python Alembic smoke reusing `ush_test`, already initialized by Rust SQLx migrations; both migration sets create `providers`.
+- **Current gate:** isolate the Alembic smoke in a fresh CI database, rerun all checks on the new exact head, then integrate checkpoint save/restore into the async agent loop and worker. No merge while checks are red or pending.
 
 
 ## AR-05 — durable agent checkpoint and recovery
@@ -749,7 +751,7 @@ Next gates:
 - [x] Implement lease-bound restore with schema/scope/sequence/digest verification; missing, corrupt, stale or superseded state fails closed.
 - [x] Add Rust tests for restart round-trip, budget preservation, digest tampering, scope mismatch, unsupported schema, malformed/unbounded metadata and replay sequence rejection.
 - [x] Add PostgreSQL integration coverage for persisted restore, concurrent compare-and-swap, checksum tampering and stale-lease fencing; CI supplies an isolated PostgreSQL 16 test database.
-- [ ] Verify the exact branch head with GitHub Actions (Rust format, clippy, tests, migration/PostgreSQL smoke and container checks).
+- [ ] Exact-head CI: prior head `0608e4a7867fe171bca6441758c0989591af1d1a`, run #1786 (44781725891) failed at Python migration smoke due to the shared `ush_test` database; the isolation fix is pending CI.
 - [ ] Wire checkpoint save/restore into the autonomous agent supervisor only after the above gates pass.
 
 Current implementation is in `src/checkpoint.rs`; it is a durable storage primitive, not yet a live agent-loop integration. No migration has been applied to a production database. PR remains open and unmerged.
