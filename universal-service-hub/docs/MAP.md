@@ -446,3 +446,75 @@ The intended hierarchy is repository-wide policy → automation-specific policy 
 - **API-only:** the current product has no browser management UI; only health/readiness endpoints are directly viewable in a browser, and administrative workflows use the authenticated HTTP API.
 - **Not a public deployment:** no persistent host is currently provisioned. The existing Railway projects contain other product services and were not modified. The Hub's Neon Free project exists but is not connected to a deployed runtime. No paid resource was created.
 - Acceptance: exact-head GitHub CI passes; Compose starts Rust against PostgreSQL 17; migrations complete; /healthz and /readyz return success; unauthenticated API returns 401; authenticated provider-list endpoint returns success. Public deployment is a separate gate requiring an isolated host and configured production secrets.
+
+## Anti-false-completion control — mandatory (2026-11-21)
+
+**Problem addressed:** agent narratives and code-only checks have repeatedly been treated as delivered outcomes even when the product journey is absent, runtime is unavailable, or no result was produced. This is a release-integrity defect, not a wording preference.
+
+### Non-negotiable result states
+
+Every task, child task, parent job, PR and handover must use one of these states:
+
+- PLANNED: no implementation evidence.
+- IN_PROGRESS: changes exist; acceptance not met.
+- BLOCKED: a specific external/owner-only dependency prevents progress; include exact blocker and evidence.
+- FAILED: a required check or acceptance criterion failed.
+- NOT_VERIFIED: evidence is absent, stale, ambiguous, on another SHA, or insufficient for the claim.
+- CODE_VERIFIED: exact candidate SHA passed listed code-level checks; no product/runtime claim.
+- INTEGRATION_VERIFIED: API/database/provider integration and persistence checks passed on exact SHA; no full user-journey claim unless E2E also passed.
+- USER_JOURNEY_VERIFIED: the critical user journey passed against a running candidate and persisted data was read back.
+- PRODUCTION_VERIFIED: the exact candidate is deployed to production and the production journey/health checks passed.
+
+No agent may promote a state by assertion. The coordinator computes the parent state from child evidence. Missing evidence always downgrades, never upgrades.
+
+### Evidence ledger and claim validation
+
+For each acceptance criterion, persist:
+1. stable task/criterion ID and expected user-visible outcome;
+2. repository, branch and immutable candidate SHA;
+3. changed paths and inspected diff;
+4. exact command or live action performed;
+5. raw test/run artifact reference, exit status and timestamp;
+6. runtime URL/environment and deployed commit when applicable;
+7. database/provider evidence and read-after-write result when applicable;
+8. independent reviewer disposition;
+9. limitations and failed/unrun checks.
+
+The final report is generated from this ledger, not copied from agent prose. Every sentence containing implemented, fixed, passed, working, deployed, complete, production or an equivalent claim must resolve to one or more evidence IDs and the correct result level. If it cannot, the sentence is rejected or rewritten as an unverified claim.
+
+### Anti-deception and anti-shortcut rules
+
+- Treat every model/agent completion summary as an untrusted claim, including summaries from the primary writer, fallback writer, specialist reviewer and coordinator.
+- Inspect the actual diff and changed files. A claim that code was written requires a diff; a claim that a test passed requires a real exit code and retained output; a claim that a feature works requires a running user journey.
+- No-op patches, comment-only changes, renaming, generated plans, placeholder screens, mocks, TODOs and documentation-only changes cannot satisfy a product implementation criterion unless that exact artifact was requested.
+- A test suite that discovers zero relevant tests, skips a required test, or runs against mocks cannot satisfy the corresponding acceptance criterion.
+- A green generic build is only CODE_VERIFIED. CI success must never be labelled product delivery or user-journey completion.
+- A successful deployment API response is only a deployment-created event. Require terminal READY/healthy state, deployed SHA match, route smoke test and actual critical journey before PRODUCTION_VERIFIED.
+- A queued/running/timed-out/cancelled workflow is not a pass. A missing log/artifact is not a pass.
+- If an agent claims completion but required evidence is missing, record a FALSE COMPLETION ATTEMPT, set the task to NOT_VERIFIED, reject publication/handover, and assign the exact missing criterion back to implementation.
+- The coordinator must not conceal a failed agent attempt by reporting only a later green unrelated workflow. All checks must refer to the same candidate SHA.
+- Do not mark blocked merely because an agent failed. Continue independent work and repair the implementation.
+- After two attempts with no measurable acceptance progress, change the task decomposition, model/provider, context or verification strategy. Do not repeat unchanged prompts.
+
+### Publication and release semantics
+
+- Product Factory PRs are **code candidates**, not delivered products. Their title/body must say exactly which checks passed and explicitly list runtime/user-journey checks not performed.
+- A code-only verification result may publish a PR for review but cannot trigger a product-complete status or user handover.
+- Product completion requires the product-level Definition of Done in this map, on one exact candidate revision.
+- Production release remains separately approval-gated. Never infer authorization from a green workflow or agent statement.
+
+### Mandatory adversarial regression tests
+
+The verification system must reject each of these synthetic agent outputs:
+1. "Implemented" with no changed files.
+2. "All tests passed" when test command was not executed.
+3. Test command exits 0 but discovers zero tests for a required criterion.
+4. Unit tests pass while the required API route does not exist.
+5. API returns success but the database write is absent on read-back.
+6. UI displays static/mock data while the live API is unavailable.
+7. Deployment is BUILDING/ERROR or points to a different SHA.
+8. Candidate SHA changes after tests but before publication.
+9. Parent agent says complete while one required child is failed/missing.
+10. A retry returns no artifact or repeats a billable operation with ambiguous provider acceptance.
+
+**Acceptance:** the workflow must fail closed for all ten cases; evidence must be machine-readable and bound to the immutable SHA. Until these regression tests run and pass, this control is a documented requirement, not an implemented enforcement mechanism.
