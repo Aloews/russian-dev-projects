@@ -153,6 +153,7 @@ def rejected_existing_file_context(answer):
         old = edit.get("old")
         if not isinstance(path, str) or not allowed(path, set()) or not isinstance(old, str):
             continue
+        path = path.replace("\\", "/")
         target = ROOT / path
         try:
             resolved = target.resolve()
@@ -211,6 +212,7 @@ def apply_edits(edits, tracked):
             raise ValueError("edit context exceeds safe text limits")
         if not allowed(path, tracked):
             raise ValueError("edit path is outside the source allowlist")
+        path = path.replace("\\", "/")
         target = ROOT / path
         try:
             resolved_target = target.resolve()
