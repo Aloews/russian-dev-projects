@@ -70,17 +70,14 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
             if type(count) is not int or count <= 0:
                 errors.append("test command discovered zero tests")
         if workspace is not None:
-            artifact = Path(str(item.get("artifact", "")))
-            if artifact.is_absolute() or ".." in artifact.parts:
-                errors.append(f"check {check_id!r} artifact path is unsafe")
-                continue
-            target = workspace / artifact
-            if not target.is_file():
-                errors.append(f"check {check_id!r} artifact is missing")
-                continue
-            digest = hashlib.sha256(target.read_bytes()).hexdigest()
-            if item.get("artifact_sha256") != digest:
-                errors.append(f"check {check_id!r} artifact SHA-256 does not match its contents")
+            error = _artifact_error(
+                workspace,
+                item.get("artifact"),
+                item.get("artifact_sha256"),
+                f"check {check_id!r}",
+            )
+            if error:
+                errors.append(error)
 
     if level == "CODE_VERIFIED":
         return errors
