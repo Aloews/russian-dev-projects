@@ -67,17 +67,20 @@ runs:
         echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
 
     - name: Install Rust toolchain
+      if: hashFiles('target/Cargo.toml') != ''
       uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
       with:
         toolchain: stable
         components: clippy, rustfmt
 
     - name: Restore Rust build cache
+      if: hashFiles('target/Cargo.toml') != ''
       uses: Swatinem/rust-cache@f4371d1ec7179bfbd04a82a81e3b3af7f720750f
       with:
         workspaces: target -> target
 
     - name: Install Node.js
+      if: hashFiles('target/package-lock.json') != ''
       uses: actions/setup-node@436c65619b12c9e37ff20a4700145cc387898a7d
       with:
         node-version: 22
