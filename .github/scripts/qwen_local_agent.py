@@ -120,6 +120,8 @@ EDIT_SCHEMA = {
                     "path": {"type": "string", "minLength": 1, "maxLength": 240},
                     "old": {"type": "string", "maxLength": 6000},
                     "new": {"type": "string", "minLength": 1, "maxLength": 12000},
+                    "before": {"type": "string", "maxLength": 3000},
+                    "after": {"type": "string", "maxLength": 3000},
                 },
                 "required": ["path", "old", "new"],
                 "additionalProperties": False,
@@ -190,6 +192,13 @@ def apply_edits(edits, tracked):
         if not isinstance(edit, dict):
             raise ValueError("edit item is not an object")
         path, old, new = edit.get("path"), edit.get("old"), edit.get("new")
+        before, after = edit.get("before", ""), edit.get("after", "")
+        if not isinstance(path, str) or not isinstance(old, str) or not isinstance(new, str) or not new:
+            raise ValueError("edit is missing path, old or new text")
+        if not isinstance(before, str) or not isinstance(after, str):
+            raise ValueError("edit before/after context must be text")
+        if len(before) > 3000 or len(after) > 3000:
+            raise ValueError("edit context exceeds safe text limits")
         if not isinstance(path, str) or not isinstance(old, str) or not isinstance(new, str) or not new:
             raise ValueError("edit is missing path, old or new text")
         if not allowed(path, tracked):
@@ -215,9 +224,17 @@ def apply_edits(edits, tracked):
         else:
             if current is None:
                 raise ValueError("update edit targets a missing file")
-            if current.count(old) != 1:
-                raise ValueError("old text must match exactly once in " + path)
-            current = current.replace(old, new, 1)
+            occurrences = current.count(old)
+            if occurrences == 1:
+                current = current.replace(old, new, 1)
+            elif before or after:
+                needle = before + old + after
+                if current.count(needle) != 1:
+                    raise ValueError("before/old/after context must match exactly once in " + path)
+                position = current.index(needle) + len(before)
+                current = current[:position] + new + current[position + len(old):]
+            else:
+                raise ValueError("old text must match exactly once in " + path + "; add exact before/after context")
         if len(current) > 100000 or "\0" in current:
             raise ValueError("edited file exceeds safe text limits")
         staged[path] = current
@@ -275,6 +292,8 @@ def main():
         "Inspect the provided project evidence and project map; infer the actual stack and product domain from files, then choose one small, complete, testable increment. "
         "Return only JSON matching the supplied schema, with an edits array of exact path/old/new replacements. "
         "For existing files, old must be an exact unique snippet copied from the provided file. "
+        "If old occurs more than once, include exact adjacent before and/or after context so before+old+after matches once. "
+        "Never edit README.md unless the objective explicitly requires changing README content; do not use generic headings or repeated paragraphs as old snippets. "
         "For a new file, old must be empty and new must contain the complete file. "
         "Never return a unified diff, markdown fence or explanation. "
         "Never invent live data, credentials, legal approvals, customers, property inventory or tests. "
