@@ -145,9 +145,13 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os, re, urllib.error, urllib.request
+          from urllib.parse import urlsplit
           origin = os.environ["STARIMG_BASE_URL"].rstrip("/")
           if origin.endswith("/v1"):
               origin = origin[:-3]
+          parsed_origin = urlsplit(origin)
+          if parsed_origin.scheme != "https" or not parsed_origin.netloc or parsed_origin.username or parsed_origin.password or parsed_origin.query or parsed_origin.fragment or any(ch in origin for ch in "\\r\\n\\t"):
+              raise SystemExit("Starimg base URL must be a clean HTTPS origin.")
           key = os.environ.get("STARIMG_API_KEY", "")
           result = {"status": 0, "tool_ok": False, "model": "", "error_type": "missing_key" if not key else "not_probed"}
           def send(url, body=None, headers=None):
@@ -171,7 +175,7 @@ jobs:
                   if not claudes:
                       claudes = [model for model in ids if re.search(r"claude.*sonnet|sonnet.*claude", model, re.I)]
                   model = explicit_fable or (fables[0] if fables else explicit_claude or (claudes[0] if claudes else ""))
-                  if status != 200 or not model or model not in ids:
+                  if status != 200 or not model or model not in ids or not re.fullmatch(r"[A-Za-z0-9._:/-]{1,200}", model):
                       raise RuntimeError("no_verified_fable_or_claude_model")
                   headers = {
                       "x-api-key": key,
@@ -252,7 +256,7 @@ jobs:
             Deliver one coherent, testable user-facing vertical slice, not a plan or placeholder. Add regression tests, update docs/MAP.md and the delivery plan with exact behavior and remaining blockers. Use only Read, Write, Edit, Glob, Grep and Agent tools. Do not use shell, network, credentials, Git push, GitHub API, deployment, merge or production data. Do not claim tests passed. Do not write explanatory function descriptions into production-facing code. Finish with source, tests and documentation saved; the workflow owns verification and publication.
 
       - name: OpenRouter Anthropic tool-call compatibility check
-        if: steps.starimg_probe.outputs.tool_ok != 'true'
+        if: steps.starimg_primary.outcome != 'success'
         id: openrouter_smoke
         continue-on-error: true
         env:
