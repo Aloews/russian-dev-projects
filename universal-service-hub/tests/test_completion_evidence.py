@@ -1,5 +1,7 @@
 import copy
+import hashlib
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -73,6 +75,27 @@ class AdversarialCompletionTests(unittest.TestCase):
 
     def test_manifest_diff_must_match_actual_diff(self):
         self.assertTrue(validate(copy.deepcopy(BASE), SHA, ["src/other.py"]))
+
+
+    def test_code_evidence_rejects_missing_artifact(self):
+        manifest = copy.deepcopy(BASE)
+        manifest["checks"][0]["artifact_sha256"] = "0" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            self.assertTrue(validate(manifest, SHA, ["src/service.py"], "CODE_VERIFIED", workspace))
+
+    def test_code_evidence_verifies_artifact_bytes(self):
+        manifest = copy.deepcopy(BASE)
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            artifact = workspace / "artifacts" / "tests.log"
+            artifact.parent.mkdir()
+            artifact.write_text("8 passed", encoding="utf-8")
+            manifest["checks"][0]["artifact"] = "artifacts/tests.log"
+            manifest["checks"][0]["artifact_sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            self.assertEqual(validate(manifest, SHA, ["src/service.py"], "CODE_VERIFIED", workspace), [])
+            artifact.write_text("fabricated", encoding="utf-8")
+            self.assertTrue(validate(manifest, SHA, ["src/service.py"], "CODE_VERIFIED", workspace))
 
     def test_wrong_verification_level_is_rejected(self):
         self.assertTrue(validate(copy.deepcopy(BASE), SHA, ["src/service.py"], "MADE_UP"))
