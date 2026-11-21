@@ -23,13 +23,17 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
     if not isinstance(declared, list) or set(declared) != set(changed_paths):
         errors.append("manifest changed_paths do not exactly match the inspected diff")
 
+    required_ids = manifest.get("required_check_ids")
+    if not isinstance(required_ids, list) or not required_ids or "tests" not in required_ids:
+        errors.append("required_check_ids must be non-empty and include tests")
+        required_ids = []
     checks = manifest.get("checks")
     if not isinstance(checks, list):
         checks = []
     by_id = {c.get("id"): c for c in checks if isinstance(c, dict)}
-    for check_id in manifest.get("required_check_ids", []):
+    for check_id in required_ids:
         item = by_id.get(check_id)
-        if not item or item.get("executed") is not True or item.get("exit_code") != 0:
+        if not item or item.get("executed") is not True or item.get("exit_code") != 0 or not item.get("command") or not item.get("artifact"):
             errors.append(f"required check {check_id!r} was not executed successfully")
             continue
         if item.get("candidate_sha") != expected_sha:
@@ -61,8 +65,8 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
         errors.append("parent completion contains a failed, missing, or unverified child task")
 
     retry = manifest.get("retry")
-    if not isinstance(retry, dict) or retry.get("artifact_present") is not True or retry.get("provider_acceptance_known") is not True or retry.get("idempotency_key"):
-        errors.append("retry has no artifact, ambiguous provider acceptance, or no safe idempotency proof")
+    if not isinstance(retry, dict) or retry.get("artifact_present") is not True or (retry.get("provider_acceptance_known") is not True and not retry.get("idempotency_key")):
+        errors.append("retry has no artifact or ambiguous provider acceptance without an idempotency key")
     return errors
 
 def main() -> int:
