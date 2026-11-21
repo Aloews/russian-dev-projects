@@ -131,17 +131,19 @@ EDIT_SCHEMA = {
 }
 
 def rejected_existing_file_context(answer):
-    """Return bounded current-file evidence when the model incorrectly proposes a new file."""
+    """Return bounded file evidence when a proposed edit conflicts with the actual file."""
     try:
         payload = json.loads(answer)
     except (TypeError, json.JSONDecodeError):
         return ""
     sections = []
-    for edit in payload.get("edits", []) if isinstance(payload, dict) else []:
-        if not isinstance(edit, dict) or edit.get("old") != "":
+    edits = payload.get("edits", []) if isinstance(payload, dict) else []
+    for edit in edits:
+        if not isinstance(edit, dict):
             continue
         path = edit.get("path")
-        if not isinstance(path, str) or not allowed(path, set()):
+        old = edit.get("old")
+        if not isinstance(path, str) or not allowed(path, set()) or not isinstance(old, str):
             continue
         target = ROOT / path
         try:
@@ -151,10 +153,31 @@ def rejected_existing_file_context(answer):
             current = target.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             continue
+        occurrences = current.count(old) if old else 0
+        if old and occurrences == 1:
+            continue
+        if old == "":
+            reason = "The model marked this existing file as a new file."
+        elif occurrences == 0:
+            reason = "The proposed old text does not occur in this file."
+        else:
+            reason = f"The proposed old text occurs {occurrences} times; choose a unique, more specific snippet."
+        if len(current) <= 12000:
+            excerpt = current
+        elif old and occurrences:
+            positions = [match.start() for match in re.finditer(re.escape(old), current)][:4]
+            pieces = []
+            for position in positions:
+                start = max(0, position - 1200)
+                end = min(len(current), position + len(old) + 1200)
+                pieces.append(current[start:end])
+            excerpt = "\n[... occurrence context ...]\n".join(pieces)
+        else:
+            excerpt = current[:12000] + "\n[FILE CONTENT TRUNCATED]\n"
         sections.append(
-            "\n--- EXISTING FILE (NOT A NEW FILE): " + path + " ---\n"
-            + scrub(current[:12000])
-            + ("\n[FILE CONTENT TRUNCATED]\n" if len(current) > 12000 else "")
+            "\n--- EXISTING FILE CONFLICT: " + path + " ---\n"
+            + reason + "\n"
+            + scrub(excerpt)
         )
     return "\n".join(sections)
 
