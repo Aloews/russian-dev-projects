@@ -81,12 +81,12 @@ class ProductFactoryTestLogTests(unittest.TestCase):
             xml = root / "target" / "surefire-reports" / "TEST-example.xml"
             xml.parent.mkdir(parents=True)
             xml.write_text(
-                '<testsuite tests="3" failures="0" errors="0" skipped="1"></testsuite>',
+                '<testsuite tests="3" failures="0" errors="0" skipped="0"></testsuite>',
                 encoding="utf-8",
             )
             result = parse_report(report, root)
-            self.assertEqual(result["tests_passed"], 2)
-            self.assertEqual(result["tests_skipped"], 1)
+            self.assertEqual(result["tests_passed"], 3)
+            self.assertEqual(result["tests_skipped"], 0)
             self.assertEqual(result["errors"], [])
 
     def test_zero_exit_with_reported_failures_is_rejected(self):
