@@ -102,7 +102,7 @@ class StarimgProbeTests(unittest.TestCase):
             )
         self.assertFalse(result["tool_ok"])
         self.assertEqual(result["status"], 402)
-        self.assertEqual(result["error_type"], "provider_http_error")
+        self.assertEqual(result["error_type"], "provider_payment_required")
 
     def test_invalid_https_origin_is_rejected_before_network(self):
         with patch.object(starimg_probe.urllib.request, "urlopen") as request:
