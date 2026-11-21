@@ -56,7 +56,7 @@ if [[ -f "$ROOT/pyproject.toml" || -f "$ROOT/requirements.txt" || -f "$ROOT/requ
 fi
 
 if [[ -f "$ROOT/go.mod" ]]; then
-  run_gate "Go tests" bash -c 'cd "$1" && go test ./...' _ "$ROOT"
+  run_gate "Go tests" bash -c 'cd "$1" && go test -json ./...' _ "$ROOT"
   run_gate "Go vet" bash -c 'cd "$1" && go vet ./...' _ "$ROOT"
 fi
 

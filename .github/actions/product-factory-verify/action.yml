@@ -67,17 +67,20 @@ runs:
         echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
 
     - name: Install Rust toolchain
+      if: hashFiles('target/Cargo.toml') != ''
       uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
       with:
         toolchain: stable
         components: clippy, rustfmt
 
     - name: Restore Rust build cache
+      if: hashFiles('target/Cargo.toml') != ''
       uses: Swatinem/rust-cache@f4371d1ec7179bfbd04a82a81e3b3af7f720750f
       with:
         workspaces: target -> target
 
     - name: Install Node.js
+      if: hashFiles('target/package-lock.json') != ''
       uses: actions/setup-node@436c65619b12c9e37ff20a4700145cc387898a7d
       with:
         node-version: 22
@@ -114,21 +117,19 @@ runs:
         log = report.read_text(encoding="utf-8", errors="replace")
         if os.environ["VERIFY_OUTCOME"] != "success":
             raise SystemExit("Configured verification gates did not all pass")
-        patterns = [
-            r"test result: ok\.\s+(\d+) passed",
-            r"(\d+) passed(?:,|\s+in\s+)",
-            r"ℹ tests\s+(\d+)",
-            r"# tests\s+(\d+)",
-            r"Tests\s+(\d+)\s+passed",
-            r"(\d+)\s+passed\s+\(",
-            r"Tests run:\s*(\d+)",
-            r"(\d+) tests completed",
-        ]
-        counts = [int(n) for pattern in patterns for n in re.findall(pattern, log, re.I)]
-        go_packages = re.findall(r"^ok\s+\S+\s+[0-9.]+s?$", log, re.M)
-        discovered = max(counts, default=1 if go_packages else 0)
-        if discovered <= 0:
-            raise SystemExit("No positive test count found in test output; zero/unknown tests are not accepted")
+        temp = Path(os.environ["RUNNER_TEMP"])
+        summary_path = temp / "test-gate-summary.json"
+        subprocess.run([
+            sys.executable,
+            "factory/universal-service-hub/scripts/validate_product_factory_test_log.py",
+            "--report", str(report),
+            "--workspace", str(root),
+            "--output", str(summary_path),
+        ], check=True)
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        discovered = summary["tests_discovered"]
+        if discovered <= 0 or not summary["test_gates"]:
+            raise SystemExit("No independently counted test execution found")
         candidate = os.environ["CANDIDATE_SHA"]
         if not re.fullmatch(r"[0-9a-f]{40}", candidate):
             raise SystemExit("Candidate SHA is invalid")
@@ -148,19 +149,34 @@ runs:
             "candidate_sha": candidate,
             "tested_sha": current,
             "changed_paths": paths,
-            "required_check_ids": ["tests"],
+            "required_check_ids": ["tests"] + [gate["id"] for gate in summary["test_gates"]],
             "checks": [{
                 "id": "tests",
                 "executed": True,
                 "exit_code": 0,
                 "tests_discovered": discovered,
+                "tests_passed": summary["tests_passed"],
+                "tests_skipped": summary["tests_skipped"],
+                "tests_failed": summary["tests_failed"],
                 "candidate_sha": candidate,
-                "command": "product_factory_verify.sh (test gates in verification.log)",
+                "command": "aggregate of independently parsed test gates",
                 "artifact": "verification.log",
                 "artifact_sha256": digest,
-            }],
+            }] + [{
+                "id": gate["id"],
+                "executed": True,
+                "exit_code": 0,
+                "tests_discovered": gate["tests_discovered"],
+                "candidate_sha": candidate,
+                "command": gate["command"],
+                "artifact": "verification.log",
+                "artifact_sha256": digest,
+                "tests_passed": gate["tests_passed"],
+                "tests_skipped": gate["tests_skipped"],
+                "tests_failed": gate["tests_failed"],
+            } for gate in summary["test_gates"]],
+            "test_gate_summary": summary,
         }
-        temp = Path(os.environ["RUNNER_TEMP"])
         (temp / "completion-evidence.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         PY
         python3 factory/universal-service-hub/scripts/validate_completion_evidence.py \
@@ -179,5 +195,6 @@ runs:
           ${{ runner.temp }}/verification.log
           ${{ runner.temp }}/completion-evidence.json
           ${{ runner.temp }}/changed-paths.txt
+          ${{ runner.temp }}/test-gate-summary.json
         if-no-files-found: ignore
         retention-days: 30
