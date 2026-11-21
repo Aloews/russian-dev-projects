@@ -32,6 +32,12 @@ runs:
         REALITY_SKILL="$GITHUB_WORKSPACE/factory/.github/product-factory/skills/reality-first-business/SKILL.md"
         test -s "$REALITY_SKILL"
         cp "$REALITY_SKILL" "$RUNNER_TEMP/reality-first-business.md"
+        FACTORY_CONTRACT="$GITHUB_WORKSPACE/factory/.github/product-factory/AGENTS.md"
+        test -s "$FACTORY_CONTRACT"
+        cp "$FACTORY_CONTRACT" "$RUNNER_TEMP/product-factory-agent-contract.md"
+        TARGET_AGENTS_TEMPLATE="$GITHUB_WORKSPACE/factory/.github/product-factory/templates/AGENTS.md"
+        test -s "$TARGET_AGENTS_TEMPLATE"
+        cp "$TARGET_AGENTS_TEMPLATE" "$RUNNER_TEMP/target-agents-template.md"
 
     - name: Validate Qwen fallback script
       shell: bash
@@ -72,6 +78,8 @@ runs:
         OLLAMA_MODEL: qwen2.5-coder:3b
         CAVEMAN_SKILL_PATH: ${{ runner.temp }}/caveman/skills/caveman/SKILL.md
         REALITY_FIRST_SKILL_PATH: ${{ runner.temp }}/reality-first-business.md
+        PRODUCT_FACTORY_CONTRACT_PATH: ${{ runner.temp }}/product-factory-agent-contract.md
+        TARGET_AGENTS_TEMPLATE_PATH: ${{ runner.temp }}/target-agents-template.md
       run: python3 "$GITHUB_ACTION_PATH/../../scripts/qwen_local_agent.py"
 
     - name: Create candidate patch
