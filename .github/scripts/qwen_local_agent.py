@@ -237,7 +237,7 @@ def apply_edits(edits, tracked):
             if before or after:
                 raise ValueError("new-file edits cannot include before/after context")
             if current is not None or path in tracked:
-                raise ValueError("new-file edit targets an existing file")
+                raise ValueError("new-file edit targets an existing file: " + path + "; provide a unique non-empty old snippet or omit this edit")
             current = new
         else:
             if current is None:
@@ -366,7 +366,7 @@ def main():
     tracked_set = set(tracked)
     validation_error = None
     answer = ""
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             answer = ask_ollama(
                 messages,
@@ -390,15 +390,24 @@ def main():
             return 4
         except (KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeError) as exc:
             validation_error = str(exc)[:1000]
-            if attempt == 0:
+            if attempt < 2:
                 existing_file_evidence = rejected_existing_file_context(answer)
+                if "new-file edit targets an existing file" in validation_error:
+                    correction = (
+                        "CRITICAL: you marked an existing file as a new file. For every existing path, old MUST be a non-empty exact snippet copied from the supplied current file. "
+                        "If you cannot identify the intended section, omit that file from edits. Never send old='' for an existing file. "
+                        "For repeated snippets, use exact adjacent before/after context. Do not repeat the rejected edit."
+                    )
+                else:
+                    correction = (
+                        "Correct the JSON using the conflict evidence. For an existing file, old must be an exact unique non-empty snippet copied from that file. "
+                        "Never mark an existing path as a new file. Use old='' only for a path confirmed absent. Do not overwrite or recreate existing files."
+                    )
                 messages.extend([
                     {"role": "assistant", "content": answer[:10000]},
                     {"role": "user", "content": (
                         "Your previous JSON edit was rejected: " + validation_error + ". "
-                        "Correct the JSON. For an existing file, old must be an exact unique non-empty snippet copied from that file; "
-                        "never mark an existing path as a new file. Use old='' only for a path that is confirmed absent. "
-                        "Do not overwrite or recreate existing files. "
+                        + correction
                         + existing_file_evidence
                         + "\\nReturn only the corrected JSON schema."
                     )},
