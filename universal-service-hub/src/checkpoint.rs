@@ -367,7 +367,7 @@ mod tests {
         sqlx::query("UPDATE execution_jobs SET agent_checkpoint_sha256 = $1 WHERE project_id = $2 AND id = $3")
             .bind("0".repeat(64)).bind(&project_id).bind(job_id).execute(&pool).await.unwrap();
         assert_eq!(
-            store.load(&project_id, job_id, lease_token, task_id).await,
+            store.load("tenant-test", &project_id, job_id, lease_token, task_id).await,
             Err(CheckpointError::IntegrityMismatch)
         );
 
@@ -375,7 +375,7 @@ mod tests {
         sqlx::query("UPDATE execution_jobs SET lease_token = $1 WHERE project_id = $2 AND id = $3")
             .bind(replacement_token).bind(&project_id).bind(job_id).execute(&pool).await.unwrap();
         assert_eq!(
-            store.load(&project_id, job_id, lease_token, task_id).await,
+            store.load("tenant-test", &project_id, job_id, lease_token, task_id).await,
             Err(CheckpointError::LeaseLost)
         );
         sqlx::query("DELETE FROM projects WHERE id = $1").bind(&project_id).execute(&pool).await.unwrap();
@@ -424,10 +424,46 @@ mod tests {
         assert_eq!(invalid.validate("tenant-a", "project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
         let mut invalid = checkpoint(1);
         invalid.completed_steps = vec!["x".repeat(121)];
-        assert_eq!(invalid.validate("project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
+        assert_eq!(invalid.validate("tenant-a", "project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
         let mut invalid = checkpoint(1);
         invalid.project_id = "project-b".into();
-        assert_eq!(invalid.validate("project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
+        assert_eq!(invalid.validate("tenant-a", "project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
+    }
+
+    #[test]
+    fn checkpoint_validates_observation_refs_and_pending_invocation_scope() {
+        let mut completed = checkpoint(1);
+        let input = Uuid::from_u128(10);
+        let output = Uuid::from_u128(11);
+        let key = "b".repeat(64);
+        let digest = "c".repeat(64);
+        completed.artifact_ids = vec![input, output];
+        completed.completed_steps = vec![key.clone()];
+        completed.observations = vec![CheckpointObservationRef {
+            tool_id: "artifact.read".into(),
+            tool_version: 1,
+            action_digest: digest.clone(),
+            idempotency_key: key.clone(),
+            input_artifact_id: input,
+            output_artifact_id: output,
+            sequence: 1,
+        }];
+        assert_eq!(completed.validate("tenant-a", "project-a", Uuid::from_u128(7)), Ok(()));
+        completed.observations[0].idempotency_key = "x".repeat(63);
+        assert_eq!(completed.validate("tenant-a", "project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
+
+        let mut pending = checkpoint(1);
+        pending.phase = "tool_pending".into();
+        pending.artifact_ids = vec![input];
+        pending.pending_tool = Some(PendingToolInvocation {
+            tool_id: "artifact.read".into(),
+            tool_version: 1,
+            action_digest: digest,
+            idempotency_key: key,
+            input_artifact_id: input,
+            sequence: 1,
+        });
+        assert_eq!(pending.validate("tenant-a", "project-a", Uuid::from_u128(7)), Ok(()));
     }
 
     #[test]
@@ -436,7 +472,7 @@ mod tests {
         assert_eq!(9, store_sequence + 1);
         assert_eq!(CheckpointError::StaleSequence, CheckpointError::StaleSequence);
         let next = checkpoint(store_sequence + 1);
-        assert!(next.validate("project-a", Uuid::from_u128(7)).is_ok());
+        assert!(next.validate("tenant-a", "project-a", Uuid::from_u128(7)).is_ok());
         let replay = checkpoint(store_sequence);
         assert_eq!(replay.sequence, store_sequence);
         assert_ne!(replay.sequence, store_sequence + 1);
