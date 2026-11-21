@@ -195,6 +195,24 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+
+    def test_windows_separator_cannot_bypass_symlink_parent_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                protected = agent.ROOT / ".github/workflows"
+                protected.mkdir(parents=True)
+                (agent.ROOT / "src").mkdir()
+                (agent.ROOT / "src/link").symlink_to(protected, target_is_directory=True)
+                with self.assertRaises(ValueError):
+                    agent.apply_edits(
+                        [{"path": "src\\\\link\\\\release.yml", "old": "", "new": "name: unsafe\\n"}],
+                        set(),
+                    )
+            finally:
+                agent.ROOT = previous_root
+
     def test_non_unique_replacement_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT
