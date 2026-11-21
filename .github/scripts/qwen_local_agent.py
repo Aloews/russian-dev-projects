@@ -17,6 +17,7 @@ MAX_FILES = 2
 MAX_CONTEXT_CHARS = 6000
 MAX_FILE_CHARS = 1800
 MAX_OUTPUT_TOKENS = 2048
+MAX_GENERATION_ATTEMPTS = 2
 MAX_CAVEMAN_SKILL_CHARS = 2000
 MAX_REALITY_FIRST_SKILL_CHARS = 4000
 SOURCE_SUFFIXES = (
@@ -399,7 +400,9 @@ def main():
     tracked_set = set(tracked)
     validation_error = None
     answer = ""
-    for attempt in range(2):
+    review_text = None
+    changed_paths = None
+    for attempt in range(MAX_GENERATION_ATTEMPTS):
         try:
             answer = ask_ollama(
                 messages,
@@ -421,26 +424,30 @@ def main():
             return 4
         except IncompleteOllamaResponse as exc:
             validation_error = str(exc)
-            if attempt < 1:
+            if attempt + 1 < MAX_GENERATION_ATTEMPTS:
                 messages = build_retry_messages(base_messages, validation_error)
                 continue
             print("::error::Qwen response remained incomplete after bounded retry: " + validation_error)
             return 4
         except json.JSONDecodeError as exc:
             validation_error = "invalid JSON at line=" + str(exc.lineno) + ", column=" + str(exc.colno) + ", char=" + str(exc.pos)
-            if attempt < 2:
+            if attempt + 1 < MAX_GENERATION_ATTEMPTS:
                 messages = build_retry_messages(base_messages, validation_error)
                 continue
             print("::error::Qwen response remained invalid after bounded retry: " + validation_error)
             return 4
         except (KeyError, ValueError, OSError, UnicodeError) as exc:
             validation_error = str(exc)[:1000]
-            if attempt < 2:
+            if attempt + 1 < MAX_GENERATION_ATTEMPTS:
                 existing_file_evidence = rejected_existing_file_context(answer)
                 messages = build_retry_messages(base_messages, validation_error, existing_file_evidence)
                 continue
             print("::error::Qwen multi-role engineering pass failed validation: " + validation_error)
             return 4
+    if review_text is None or changed_paths is None:
+        print("::error::Qwen fallback exhausted retries without a validated candidate.")
+        return 4
+
     report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
