@@ -63,6 +63,40 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+
+    def test_ambiguous_replacement_context_includes_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "README.md"
+                source.write_text("# Product\\n\\nA paragraph.\\n\\nA paragraph.\\n", encoding="utf-8")
+                answer = json.dumps({
+                    "edits": [{"path": "README.md", "old": "A paragraph.", "new": "A revised paragraph."}]
+                })
+                context = agent.rejected_existing_file_context(answer)
+                self.assertIn("EXISTING FILE CONFLICT", context)
+                self.assertIn("occurs 2 times", context)
+                self.assertIn("A paragraph.", context)
+            finally:
+                agent.ROOT = previous_root
+
+    def test_missing_replacement_context_includes_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                source = agent.ROOT / "README.md"
+                source.write_text("# Product\\n\\nActual content.\\n", encoding="utf-8")
+                answer = json.dumps({
+                    "edits": [{"path": "README.md", "old": "Not in file", "new": "Replacement"}]
+                })
+                context = agent.rejected_existing_file_context(answer)
+                self.assertIn("does not occur", context)
+                self.assertIn("Actual content.", context)
+            finally:
+                agent.ROOT = previous_root
+
     def test_symlink_parent_cannot_escape_repository(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
             previous_root = agent.ROOT
