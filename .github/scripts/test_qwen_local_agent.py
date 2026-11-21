@@ -178,6 +178,23 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+
+    def test_symlink_loop_fails_closed_without_crashing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "src").mkdir()
+                (agent.ROOT / "src/loop").symlink_to("loop")
+                self.assertEqual(agent.read_text("src/loop/file.py"), "")
+                with self.assertRaises(ValueError):
+                    agent.apply_edits(
+                        [{"path": "src/loop/file.py", "old": "", "new": "VALUE = 1\\n"}],
+                        set(),
+                    )
+            finally:
+                agent.ROOT = previous_root
+
     def test_non_unique_replacement_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT
