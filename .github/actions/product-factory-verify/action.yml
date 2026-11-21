@@ -113,6 +113,10 @@ runs:
             r"(\d+) passed(?:,|\s+in\s+)",
             r"ℹ tests\s+(\d+)",
             r"# tests\s+(\d+)",
+            r"Tests\s+(\d+)\s+passed",
+            r"(\d+)\s+passed\s+\\(",
+            r"Tests run:\s*(\d+)",
+            r"(\d+) tests completed",
         ]
         counts = [int(n) for pattern in patterns for n in re.findall(pattern, log, re.I)]
         go_packages = re.findall(r"^ok\s+\S+\s+[0-9.]+s?$", log, re.M)
