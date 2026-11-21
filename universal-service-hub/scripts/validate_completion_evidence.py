@@ -13,6 +13,23 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 LEVELS = ("CODE_VERIFIED", "INTEGRATION_VERIFIED", "USER_JOURNEY_VERIFIED", "PRODUCTION_VERIFIED")
 
 
+def _artifact_error(workspace: Path | None, relative: Any, digest: Any, label: str) -> str | None:
+    if workspace is None:
+        return f"{label} cannot be independently checked without an evidence workspace"
+    if not isinstance(relative, str) or not relative:
+        return f"{label} artifact path is missing"
+    path = Path(relative)
+    if path.is_absolute() or ".." in path.parts:
+        return f"{label} artifact path is unsafe"
+    target = workspace / path
+    if not target.is_file():
+        return f"{label} artifact is missing"
+    actual = hashlib.sha256(target.read_bytes()).hexdigest()
+    if not isinstance(digest, str) or digest != actual:
+        return f"{label} artifact SHA-256 does not match its contents"
+    return None
+
+
 def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[str],
              level: str = "PRODUCTION_VERIFIED", workspace: Path | None = None) -> list[str]:
     errors: list[str] = []
@@ -68,26 +85,53 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
     api = manifest.get("api")
     if not isinstance(api, dict) or api.get("route_exists") is not True or api.get("route_test_passed") is not True:
         errors.append("required API route is absent or has no passing route-level test")
+    else:
+        error = _artifact_error(workspace, api.get("artifact"), api.get("artifact_sha256"), "API route/test")
+        if error:
+            errors.append(error)
     db = manifest.get("database")
-    if not isinstance(db, dict) or db.get("write_attempted") is not True or db.get("read_after_write") is not True or not db.get("readback_artifact"):
+    if not isinstance(db, dict) or db.get("write_attempted") is not True or db.get("read_after_write") is not True:
         errors.append("database write is not proven by persisted read-after-write evidence")
+    else:
+        error = _artifact_error(workspace, db.get("readback_artifact"), db.get("readback_sha256"), "database read-after-write")
+        if error:
+            errors.append(error)
     ui = manifest.get("ui")
     if not isinstance(ui, dict) or ui.get("data_source") != "live_api" or ui.get("api_available") is not True or ui.get("browser_test_passed") is not True:
         errors.append("UI is not proven to use the live API in a passing browser test")
+    else:
+        error = _artifact_error(workspace, ui.get("artifact"), ui.get("artifact_sha256"), "live-API browser test")
+        if error:
+            errors.append(error)
     if level in {"USER_JOURNEY_VERIFIED", "PRODUCTION_VERIFIED"}:
         deployment = manifest.get("deployment")
         if not isinstance(deployment, dict) or deployment.get("state") != "READY" or deployment.get("deployed_sha") != expected_sha or deployment.get("smoke_test_passed") is not True:
             errors.append("deployment is not READY, exact-SHA matched, and smoke-tested")
+        else:
+            error = _artifact_error(workspace, deployment.get("artifact"), deployment.get("artifact_sha256"), "deployment READY/smoke test")
+            if error:
+                errors.append(error)
     children = manifest.get("children")
     if not isinstance(children, list) or not children or any(
-        not isinstance(c, dict) or c.get("state") not in LEVELS for c in children
+        not isinstance(child, dict) or child.get("state") not in LEVELS for child in children
     ):
         errors.append("parent completion contains a failed, missing, or unverified child task")
+    elif workspace is None:
+        errors.append("child task evidence cannot be independently checked without an evidence workspace")
+    else:
+        for index, child in enumerate(children):
+            error = _artifact_error(workspace, child.get("artifact"), child.get("artifact_sha256"), f"child {index} evidence")
+            if error:
+                errors.append(error)
     retry = manifest.get("retry")
     if not isinstance(retry, dict) or retry.get("artifact_present") is not True or (
         retry.get("provider_acceptance_known") is not True and not retry.get("idempotency_key")
     ):
         errors.append("retry has no artifact or ambiguous provider acceptance without an idempotency key")
+    else:
+        error = _artifact_error(workspace, retry.get("artifact"), retry.get("artifact_sha256"), "provider retry/idempotency")
+        if error:
+            errors.append(error)
     return errors
 
 
