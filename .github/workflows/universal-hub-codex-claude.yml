@@ -433,11 +433,11 @@ jobs:
           gh auth setup-git
           git add universal-service-hub
           git diff --cached --check
-          git commit -m "feat(universal-hub): implement verified engineering increment"
+          git commit -m "feat(universal-hub): publish code candidate"
           git push origin "HEAD:$BRANCH_NAME"
 
-          # A pushed branch is not a completed delivery. Wait for the repository's
-          # real exact-SHA CI run and refuse to open a PR if any required check fails.
+          # A pushed branch is not a completed delivery. Exact-SHA CI proves code-level checks only, not product readiness.
+          # Wait for the repository's real exact-SHA CI run and refuse to open a PR if any required check fails.
           head_sha="$(git rev-parse HEAD)"
           run_id=""
           for _ in $(seq 1 60); do
@@ -450,7 +450,7 @@ jobs:
           gh run watch "$run_id" --exit-status
 
           gh pr create             --base "$BASE_REF"             --head "$BRANCH_NAME"             --title "feat(universal-hub): Codex + Claude engineering increment"             --body "$(cat <<EOF
-          ## Implementation
+          ## Code candidate (not a product handover)
 
           - Codex CLI through Starimg Responses API: $CODEX_MODEL
           - Claude Code CLI through Starimg Anthropic Messages API: $CLAUDE_MODEL
@@ -461,7 +461,8 @@ jobs:
           - Starimg Responses API function-call probe: passed before Codex started.
           - Starimg Anthropic Messages tool-use probe: passed before Claude Code started.
           - Candidate scope and secret-pattern checks: passed.
-          - Full repository CI on this exact PR head is required before merge.
+          - Full repository CI on this exact candidate SHA: passed (run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id).
+          - Verification level: CODE_VERIFIED only. This workflow does not prove a live product journey, production deployment, external provider execution or product readiness unless those are separately exercised and evidenced.
 
           ## Safety
 
