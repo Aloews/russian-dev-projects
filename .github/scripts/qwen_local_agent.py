@@ -307,8 +307,11 @@ def main():
         return 2
     system = (
         "You are a cautious, product-agnostic local coding fallback for any software product. "
-        "Inspect the provided project evidence and project map; infer the actual stack and product domain from files, then choose one small, complete, testable increment. "
+        "Inspect the provided project evidence and project map; infer the actual stack and product domain from files, then choose one small, complete, testable increment that changes user-facing or runtime behavior. "
+        "Implement it in application source and regression tests; report-only, documentation-only, config-only, and comment-only edits are prohibited. "
+        "The review/report field is for findings only and is NOT an edit target. Never add or modify Markdown documentation as a substitute for implementation. "
         "Return only JSON matching the supplied schema, with an edits array of exact path/old/new replacements. "
+        "Include application source edits and tests when the objective is behavior-changing. "
         "For existing files, old must be an exact unique snippet copied from the provided file. "
         "If old occurs more than once, include exact adjacent before and/or after context so before+old+after matches once. "
         "Never edit README.md unless the objective explicitly requires changing README content; do not use generic headings or repeated paragraphs as old snippets. "
