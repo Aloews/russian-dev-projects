@@ -14,7 +14,7 @@ BASE = {
     "tested_sha": SHA,
     "changed_paths": ["src/service.py"],
     "required_check_ids": ["tests"],
-    "checks": [{"id": "tests", "executed": True, "exit_code": 0, "tests_discovered": 8, "candidate_sha": SHA, "command": "pytest -q", "artifact": "artifacts/tests.log"}],
+    "checks": [{"id": "tests", "executed": True, "exit_code": 0, "tests_discovered": 8, "tests_passed": 8, "tests_skipped": 0, "tests_failed": 0, "candidate_sha": SHA, "command": "pytest -q", "artifact": "artifacts/tests.log"}],
     "api": {"route_exists": True, "route_test_passed": True},
     "database": {"write_attempted": True, "read_after_write": True, "readback_artifact": "artifacts/db-readback.json"},
     "ui": {"data_source": "live_api", "api_available": True, "browser_test_passed": True},
@@ -45,6 +45,12 @@ class AdversarialCompletionTests(unittest.TestCase):
 
     def test_03_test_command_discovers_zero_tests(self):
         self.rejected(lambda m: m["checks"][0].update(tests_discovered=0))
+
+    def test_skipped_tests_cannot_be_marked_code_verified(self):
+        self.rejected(lambda m: m["checks"][0].update(tests_skipped=1))
+
+    def test_zero_passed_tests_cannot_be_marked_code_verified(self):
+        self.rejected(lambda m: m["checks"][0].update(tests_passed=0))
 
     def test_04_unit_tests_pass_but_required_api_route_missing(self):
         self.rejected(lambda m: m["api"].update(route_exists=False))
