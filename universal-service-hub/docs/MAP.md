@@ -518,3 +518,11 @@ The verification system must reject each of these synthetic agent outputs:
 10. A retry returns no artifact or repeats a billable operation with ambiguous provider acceptance.
 
 **Acceptance:** the workflow must fail closed for all ten cases; evidence must be machine-readable and bound to the immutable SHA. Until these regression tests run and pass, this control is a documented requirement, not an implemented enforcement mechanism.
+
+
+### Anti-false-completion enforcement — executable first increment (2026-11-21)
+
+- **Implementation:** `scripts/validate_completion_evidence.py` validates a structured completion manifest against the checked-out candidate SHA and the actual changed-path list supplied by the verifier. It rejects empty diffs, unexecuted/non-zero required checks, zero-test discovery, missing API route/route test, missing database read-after-write proof, mock-backed UI, unavailable API, non-READY or wrong-SHA deployment, stale test SHA, failed/missing child tasks and unsafe ambiguous retries.
+- **Adversarial suite:** `tests/test_completion_evidence.py` contains the ten mandatory cases plus positive-control and diff-mismatch tests. The UHS CI runs this suite and compiles the validator.
+- **Current verification boundary:** the validator and regression suite are committed, but the exact-head CI for the newest commit is still pending. The validator checks evidence structure and SHA consistency; it cannot independently prove that an agent-supplied external artifact is authentic. The live Product Factory remains explicitly CODE_VERIFIED-only; no agent narrative or manifest can upgrade a PR to user-journey/production completion through that workflow.
+- **Status:** IN PROGRESS until exact-SHA CI passes and the validator is exercised against retained runtime evidence in the actual handover path. Do not mark the anti-false-completion programme VERIFIED based on these unit tests alone.
