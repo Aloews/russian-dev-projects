@@ -22,6 +22,8 @@ class MigrationSmokeIsolationTests(unittest.TestCase):
         self.assertIn("Refusing to reuse existing migration test database", script)
         self.assertEqual(script.count("alembic upgrade head"), 2)
         self.assertIn("USH_DATABASE_URL", script)
+        self.assertIn("SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'", script)
+        self.assertNotIn("SELECT 1 FROM pg_database WHERE datname = '$DB_NAME')", script)
         self.assertNotIn("/ush_test", script)
 
 

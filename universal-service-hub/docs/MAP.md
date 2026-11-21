@@ -751,7 +751,7 @@ Next gates:
 - [x] Implement lease-bound restore with schema/scope/sequence/digest verification; missing, corrupt, stale or superseded state fails closed.
 - [x] Add Rust tests for restart round-trip, budget preservation, digest tampering, scope mismatch, unsupported schema, malformed/unbounded metadata and replay sequence rejection.
 - [x] Add PostgreSQL integration coverage for persisted restore, concurrent compare-and-swap, checksum tampering and stale-lease fencing; CI supplies an isolated PostgreSQL 16 test database.
-- [ ] Exact-head CI: prior head `0608e4a7867fe171bca6441758c0989591af1d1a`, run #1786 (44781725891) failed at Python migration smoke due to the shared `ush_test` database; the isolation fix is pending CI.
+- [ ] Exact-head CI: prior head `0608e4a7867fe171bca6441758c0989591af1d1a`, run #1786 (44781725891) failed at Python migration smoke because SQLx Rust migrations and Python Alembic shared `ush_test` and both create `providers`. The branch now isolates Alembic in `ush_migration_test`, refuses to reuse an existing DB, and runs `alembic upgrade head` twice; exact-head verification remains pending.
 - [ ] Wire checkpoint save/restore into the autonomous agent supervisor only after the above gates pass.
 
 Current implementation is in `src/checkpoint.rs`; it is a durable storage primitive, not yet a live agent-loop integration. No migration has been applied to a production database. PR remains open and unmerged.

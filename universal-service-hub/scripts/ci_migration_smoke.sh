@@ -12,7 +12,7 @@ if [[ ! "$DB_NAME" =~ ^[a-z][a-z0-9_]{0,62}$ ]]; then
   exit 2
 fi
 
-EXISTS="$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -Atqc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME')"
+EXISTS="$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -Atqc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'")"
 if [[ "$EXISTS" == "1" ]]; then
   echo "Refusing to reuse existing migration test database: $DB_NAME" >&2
   exit 2
