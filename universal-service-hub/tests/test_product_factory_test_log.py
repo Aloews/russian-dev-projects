@@ -1,4 +1,3 @@
-import json
 import sys
 import tempfile
 import unittest
@@ -82,6 +81,12 @@ class ProductFactoryTestLogTests(unittest.TestCase):
             self.assertEqual(result["tests_passed"], 2)
             self.assertEqual(result["tests_skipped"], 1)
             self.assertEqual(result["errors"], [])
+
+    def test_zero_exit_with_reported_failures_is_rejected(self):
+        result = self.parse(
+            "## Frontend tests\n$ npm test\nTests: 1 failed, 2 passed, 3 total\nexit_code=0\n"
+        )
+        self.assertTrue(result["errors"])
 
     def test_no_test_gate_is_rejected(self):
         result = self.parse("## Rust formatting\n$ cargo fmt --check\nexit_code=0\n")
