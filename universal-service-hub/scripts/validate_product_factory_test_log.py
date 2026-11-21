@@ -89,6 +89,7 @@ def _counts(label: str, body: str, workspace: Path) -> tuple[int, int, int] | No
 
 def parse_report(report: Path, workspace: Path) -> dict:
     raw = report.read_text(encoding="utf-8", errors="replace")
+    raw = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", raw)
     sections = re.split(r"(?m)^## (.+?)\s*$", raw)
     gates = []
     errors = []
