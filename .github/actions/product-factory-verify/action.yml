@@ -53,7 +53,13 @@ runs:
         git -C target add -A
         git -C target diff --cached --check
         git -C target diff --cached --quiet && { echo "Empty candidate patch" >&2; exit 2; }
-        git -C target -c user.name="Product Factory Verification" -c user.email="product-factory@users.noreply.github.com" commit -m "test: materialize isolated Product Factory candidate" >/dev/null
+        export GIT_AUTHOR_NAME="Product Factory Verification"
+        export GIT_AUTHOR_EMAIL="product-factory@users.noreply.github.com"
+        export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+        export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+        export GIT_AUTHOR_DATE="2000-01-01T00:00:00 +0000"
+        export GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"
+        git -C target -c user.name="$GIT_AUTHOR_NAME" -c user.email="$GIT_AUTHOR_EMAIL" commit -m "test: materialize isolated Product Factory candidate" >/dev/null
         CANDIDATE_SHA="$(git -C target rev-parse HEAD)"
         git -C target diff --name-only "$BASE_SHA" "$CANDIDATE_SHA" > "$RUNNER_TEMP/changed-paths.txt"
         test -s "$RUNNER_TEMP/changed-paths.txt"
