@@ -25,9 +25,17 @@ BASE = {
 
 class AdversarialCompletionTests(unittest.TestCase):
     def rejected(self, mutate, changed=None):
-        manifest = copy.deepcopy(BASE)
-        mutate(manifest)
-        self.assertTrue(validate(manifest, SHA, changed if changed is not None else ["src/service.py"]))
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            manifest = copy.deepcopy(BASE)
+            self.attach_integration_artifacts(manifest, workspace)
+            mutate(manifest)
+            self.assertTrue(validate(
+                manifest,
+                SHA,
+                changed if changed is not None else ["src/service.py"],
+                workspace=workspace,
+            ))
 
     def test_01_implementation_claim_without_changed_files(self):
         self.assertTrue(validate(copy.deepcopy(BASE), SHA, []))
@@ -38,7 +46,13 @@ class AdversarialCompletionTests(unittest.TestCase):
         code["database"] = {}
         code["ui"] = {}
         code["deployment"] = {}
-        self.assertEqual(validate(code, SHA, ["src/service.py"], "CODE_VERIFIED"), [])
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            artifact = workspace / "artifacts/tests.log"
+            artifact.parent.mkdir()
+            artifact.write_text("8 passed", encoding="utf-8")
+            code["checks"][0]["artifact_sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            self.assertEqual(validate(code, SHA, ["src/service.py"], "CODE_VERIFIED", workspace), [])
 
     def test_02_tests_claimed_but_command_not_executed(self):
         self.rejected(lambda m: m["checks"][0].update(executed=False))
@@ -124,7 +138,11 @@ class AdversarialCompletionTests(unittest.TestCase):
             self.assertTrue(validate(manifest, SHA, ["src/service.py"], workspace=workspace))
 
     def test_manifest_diff_must_match_actual_diff(self):
-        self.assertTrue(validate(copy.deepcopy(BASE), SHA, ["src/other.py"]))
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            manifest = copy.deepcopy(BASE)
+            self.attach_integration_artifacts(manifest, workspace)
+            self.assertTrue(validate(manifest, SHA, ["src/other.py"], workspace=workspace))
 
     def test_code_evidence_rejects_missing_artifact(self):
         manifest = copy.deepcopy(BASE)
@@ -168,6 +186,19 @@ class AdversarialCompletionTests(unittest.TestCase):
 
     def test_wrong_verification_level_is_rejected(self):
         self.assertTrue(validate(copy.deepcopy(BASE), SHA, ["src/service.py"], "MADE_UP"))
+
+    def test_metadata_only_validation_is_rejected(self):
+        manifest = copy.deepcopy(BASE)
+        self.assertTrue(validate(manifest, SHA, ["src/service.py"], "CODE_VERIFIED"))
+
+    def test_duplicate_required_check_ids_are_rejected(self):
+        self.rejected(lambda m: m.update(required_check_ids=["tests", "tests"]))
+
+    def test_duplicate_check_records_are_rejected(self):
+        self.rejected(lambda m: m["checks"].append(copy.deepcopy(m["checks"][0])))
+
+    def test_required_tests_check_must_have_machine_counted_totals(self):
+        self.rejected(lambda m: m["checks"][0].pop("tests_discovered"))
 
 if __name__ == "__main__":
     unittest.main()
