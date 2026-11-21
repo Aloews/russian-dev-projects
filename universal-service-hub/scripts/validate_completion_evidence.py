@@ -21,7 +21,10 @@ def _artifact_error(workspace: Path | None, relative: Any, digest: Any, label: s
     path = Path(relative)
     if path.is_absolute() or ".." in path.parts:
         return f"{label} artifact path is unsafe"
-    target = workspace / path
+    root = workspace.resolve()
+    target = (root / path).resolve()
+    if not target.is_relative_to(root):
+        return f"{label} artifact resolves outside the evidence workspace"
     if not target.is_file():
         return f"{label} artifact is missing"
     actual = hashlib.sha256(target.read_bytes()).hexdigest()
@@ -57,14 +60,14 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
     by_id = {c.get("id"): c for c in checks if isinstance(c, dict)}
     for check_id in required_ids:
         item = by_id.get(check_id)
-        if not item or item.get("executed") is not True or item.get("exit_code") != 0 or not item.get("command") or not item.get("artifact"):
+        if not item or item.get("executed") is not True or type(item.get("exit_code")) is not int or item.get("exit_code") != 0 or not item.get("command") or not item.get("artifact"):
             errors.append(f"required check {check_id!r} was not executed successfully")
             continue
         if item.get("candidate_sha") != expected_sha:
             errors.append(f"required check {check_id!r} was not run on the candidate SHA")
         if check_id == "tests":
             count = item.get("tests_discovered")
-            if not isinstance(count, int) or count <= 0:
+            if type(count) is not int or count <= 0:
                 errors.append("test command discovered zero tests")
         if workspace is not None:
             artifact = Path(str(item.get("artifact", "")))
