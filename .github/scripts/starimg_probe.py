@@ -37,6 +37,7 @@ def probe(
         "model": "",
         "base_url": "",
         "error_type": "missing_key" if not api_key else "not_probed",
+        "model_source": "",
     }
     if not api_key:
         return result
@@ -58,54 +59,55 @@ def probe(
         return result
 
     try:
-        status, catalogue = _request(
-            origin + "/v1/models",
-            headers={"Authorization": "Bearer " + api_key},
-        )
-        entries = catalogue.get("data") or catalogue.get("models") or []
-        model_ids = sorted(
-            {
-                str(item.get("id"))
-                for item in entries
-                if isinstance(item, dict)
-                and isinstance(item.get("id"), str)
-                and MODEL_ID.fullmatch(item["id"])
-            }
-        )
-        fables = [
-            model
-            for model in model_ids
-            if re.search(r"fable.*5[._-]?2|5[._-]?2.*fable", model, re.IGNORECASE)
-        ]
-        claudes = [
-            model
-            for model in model_ids
-            if re.search(r"claude.*opus|opus.*claude", model, re.IGNORECASE)
-        ]
-        if not claudes:
-            claudes = [
-                model
-                for model in model_ids
-                if re.search(r"claude.*sonnet|sonnet.*claude", model, re.IGNORECASE)
-            ]
-
+        model_source = ""
         if fable_model:
             model = fable_model
-            if model not in model_ids:
-                result.update(status=status, error_type="configured_fable_model_not_found")
-                return result
-        elif fables:
-            model = fables[0]
+            model_source = "explicit_fable"
         elif claude_model:
             model = claude_model
-            if model not in model_ids:
-                result.update(status=status, error_type="configured_claude_model_not_found")
-                return result
+            model_source = "explicit_claude"
         else:
-            model = claudes[0] if claudes else ""
-
-        if status != 200 or not model or not MODEL_ID.fullmatch(model):
-            result.update(status=status, error_type="no_verified_anthropic_model")
+            status, catalogue = _request(
+                origin + "/v1/models",
+                headers={"Authorization": "Bearer " + api_key},
+            )
+            entries = catalogue.get("data") or catalogue.get("models") or []
+            model_ids = sorted(
+                {
+                    str(item.get("id"))
+                    for item in entries
+                    if isinstance(item, dict)
+                    and isinstance(item.get("id"), str)
+                    and MODEL_ID.fullmatch(item["id"])
+                }
+            )
+            fables = [
+                item
+                for item in model_ids
+                if re.search(r"fable.*5[._-]?2|5[._-]?2.*fable", item, re.IGNORECASE)
+            ]
+            claudes = [
+                item
+                for item in model_ids
+                if re.search(r"claude.*opus|opus.*claude", item, re.IGNORECASE)
+            ]
+            if not claudes:
+                claudes = [
+                    item
+                    for item in model_ids
+                    if re.search(r"claude.*sonnet|sonnet.*claude", item, re.IGNORECASE)
+                ]
+            if status != 200:
+                result.update(status=status, error_type="model_catalogue_not_available")
+                return result
+            if fables:
+                model, model_source = fables[0], "catalogue_fable"
+            elif claudes:
+                model, model_source = claudes[0], "catalogue_claude"
+            else:
+                model = ""
+        if not model or not MODEL_ID.fullmatch(model):
+            result["error_type"] = "no_verified_anthropic_model"
             return result
 
         headers = {
@@ -149,6 +151,7 @@ def probe(
             model=model if tool_ok else "",
             base_url=origin if tool_ok else "",
             error_type=None if tool_ok else "tool_call_not_verified",
+            model_source=model_source if tool_ok else "",
         )
     except urllib.error.HTTPError as error:
         result.update(status=error.code, error_type="provider_http_error")
