@@ -82,12 +82,13 @@ fn validate_next_sequence(expected: i64, actual: i64) -> Result<(), CheckpointEr
 }
 
 impl AgentCheckpoint {
-    pub fn validate(&self, expected_project: &str, expected_job: Uuid) -> Result<(), CheckpointError> {
+    pub fn validate(&self, expected_project: &str, expected_job: Uuid, expected_task: Uuid) -> Result<(), CheckpointError> {
         if self.schema_version != CHECKPOINT_SCHEMA_VERSION {
             return Err(CheckpointError::UnsupportedVersion);
         }
         if self.project_id != expected_project
             || self.job_id != expected_job
+            || self.task_id != expected_task
             || self.project_id.is_empty()
             || self.project_id.len() > 80
             || self.sequence <= 0
@@ -119,9 +120,10 @@ impl AgentCheckpoint {
         digest: &str,
         expected_project: &str,
         expected_job: Uuid,
+        expected_task: Uuid,
     ) -> Result<Self, CheckpointError> {
         let checkpoint: Self = serde_json::from_value(value).map_err(|_| CheckpointError::Invalid)?;
-        checkpoint.validate(expected_project, expected_job)?;
+        checkpoint.validate(expected_project, expected_job, expected_task)?;
         let actual = checkpoint.digest()?;
         if actual != digest {
             return Err(CheckpointError::IntegrityMismatch);
@@ -149,11 +151,11 @@ impl CheckpointStore {
         if validate_next_sequence(expected_sequence, checkpoint.sequence).is_err() {
             return Err(CheckpointError::StaleSequence);
         }
-        checkpoint.validate(checkpoint.project_id.as_str(), checkpoint.job_id)?;
+        checkpoint.validate(checkpoint.project_id.as_str(), checkpoint.job_id, checkpoint.task_id)?;
         let digest = checkpoint.digest()?;
         let json = serde_json::to_value(&checkpoint).map_err(|_| CheckpointError::Invalid)?;
         let row = sqlx::query(
-            "UPDATE execution_jobs SET agent_checkpoint = $1, agent_checkpoint_version = $2, agent_checkpoint_sha256 = $3, agent_checkpoint_updated_at = NOW(), updated_at = NOW() WHERE project_id = $4 AND id = $5 AND status = 'leased' AND lease_token = $6 AND lease_expires_at > NOW() AND agent_checkpoint_version = $7 AND (task_id IS NULL OR task_id = $8) RETURNING agent_checkpoint_version"
+            "UPDATE execution_jobs SET agent_checkpoint = $1, agent_checkpoint_version = $2, agent_checkpoint_sha256 = $3, agent_checkpoint_updated_at = NOW(), updated_at = NOW() WHERE project_id = $4 AND id = $5 AND status = 'leased' AND lease_token = $6 AND lease_expires_at > NOW() AND agent_checkpoint_version = $7 AND task_id = $8 RETURNING agent_checkpoint_version"
         )
         .bind(json).bind(checkpoint.sequence).bind(&digest).bind(&checkpoint.project_id)
         .bind(checkpoint.job_id).bind(lease_token).bind(expected_sequence).bind(checkpoint.task_id)
@@ -170,7 +172,7 @@ impl CheckpointStore {
         task_id: Uuid,
     ) -> Result<Option<AgentCheckpoint>, CheckpointError> {
         let row = sqlx::query(
-            "SELECT agent_checkpoint, agent_checkpoint_version, agent_checkpoint_sha256 FROM execution_jobs WHERE project_id = $1 AND id = $2 AND status = 'leased' AND lease_token = $3 AND lease_expires_at > NOW() AND (task_id IS NULL OR task_id = $4)"
+            "SELECT agent_checkpoint, agent_checkpoint_version, agent_checkpoint_sha256 FROM execution_jobs WHERE project_id = $1 AND id = $2 AND status = 'leased' AND lease_token = $3 AND lease_expires_at > NOW() AND task_id = $4"
         )
         .bind(project_id).bind(job_id).bind(lease_token).bind(task_id)
         .fetch_optional(&self.db).await.map_err(|_| CheckpointError::Database)?;
@@ -180,7 +182,7 @@ impl CheckpointStore {
         let value: Value = row.try_get("agent_checkpoint").map_err(|_| CheckpointError::Database)?;
         let digest: Option<String> = row.try_get("agent_checkpoint_sha256").map_err(|_| CheckpointError::Database)?;
         let checkpoint = AgentCheckpoint::decode_and_verify(
-            value, &digest.ok_or(CheckpointError::IntegrityMismatch)?, project_id, job_id
+            value, &digest.ok_or(CheckpointError::IntegrityMismatch)?, project_id, job_id, task_id
         )?;
         if checkpoint.sequence != version { return Err(CheckpointError::IntegrityMismatch); }
         Ok(Some(checkpoint))
@@ -229,9 +231,9 @@ mod tests {
         sqlx::query("INSERT INTO projects (id, name) VALUES ($1, 'checkpoint integration')")
             .bind(&project_id).execute(&pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO execution_jobs (id, project_id, job_type, status, idempotency_key, lease_owner, lease_token, lease_expires_at) VALUES ($1,$2,'agent.test','leased',$3,'checkpoint-test',$4,NOW() + INTERVAL '5 minutes')"
+            "INSERT INTO execution_jobs (id, project_id, task_id, job_type, status, idempotency_key, lease_owner, lease_token, lease_expires_at) VALUES ($1,$2,$3,'agent.test','leased',$4,'checkpoint-test',$5,NOW() + INTERVAL '5 minutes')"
         )
-        .bind(job_id).bind(&project_id).bind(format!("checkpoint-{job_id}"))
+        .bind(job_id).bind(&project_id).bind(task_id).bind(format!("checkpoint-{job_id}"))
         .bind(lease_token).execute(&pool).await.unwrap();
 
         let store = CheckpointStore::new(pool.clone());
@@ -290,7 +292,7 @@ mod tests {
         let original = checkpoint(4);
         let json = serde_json::to_value(&original).unwrap();
         let restored = AgentCheckpoint::decode_and_verify(
-            json, &original.digest().unwrap(), "project-a", Uuid::from_u128(7)
+            json, &original.digest().unwrap(), "project-a", Uuid::from_u128(7), Uuid::from_u128(8)
         ).unwrap();
         assert_eq!(restored, original);
         let budget = Budget::from(&restored.budget);
@@ -304,11 +306,15 @@ mod tests {
         let original = checkpoint(2);
         let json = serde_json::to_value(&original).unwrap();
         assert_eq!(
-            AgentCheckpoint::decode_and_verify(json.clone(), &"0".repeat(64), "project-a", Uuid::from_u128(7)),
+            AgentCheckpoint::decode_and_verify(json.clone(), &"0".repeat(64), "project-a", Uuid::from_u128(7), Uuid::from_u128(8)),
             Err(CheckpointError::IntegrityMismatch)
         );
         assert_eq!(
-            AgentCheckpoint::decode_and_verify(json.clone(), &original.digest().unwrap(), "other-project", Uuid::from_u128(7)),
+            AgentCheckpoint::decode_and_verify(json.clone(), &original.digest().unwrap(), "other-project", Uuid::from_u128(7), Uuid::from_u128(8)),
+            Err(CheckpointError::Invalid)
+        );
+        assert_eq!(
+            AgentCheckpoint::decode_and_verify(json.clone(), &original.digest().unwrap(), "project-a", Uuid::from_u128(7), Uuid::from_u128(99)),
             Err(CheckpointError::Invalid)
         );
         let mut replay = original.clone();
@@ -324,13 +330,13 @@ mod tests {
     fn checkpoint_rejects_prompt_like_unbounded_and_malformed_metadata() {
         let mut invalid = checkpoint(1);
         invalid.phase = "raw model transcript".into();
-        assert_eq!(invalid.validate("project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
+        assert_eq!(invalid.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
         let mut invalid = checkpoint(1);
         invalid.completed_steps = vec!["x".repeat(121)];
-        assert_eq!(invalid.validate("project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
+        assert_eq!(invalid.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
         let mut invalid = checkpoint(1);
         invalid.project_id = "project-b".into();
-        assert_eq!(invalid.validate("project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
+        assert_eq!(invalid.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
     }
 
     #[test]
@@ -339,7 +345,7 @@ mod tests {
         assert_eq!(9, store_sequence + 1);
         assert_eq!(CheckpointError::StaleSequence, CheckpointError::StaleSequence);
         let next = checkpoint(store_sequence + 1);
-        assert!(next.validate("project-a", Uuid::from_u128(7)).is_ok());
+        assert!(next.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)).is_ok());
         let replay = checkpoint(store_sequence);
         assert_eq!(replay.sequence, store_sequence);
         assert_ne!(replay.sequence, store_sequence + 1);

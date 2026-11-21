@@ -768,3 +768,11 @@ Current implementation is in `src/checkpoint.rs`; it is a durable storage primit
 - [ ] The current synchronous agent loop keeps tool observations as in-memory `Value` objects. Safe restart requires artifact-backed observation references, restore support, and idempotency-key propagation so a crash between tool execution and checkpoint save cannot duplicate side effects.
 - [ ] Next implementation gate: add artifact-backed observation persistence/restore and deterministic tool idempotency keys; wire checkpoint load/save into the agent loop; add restart tests proving restored observations match and a previously completed tool action is not duplicated.
 - [ ] No production migration was applied; no PR was merged.
+
+
+### AR-05 scope-isolation repair — 2026-11-21
+
+- Found a fail-open task-scope edge case in checkpoint persistence: SQL accepted a leased job whose `execution_jobs.task_id` was NULL, and checkpoint validation checked project/job but not the checkpoint task ID. A checkpoint for a different task could therefore pass when the job row had no task binding.
+- Repair: checkpoint validation and digest-verified restore now require the expected task UUID; PostgreSQL save/load require an exact `execution_jobs.task_id` match (NULL is rejected); the PostgreSQL integration fixture now binds its task ID; a regression test rejects a checkpoint restored under another task ID.
+- This is a narrow security/scope correction only. It does **not** complete durable agent-loop integration, artifact-backed observation persistence, idempotent tool receipts, crash recovery, or end-to-end supervisor tests.
+- Verification status: code change prepared on `fix/ush-checkpoint-task-scope`; Rust formatting, Clippy, unit/integration tests and exact-head CI have not yet run. Do not mark AR-05 complete or merge.
