@@ -200,5 +200,9 @@ class AdversarialCompletionTests(unittest.TestCase):
     def test_required_tests_check_must_have_machine_counted_totals(self):
         self.rejected(lambda m: m["checks"][0].pop("tests_discovered"))
 
+    def test_malformed_check_ids_are_rejected_without_exception(self):
+        self.rejected(lambda m: m["checks"][0].update(id=["not-a-string"]))
+        self.rejected(lambda m: m.update(required_check_ids=["tests", []]))
+
 if __name__ == "__main__":
     unittest.main()
