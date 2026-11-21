@@ -1,6 +1,9 @@
 import copy
 import unittest
+import sys
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from validate_completion_evidence import validate
 
 SHA = "a" * 40
