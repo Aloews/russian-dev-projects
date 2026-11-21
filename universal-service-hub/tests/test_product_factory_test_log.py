@@ -40,11 +40,18 @@ class ProductFactoryTestLogTests(unittest.TestCase):
     def test_positive_pytest_count_is_accepted(self):
         result = self.parse(
             "## Python tests\n$ python -m pytest -q\n"
-            "4 passed, 1 skipped in 0.04s\nexit_code=0\n"
+            "4 passed in 0.04s\nexit_code=0\n"
         )
         self.assertEqual(result["tests_passed"], 4)
-        self.assertEqual(result["tests_skipped"], 1)
+        self.assertEqual(result["tests_skipped"], 0)
         self.assertEqual(result["errors"], [])
+
+    def test_partially_skipped_required_gate_is_rejected(self):
+        result = self.parse(
+            "## Python tests\n$ python -m pytest -q\n"
+            "4 passed, 1 skipped in 0.04s\nexit_code=0\n"
+        )
+        self.assertTrue(result["errors"])
 
     def test_successful_build_message_cannot_impersonate_test_count(self):
         result = self.parse(
