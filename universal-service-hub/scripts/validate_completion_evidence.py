@@ -65,10 +65,10 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
             continue
         if item.get("candidate_sha") != expected_sha:
             errors.append(f"required check {check_id!r} was not run on the candidate SHA")
-        if check_id == "tests":
+        if "tests_discovered" in item:
             count = item.get("tests_discovered")
             if type(count) is not int or count <= 0:
-                errors.append("test command discovered zero tests")
+                errors.append(f"check {check_id!r} discovered zero tests")
         if workspace is not None:
             error = _artifact_error(
                 workspace,
