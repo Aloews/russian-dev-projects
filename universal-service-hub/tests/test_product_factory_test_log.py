@@ -62,6 +62,20 @@ class ProductFactoryTestLogTests(unittest.TestCase):
         )
         self.assertTrue(result["errors"])
 
+    def test_xfailed_python_tests_are_rejected(self):
+        result = self.parse(
+            "## Python tests\n$ python -m pytest -q\n"
+            "4 passed, 1 xfailed in 0.04s\nexit_code=0\n"
+        )
+        self.assertTrue(result["errors"])
+
+    def test_playwright_skipped_tests_are_rejected(self):
+        result = self.parse(
+            "## Browser end-to-end tests\n$ npx playwright test\n"
+            "4 passed (2.5s)\n1 skipped\nexit_code=0\n"
+        )
+        self.assertTrue(result["errors"])
+
     def test_successful_build_message_cannot_impersonate_test_count(self):
         result = self.parse(
             "## Frontend tests\n$ npm run test\n"
