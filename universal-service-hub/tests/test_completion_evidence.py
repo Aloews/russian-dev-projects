@@ -141,7 +141,7 @@ class AdversarialCompletionTests(unittest.TestCase):
             workspace = Path(directory)
             self.attach_integration_artifacts(manifest, workspace)
             manifest["api"].pop("artifact")
-            self.assertTrue(validate(manifest, SHA, ["src/service.py"], workspace=workspace))
+            self.assertTrue(_validate_evidence_structure(manifest, SHA, ["src/service.py"], "PRODUCTION_VERIFIED", workspace))
 
     def test_manifest_diff_must_match_actual_diff(self):
         with tempfile.TemporaryDirectory() as directory:
