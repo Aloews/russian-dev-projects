@@ -24,6 +24,15 @@ class ProductFactoryTestLogTests(unittest.TestCase):
         self.assertEqual(result["tests_passed"], 4)
         self.assertEqual(result["errors"], [])
 
+    def test_ansi_colored_rust_summary_is_counted(self):
+        result = self.parse(
+            "## Rust tests\n$ cargo test --workspace --locked\n"
+            "\x1b[32mtest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\x1b[0m\n"
+            "exit_code=0\n"
+        )
+        self.assertEqual(result["tests_passed"], 2)
+        self.assertEqual(result["errors"], [])
+
     def test_python_all_skipped_is_rejected(self):
         result = self.parse(
             "## Python tests\n$ python -m pytest -q\n"
