@@ -776,3 +776,11 @@ Current implementation is in `src/checkpoint.rs`; it is a durable storage primit
 - Repair: checkpoint validation and digest-verified restore now require the expected task UUID; PostgreSQL save/load require an exact `execution_jobs.task_id` match (NULL is rejected); the PostgreSQL integration fixture now binds its task ID; a regression test rejects a checkpoint restored under another task ID.
 - This is a narrow security/scope correction only. It does **not** complete durable agent-loop integration, artifact-backed observation persistence, idempotent tool receipts, crash recovery, or end-to-end supervisor tests.
 - Verification status: code change prepared on `fix/ush-checkpoint-task-scope`; Rust formatting, Clippy, unit/integration tests and exact-head CI have not yet run. Do not mark AR-05 complete or merge.
+
+
+### AR-05 scope-isolation repair verification — 2026-11-21
+
+- Fixed the PostgreSQL integration fixture after the first CI run exposed its missing project_plans and project_tasks parent rows. The fixture now inserts project → plan → task → execution job in foreign-key order.
+- Exact-head GitHub Actions run [44923657790](https://github.com/Aloews/russian-dev-projects/actions/runs/44923657790) completed successfully for facf970412faf724e5520592f6f523f8e3a35841: Rust format, Rust lint, Rust tests, migration smoke test, Python tests, Docker build, worker image smoke, S3-compatible artifact API integration smoke, Compose startup smoke, and container smoke all passed.
+- This verifies the current PR head against the repository workflow. It does not establish that the live agent loop uses checkpoint save/restore or that arbitrary external tool side effects are exactly-once.
+- PR #100 remains Draft and unmerged. No production migration or deployment was performed.
