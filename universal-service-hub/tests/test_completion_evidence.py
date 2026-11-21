@@ -12,7 +12,7 @@ BASE = {
     "tested_sha": SHA,
     "changed_paths": ["src/service.py"],
     "required_check_ids": ["tests"],
-    "checks": [{"id": "tests", "executed": True, "exit_code": 0, "tests_discovered": 8, "candidate_sha": SHA}],
+    "checks": [{"id": "tests", "executed": True, "exit_code": 0, "tests_discovered": 8, "candidate_sha": SHA, "command": "pytest -q", "artifact": "artifacts/tests.log"}],
     "api": {"route_exists": True, "route_test_passed": True},
     "database": {"write_attempted": True, "read_after_write": True, "readback_artifact": "artifacts/db-readback.json"},
     "ui": {"data_source": "live_api", "api_available": True, "browser_test_passed": True},
@@ -58,7 +58,7 @@ class AdversarialCompletionTests(unittest.TestCase):
         self.rejected(lambda m: m["retry"].update(artifact_present=False))
 
     def test_10b_retry_requires_idempotency_for_ambiguous_acceptance(self):
-        self.rejected(lambda m: m["retry"].update(idempotency_key="retry-1"))
+        self.rejected(lambda m: m["retry"].update(provider_acceptance_known=False))
 
     def test_complete_evidence_is_accepted(self):
         self.assertEqual(validate(copy.deepcopy(BASE), SHA, ["src/service.py"]), [])
