@@ -67,8 +67,17 @@ def validate(manifest: dict[str, Any], expected_sha: str, changed_paths: list[st
             errors.append(f"required check {check_id!r} was not run on the candidate SHA")
         if "tests_discovered" in item:
             count = item.get("tests_discovered")
+            passed = item.get("tests_passed")
+            skipped = item.get("tests_skipped")
+            failed = item.get("tests_failed", 0)
             if type(count) is not int or count <= 0:
                 errors.append(f"check {check_id!r} discovered zero tests")
+            if type(passed) is not int or passed <= 0:
+                errors.append(f"check {check_id!r} has no positively passed tests")
+            if type(skipped) is not int or skipped != 0:
+                errors.append(f"check {check_id!r} contains skipped tests")
+            if type(failed) is not int or failed != 0:
+                errors.append(f"check {check_id!r} contains failed tests")
         if workspace is not None:
             error = _artifact_error(
                 workspace,
