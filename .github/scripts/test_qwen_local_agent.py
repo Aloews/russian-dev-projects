@@ -58,7 +58,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                     "edits": [{"path": "src/main.py", "old": "", "new": "VALUE = 2\n"}]
                 })
                 context = agent.rejected_existing_file_context(answer)
-                self.assertIn("EXISTING FILE (NOT A NEW FILE)", context)
+                self.assertIn("EXISTING FILE CONFLICT", context)
                 self.assertIn("VALUE = 1", context)
             finally:
                 agent.ROOT = previous_root
