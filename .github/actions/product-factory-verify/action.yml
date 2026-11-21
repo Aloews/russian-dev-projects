@@ -143,6 +143,9 @@ runs:
         paths = subprocess.check_output(["git", "-C", str(root), "diff", "--name-only", base, candidate], text=True).splitlines()
         if not paths:
             raise SystemExit("Candidate has no source diff")
+        if any("\\n" in item or "\\r" in item for item in paths):
+            raise SystemExit("Candidate path contains a newline; refusing ambiguous diff evidence")
+        (temp / "changed-paths.txt").write_text("\\n".join(paths) + "\\n", encoding="utf-8")
         digest = hashlib.sha256(report.read_bytes()).hexdigest()
         manifest = {
             "verification_level": "CODE_VERIFIED",
@@ -196,5 +199,6 @@ runs:
           ${{ runner.temp }}/completion-evidence.json
           ${{ runner.temp }}/changed-paths.txt
           ${{ runner.temp }}/test-gate-summary.json
+          ${{ runner.temp }}/evidence-gate.log
         if-no-files-found: ignore
         retention-days: 30
