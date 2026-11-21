@@ -133,7 +133,7 @@ class AdversarialCompletionTests(unittest.TestCase):
             workspace = Path(directory)
             self.attach_integration_artifacts(manifest, workspace)
             (workspace / manifest["database"]["readback_artifact"]).write_text("not a readback", encoding="utf-8")
-            self.assertTrue(validate(manifest, SHA, ["src/service.py"], workspace=workspace))
+            self.assertTrue(_validate_evidence_structure(manifest, SHA, ["src/service.py"], "PRODUCTION_VERIFIED", workspace))
 
     def test_api_boolean_claim_without_artifact_is_rejected(self):
         manifest = copy.deepcopy(BASE)
