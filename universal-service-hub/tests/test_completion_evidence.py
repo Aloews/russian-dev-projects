@@ -70,8 +70,48 @@ class AdversarialCompletionTests(unittest.TestCase):
     def test_10b_retry_requires_idempotency_for_ambiguous_acceptance(self):
         self.rejected(lambda m: m["retry"].update(provider_acceptance_known=False))
 
+    def attach_integration_artifacts(self, manifest, workspace):
+        records = [
+            (manifest["api"], "artifact", "artifact_sha256", "api.json"),
+            (manifest["database"], "readback_artifact", "readback_sha256", "db.json"),
+            (manifest["ui"], "artifact", "artifact_sha256", "ui.json"),
+            (manifest["deployment"], "artifact", "artifact_sha256", "deployment.json"),
+            (manifest["retry"], "artifact", "artifact_sha256", "retry.json"),
+        ]
+        for record, path_key, hash_key, filename in records:
+            path = workspace / filename
+            path.write_text(filename, encoding="utf-8")
+            record[path_key] = filename
+            record[hash_key] = hashlib.sha256(path.read_bytes()).hexdigest()
+        for index, child in enumerate(manifest["children"]):
+            filename = f"child-{index}.json"
+            path = workspace / filename
+            path.write_text(filename, encoding="utf-8")
+            child["artifact"] = filename
+            child["artifact_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+
     def test_complete_evidence_is_accepted(self):
-        self.assertEqual(validate(copy.deepcopy(BASE), SHA, ["src/service.py"]), [])
+        manifest = copy.deepcopy(BASE)
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            self.attach_integration_artifacts(manifest, workspace)
+            self.assertEqual(validate(manifest, SHA, ["src/service.py"], workspace=workspace), [])
+
+    def test_database_readback_artifact_must_match_its_hash(self):
+        manifest = copy.deepcopy(BASE)
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            self.attach_integration_artifacts(manifest, workspace)
+            (workspace / manifest["database"]["readback_artifact"]).write_text("not a readback", encoding="utf-8")
+            self.assertTrue(validate(manifest, SHA, ["src/service.py"], workspace=workspace))
+
+    def test_api_boolean_claim_without_artifact_is_rejected(self):
+        manifest = copy.deepcopy(BASE)
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            self.attach_integration_artifacts(manifest, workspace)
+            manifest["api"].pop("artifact")
+            self.assertTrue(validate(manifest, SHA, ["src/service.py"], workspace=workspace))
 
     def test_manifest_diff_must_match_actual_diff(self):
         self.assertTrue(validate(copy.deepcopy(BASE), SHA, ["src/other.py"]))
