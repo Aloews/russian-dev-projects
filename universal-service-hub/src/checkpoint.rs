@@ -7,15 +7,17 @@ use uuid::Uuid;
 
 use crate::agent_runtime::{AgentState, Budget};
 
-pub const CHECKPOINT_SCHEMA_VERSION: u16 = 1;
+pub const CHECKPOINT_SCHEMA_VERSION: u16 = 2;
 pub const MAX_CHECKPOINT_BYTES: usize = 16 * 1024;
 const MAX_COMPLETED_STEPS: usize = 250;
 const MAX_ARTIFACT_IDS: usize = 128;
+const MAX_CHECKPOINT_OBSERVATIONS: usize = 24;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentCheckpoint {
     pub schema_version: u16,
+    pub tenant_id: String,
     pub project_id: String,
     pub job_id: Uuid,
     pub task_id: Uuid,
@@ -28,8 +30,45 @@ pub struct AgentCheckpoint {
     #[serde(default)]
     pub artifact_ids: Vec<Uuid>,
     #[serde(default)]
+    pub observations: Vec<CheckpointObservationRef>,
+    #[serde(default)]
+    pub pending_tool: Option<PendingToolInvocation>,
+    #[serde(default)]
     pub last_action_digest: Option<String>,
     pub saved_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointObservationRef {
+    pub tool_id: String,
+    pub tool_version: u16,
+    pub action_digest: String,
+    pub idempotency_key: String,
+    pub input_artifact_id: Uuid,
+    pub output_artifact_id: Uuid,
+    pub sequence: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PendingToolInvocation {
+    pub tool_id: String,
+    pub tool_version: u16,
+    pub action_digest: String,
+    pub idempotency_key: String,
+    pub input_artifact_id: Uuid,
+    pub sequence: u16,
+}
+
+fn valid_hex_digest(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn valid_tool_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -82,13 +121,16 @@ fn validate_next_sequence(expected: i64, actual: i64) -> Result<(), CheckpointEr
 }
 
 impl AgentCheckpoint {
-    pub fn validate(&self, expected_project: &str, expected_job: Uuid) -> Result<(), CheckpointError> {
+    pub fn validate(&self, expected_tenant: &str, expected_project: &str, expected_job: Uuid) -> Result<(), CheckpointError> {
         if self.schema_version != CHECKPOINT_SCHEMA_VERSION {
             return Err(CheckpointError::UnsupportedVersion);
         }
-        if self.project_id != expected_project
+        if self.tenant_id != expected_tenant
+            || self.tenant_id.is_empty()
+            || self.tenant_id.len() > 80
+            || self.project_id != expected_project
             || self.job_id != expected_job
-            || self.project_id.is_empty()
+            || self.project_id.is_empty
             || self.project_id.len() > 80
             || self.sequence <= 0
             || self.phase.is_empty()
@@ -100,6 +142,51 @@ impl AgentCheckpoint {
             || self.last_action_digest.as_ref().is_some_and(|v| v.len() != 64 || !v.bytes().all(|b| b.is_ascii_hexdigit()))
             || self.state == AgentState::Completed && self.phase != "completed"
         {
+            return Err(CheckpointError::Invalid);
+        }
+        let mut observation_keys = std::collections::BTreeSet::new();
+        let mut observation_artifact_ids = std::collections::BTreeSet::new();
+        let mut artifact_id_set = std::collections::BTreeSet::new();
+        if self.artifact_ids.iter().any(|id| !artifact_id_set.insert(*id)) {
+            return Err(CheckpointError::Invalid);
+        }
+        for observation in &self.observations {
+            if !valid_tool_id(&observation.tool_id)
+                || observation.tool_version == 0
+                || !valid_hex_digest(&observation.action_digest)
+                || !valid_hex_digest(&observation.idempotency_key)
+                || observation.sequence == 0
+                || observation.sequence as usize > MAX_CHECKPOINT_OBSERVATIONS
+                || observation.input_artifact_id == observation.output_artifact_id
+                || !observation_keys.insert(observation.idempotency_key.as_str())
+                || !observation_artifact_ids.insert(observation.input_artifact_id)
+                || !observation_artifact_ids.insert(observation.output_artifact_id)
+                || !self.artifact_ids.contains(&observation.input_artifact_id)
+                || !self.artifact_ids.contains(&observation.output_artifact_id)
+                || !self.completed_steps.contains(&observation.idempotency_key)
+            {
+                return Err(CheckpointError::Invalid);
+            }
+        }
+        if self.observations.len() > MAX_CHECKPOINT_OBSERVATIONS {
+            return Err(CheckpointError::Invalid);
+        }
+        if let Some(pending) = &self.pending_tool {
+            if !valid_tool_id(&pending.tool_id)
+                || pending.tool_version == 0
+                || !valid_hex_digest(&pending.action_digest)
+                || !valid_hex_digest(&pending.idempotency_key)
+                || pending.sequence as usize != self.observations.len() + 1
+                || pending.sequence as usize > MAX_CHECKPOINT_OBSERVATIONS
+                || observation_keys.contains(pending.idempotency_key.as_str())
+                || !self.artifact_ids.contains(&pending.input_artifact_id)
+                || observation_artifact_ids.contains(&pending.input_artifact_id)
+                || self.phase != "tool_pending"
+                || self.state != AgentState::Checkpointing
+            {
+                return Err(CheckpointError::Invalid);
+            }
+        } else if self.phase == "tool_pending" {
             return Err(CheckpointError::Invalid);
         }
         let bytes = serde_json::to_vec(self).map_err(|_| CheckpointError::Invalid)?;
@@ -117,11 +204,14 @@ impl AgentCheckpoint {
     pub fn decode_and_verify(
         value: Value,
         digest: &str,
+        expected_tenant: &str,
         expected_project: &str,
         expected_job: Uuid,
+        expected_task: Uuid,
     ) -> Result<Self, CheckpointError> {
         let checkpoint: Self = serde_json::from_value(value).map_err(|_| CheckpointError::Invalid)?;
-        checkpoint.validate(expected_project, expected_job)?;
+        checkpoint.validate(expected_tenant, expected_project, expected_job)?;
+        if checkpoint.task_id != expected_task { return Err(CheckpointError::Invalid); }
         let actual = checkpoint.digest()?;
         if actual != digest {
             return Err(CheckpointError::IntegrityMismatch);
@@ -149,7 +239,7 @@ impl CheckpointStore {
         if validate_next_sequence(expected_sequence, checkpoint.sequence).is_err() {
             return Err(CheckpointError::StaleSequence);
         }
-        checkpoint.validate(checkpoint.project_id.as_str(), checkpoint.job_id)?;
+        checkpoint.validate(checkpoint.tenant_id.as_str(), checkpoint.project_id.as_str(), checkpoint.job_id)?;
         let digest = checkpoint.digest()?;
         let json = serde_json::to_value(&checkpoint).map_err(|_| CheckpointError::Invalid)?;
         let row = sqlx::query(
@@ -164,6 +254,7 @@ impl CheckpointStore {
 
     pub async fn load(
         &self,
+        tenant_id: &str,
         project_id: &str,
         job_id: Uuid,
         lease_token: Uuid,
@@ -180,7 +271,7 @@ impl CheckpointStore {
         let value: Value = row.try_get("agent_checkpoint").map_err(|_| CheckpointError::Database)?;
         let digest: Option<String> = row.try_get("agent_checkpoint_sha256").map_err(|_| CheckpointError::Database)?;
         let checkpoint = AgentCheckpoint::decode_and_verify(
-            value, &digest.ok_or(CheckpointError::IntegrityMismatch)?, project_id, job_id
+            value, &digest.ok_or(CheckpointError::IntegrityMismatch)?, tenant_id, project_id, job_id, task_id
         )?;
         if checkpoint.sequence != version { return Err(CheckpointError::IntegrityMismatch); }
         Ok(Some(checkpoint))
@@ -195,6 +286,7 @@ mod tests {
     fn checkpoint(sequence: i64) -> AgentCheckpoint {
         AgentCheckpoint {
             schema_version: CHECKPOINT_SCHEMA_VERSION,
+            tenant_id: "tenant-a".into(),
             project_id: "project-a".into(),
             job_id: Uuid::from_u128(7),
             task_id: Uuid::from_u128(8),
@@ -209,6 +301,8 @@ mod tests {
             },
             completed_steps: vec!["read_input".into()],
             artifact_ids: vec![Uuid::from_u128(9)],
+            observations: vec![],
+            pending_tool: None,
             last_action_digest: Some("a".repeat(64)),
             saved_at: Utc::now(),
         }
@@ -237,6 +331,7 @@ mod tests {
         let store = CheckpointStore::new(pool.clone());
         let make = |sequence| AgentCheckpoint {
             schema_version: CHECKPOINT_SCHEMA_VERSION,
+            tenant_id: "tenant-test".into(),
             project_id: project_id.clone(),
             job_id,
             task_id,
@@ -251,12 +346,14 @@ mod tests {
             },
             completed_steps: vec!["input_loaded".into()],
             artifact_ids: vec![],
+            observations: vec![],
+            pending_tool: None,
             last_action_digest: None,
             saved_at: Utc::now(),
         };
 
         store.save(make(1), 0, lease_token).await.unwrap();
-        let restored = store.load(&project_id, job_id, lease_token, task_id).await.unwrap().unwrap();
+        let restored = store.load("tenant-test", &project_id, job_id, lease_token, task_id).await.unwrap().unwrap();
         assert_eq!(restored.sequence, 1);
         assert_eq!(restored.budget.tokens_remaining, 700);
 
@@ -290,7 +387,7 @@ mod tests {
         let original = checkpoint(4);
         let json = serde_json::to_value(&original).unwrap();
         let restored = AgentCheckpoint::decode_and_verify(
-            json, &original.digest().unwrap(), "project-a", Uuid::from_u128(7)
+            json, &original.digest().unwrap(), "tenant-a", "project-a", Uuid::from_u128(7), Uuid::from_u128(8)
         ).unwrap();
         assert_eq!(restored, original);
         let budget = Budget::from(&restored.budget);
@@ -304,27 +401,27 @@ mod tests {
         let original = checkpoint(2);
         let json = serde_json::to_value(&original).unwrap();
         assert_eq!(
-            AgentCheckpoint::decode_and_verify(json.clone(), &"0".repeat(64), "project-a", Uuid::from_u128(7)),
+            AgentCheckpoint::decode_and_verify(json.clone(), &"0".repeat(64), "tenant-a", "project-a", Uuid::from_u128(7), Uuid::from_u128(8)),
             Err(CheckpointError::IntegrityMismatch)
         );
         assert_eq!(
-            AgentCheckpoint::decode_and_verify(json.clone(), &original.digest().unwrap(), "other-project", Uuid::from_u128(7)),
+            AgentCheckpoint::decode_and_verify(json.clone(), &original.digest().unwrap(), "tenant-a", "other-project", Uuid::from_u128(7), Uuid::from_u128(8)),
             Err(CheckpointError::Invalid)
         );
         let mut replay = original.clone();
         replay.sequence = 1;
-        assert_eq!(replay.validate("project-a", Uuid::from_u128(7)), Ok(()));
+        assert_eq!(replay.validate("tenant-a", "project-a", Uuid::from_u128(7)), Ok(()));
         assert_eq!(validate_next_sequence(1, replay.sequence), Err(CheckpointError::StaleSequence));
         let mut future = original;
         future.schema_version = CHECKPOINT_SCHEMA_VERSION + 1;
-        assert_eq!(future.validate("project-a", Uuid::from_u128(7)), Err(CheckpointError::UnsupportedVersion));
+        assert_eq!(future.validate("tenant-a", "project-a", Uuid::from_u128(7)), Err(CheckpointError::UnsupportedVersion));
     }
 
     #[test]
     fn checkpoint_rejects_prompt_like_unbounded_and_malformed_metadata() {
         let mut invalid = checkpoint(1);
         invalid.phase = "raw model transcript".into();
-        assert_eq!(invalid.validate("project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
+        assert_eq!(invalid.validate("tenant-a", "project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
         let mut invalid = checkpoint(1);
         invalid.completed_steps = vec!["x".repeat(121)];
         assert_eq!(invalid.validate("project-a", Uuid::from_u128(7)), Err(CheckpointError::Invalid));
