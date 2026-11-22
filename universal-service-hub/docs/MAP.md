@@ -751,7 +751,7 @@ Next gates:
 - [x] Implement lease-bound restore with schema/scope/sequence/digest verification; missing, corrupt, stale or superseded state fails closed.
 - [x] Add Rust tests for restart round-trip, budget preservation, digest tampering, scope mismatch, unsupported schema, malformed/unbounded metadata and replay sequence rejection.
 - [x] Add PostgreSQL integration coverage for persisted restore, concurrent compare-and-swap, checksum tampering and stale-lease fencing; CI supplies an isolated PostgreSQL 16 test database.
-- [ ] Exact-head CI: prior head `0608e4a7867fe171bca6441758c0989591af1d1a`, run #1786 (44781725891) failed at Python migration smoke because SQLx Rust migrations and Python Alembic shared `ush_test` and both create `providers`. The branch now isolates Alembic in `ush_migration_test`, refuses to reuse an existing DB, and runs `alembic upgrade head` twice; exact-head verification remains pending.
+- [x] PR #100 exact-head CI passed for `bb158e02af47346f1987d62c2b4fa7ab297b514e`, run [44925282106](https://github.com/Aloews/russian-dev-projects/actions/runs/44925282106). The full job completed Rust format/Clippy/tests, PostgreSQL migration and checkpoint integration tests, Python/Ruff, Docker build, worker image smoke, S3-compatible API smoke, Compose startup and container smoke. This verifies PR #100 only; the next AR-05 code change must be checked on its own SHA.
 - [ ] Wire checkpoint save/restore into the autonomous agent supervisor only after the above gates pass.
 
 Current implementation is in `src/checkpoint.rs`; it is a durable storage primitive, not yet a live agent-loop integration. No migration has been applied to a production database. PR remains open and unmerged.
@@ -784,3 +784,9 @@ Current implementation is in `src/checkpoint.rs`; it is a durable storage primit
 - Exact-head GitHub Actions run [44923657790](https://github.com/Aloews/russian-dev-projects/actions/runs/44923657790) completed successfully for facf970412faf724e5520592f6f523f8e3a35841: Rust format, Rust lint, Rust tests, migration smoke test, Python tests, Docker build, worker image smoke, S3-compatible artifact API integration smoke, Compose startup smoke, and container smoke all passed.
 - This verifies the current PR head against the repository workflow. It does not establish that the live agent loop uses checkpoint save/restore or that arbitrary external tool side effects are exactly-once.
 - PR #100 remains Draft and unmerged. No production migration or deployment was performed.
+
+### AR-05 tool receipt store — implementation in progress
+
+- Next bounded increment: PostgreSQL durable tool-action receipts with deterministic, scope-bound idempotency keys, reservation/completion/uncertain states, lease-token fencing and duplicate/collision regression tests.
+- This receipt store is a prerequisite only until the live agent loop uses it and stores tool observations in S3-backed artifacts. It does not claim exactly-once external effects; downstream executors must accept and honor the same idempotency key.
+- New code and migration are not yet verified. No live agent provider/executor is wired and no production migration is authorized.
