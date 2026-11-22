@@ -269,6 +269,34 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertEqual(agent.generation_budget(1), 2048)
         self.assertEqual(agent.generation_budget(2), 2048)
 
+    def test_test_context_is_reserved_when_many_source_files_rank_higher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                tracked = []
+                for index in range(12):
+                    path = f"src/authentication_{index:02d}.py"
+                    file_path = agent.ROOT / path
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_text("authentication handler\n" * 20, encoding="utf-8")
+                    tracked.append(path)
+                test_path = "tests/test_fallback_auth.py"
+                test_file = agent.ROOT / test_path
+                test_file.parent.mkdir(parents=True)
+                test_file.write_text("def test_fallback_auth_regression():\n    assert True\n", encoding="utf-8")
+                tracked.append(test_path)
+                context = agent.make_context("authentication handler", tracked)
+                self.assertIn(test_path, context.split("--- SOURCE/TEST FILE CANDIDATES", 1)[1].split("--- SOURCE/TEST FILE:", 1)[0])
+                self.assertIn("SOURCE/TEST FILE: src/authentication_00.py", context)
+                self.assertIn("SOURCE/TEST FILE: tests/test_fallback_auth.py", context)
+                self.assertLess(
+                    context.index("SOURCE/TEST FILE: src/authentication_00.py"),
+                    context.index("SOURCE/TEST FILE: tests/test_fallback_auth.py"),
+                )
+            finally:
+                agent.ROOT = previous_root
+
     def test_source_and_test_context_are_prioritized_before_docs(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT

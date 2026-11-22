@@ -107,11 +107,22 @@ def make_context(task, tracked):
             continue
         score = sum(4 for token in tokens if token in path.lower())
         score += sum(1 for token in tokens if token in body[:12000].lower())
-        parts = path.lower().split("/")
-        test_priority = 3 if any(part in {"test", "tests", "spec", "specs"} for part in parts) or Path(path).name.lower().startswith(("test_", "tests_")) else 0
-        ranked.append((score + test_priority, path))
+        ranked.append((score, path))
     ranked.sort(key=lambda item: (-item[0], item[1]))
-    source_candidates = [p for _, p in ranked[:8]]
+    ranked_paths = [p for _, p in ranked]
+    code_candidates = [p for p in ranked_paths if not is_test_path(p)]
+    test_candidates = [p for p in ranked_paths if is_test_path(p)]
+    # Reserve context for both implementation and regression tests. A dozen high-scoring
+    # source files must not crowd every test file out of the model's bounded context.
+    prioritized = []
+    if code_candidates:
+        prioritized.append(code_candidates[0])
+    if test_candidates:
+        prioritized.append(test_candidates[0])
+    prioritized.extend(code_candidates[1:4])
+    prioritized.extend(test_candidates[1:4])
+    prioritized.extend(ranked_paths)
+    source_candidates = list(dict.fromkeys(prioritized))[:8]
     doc_candidates = [p for p in docs if p in tracked]
     source_listing = (
         "\n--- SOURCE/TEST FILE CANDIDATES (choose code edits only from these paths) ---\n"
