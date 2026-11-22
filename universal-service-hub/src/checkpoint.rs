@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use crate::agent_runtime::{AgentState, Budget};
 
+pub mod tool_receipts;
+
 pub const CHECKPOINT_SCHEMA_VERSION: u16 = 1;
 pub const MAX_CHECKPOINT_BYTES: usize = 16 * 1024;
 const MAX_COMPLETED_STEPS: usize = 250;
