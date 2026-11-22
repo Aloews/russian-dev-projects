@@ -22,7 +22,19 @@ ROOT = Path(__file__).resolve().parents[2]
 ACTION = ROOT / ".github" / "actions" / "product-factory-agent" / "action.yml"
 
 class QwenEditSafetyTests(unittest.TestCase):
-    def test_retry_prompt_requires_source_and_regression_test_pair(self):
+    def test_retry_prompt_requires_source_test_pair_and_corrects_validation(self):
+        retry = agent.build_retry_messages(
+            [{"role": "user", "content": "objective"}],
+            "Qwen review report is missing or too short",
+        )
+        self.assertIn("one non-test source edit and one regression-test edit", retry[-1]["content"])
+        self.assertIn("do not choose documentation", retry[-1]["content"])
+        self.assertIn("review must be 80-1000 characters", retry[-1]["content"])
+        self.assertIn("Fix the specific validation error above", retry[-1]["content"])
+        self.assertIn("Qwen review report is missing or too short", retry[-1]["content"])
+        self.assertNotIn("previous answer lacked the required source-plus-test pair", retry[-1]["content"])
+
+
         retry = agent.build_retry_messages(
             [{"role": "user", "content": "objective"}],
             "Qwen response lacks a regression test edit",
@@ -368,6 +380,9 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
         self.assertEqual(agent.generation_budget(0), 1536)
         self.assertEqual(agent.generation_budget(1), 2048)
         self.assertGreater(agent.generation_budget(1), agent.generation_budget(0))
+
+    def test_review_schema_minimum_matches_validator(self):
+        self.assertEqual(agent.EDIT_SCHEMA["properties"]["review"]["minLength"], 80)
 
     def test_qwen_output_limits_are_bounded(self):
         self.assertEqual(agent.MAX_FILES, 2)

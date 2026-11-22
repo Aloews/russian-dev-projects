@@ -157,7 +157,7 @@ def make_context(task, tracked):
 EDIT_SCHEMA = {
     "type": "object",
     "properties": {
-        "review": {"type": "string", "minLength": 60, "maxLength": 1200},
+        "review": {"type": "string", "minLength": 80, "maxLength": 1200},
         "edits": {
             "type": "array",
             "minItems": 1,
@@ -243,8 +243,9 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
     instruction = (
         "Your previous response failed validation: " + str(validation_error)[:300] + ". "
         "Discard that response and produce a fresh, complete JSON object matching the schema. "
-        "The previous answer lacked the required source-plus-test pair. This time make one non-test source edit and one regression-test edit "
-        "in two files from the provided context: one source file and one test file; do not choose documentation. Keep the review under 1000 characters. "
+        "Fix the specific validation error above; do not assume a source/test error when a different field failed. "
+        "The review must be 80-1000 characters. Still include one non-test source edit and one regression-test edit "
+        "in two files from the provided context; do not choose documentation. "
         "For an existing file, old must be an exact unique snippet from the evidence. For a new file, old must be empty. "
         "Never include markdown fences or unescaped newlines inside JSON strings. Do not claim tests were run.\n"
         + existing_file_evidence[:5000]
@@ -453,7 +454,7 @@ def main():
                 existing_file_evidence = rejected_existing_file_context(answer)
                 messages = build_retry_messages(base_messages, validation_error, existing_file_evidence)
                 continue
-            print("::error::Qwen multi-role engineering pass failed validation: " + validation_error)
+            print("::error::Qwen candidate generation failed validation: " + validation_error)
             return 4
     if review_text is None or changed_paths is None:
         print("::error::Qwen fallback exhausted retries without a validated candidate.")
@@ -462,12 +463,12 @@ def main():
     report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
-        "# Qwen2.5-Coder 3B multi-role engineering review\n\n"
+        "# Qwen2.5-Coder 3B single-pass candidate review\n\n"
         + "OBJECTIVE: " + task + "\n\n"
         + review_text[:2000] + "\n",
         encoding="utf-8",
     )
-    print("Qwen multi-role engineering council completed in one inference pass.")
+    print("Qwen single-pass candidate generation completed.")
     changed = set(git("diff", "--name-only").stdout.splitlines())
     changed.update(git("ls-files", "--others", "--exclude-standard").stdout.splitlines())
     changed.discard("PRODUCT_FACTORY_VERIFICATION.md")
