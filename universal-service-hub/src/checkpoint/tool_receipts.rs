@@ -282,7 +282,7 @@ impl ToolReceiptStore {
             return Ok(());
         }
         let existing = sqlx::query(
-            "SELECT status,result_artifact_id,result_sha256 FROM execution_tool_receipts WHERE project_id=$1 AND job_id=$2 AND task_id=$3 AND action_id=$4 FOR UPDATE"
+            "SELECT tool_id,tool_version,action_sha256,idempotency_key,status,result_artifact_id,result_sha256 FROM execution_tool_receipts WHERE project_id=$1 AND job_id=$2 AND task_id=$3 AND action_id=$4 FOR UPDATE"
         )
         .bind(&identity.project_id)
         .bind(identity.job_id)
@@ -292,12 +292,20 @@ impl ToolReceiptStore {
         .await
         .map_err(|_| ToolReceiptError::Database)?;
         if let Some(row) = existing {
+            let tool: String = row.try_get("tool_id").map_err(|_| ToolReceiptError::Database)?;
+            let version: i32 = row.try_get("tool_version").map_err(|_| ToolReceiptError::Database)?;
+            let digest: String = row.try_get("action_sha256").map_err(|_| ToolReceiptError::Database)?;
+            let key: String = row.try_get("idempotency_key").map_err(|_| ToolReceiptError::Database)?;
             let status: String = row.try_get("status").map_err(|_| ToolReceiptError::Database)?;
             let artifact: Option<Uuid> =
                 row.try_get("result_artifact_id").map_err(|_| ToolReceiptError::Database)?;
             let sha: Option<String> =
                 row.try_get("result_sha256").map_err(|_| ToolReceiptError::Database)?;
-            if status == "completed"
+            if tool == identity.tool_id
+                && version == i32::from(identity.tool_version)
+                && digest == identity.action_sha256
+                && key == identity.idempotency_key
+                && status == "completed"
                 && artifact == Some(artifact_id)
                 && sha.as_deref() == Some(result_sha256)
             {
@@ -351,7 +359,7 @@ impl ToolReceiptStore {
             return Ok(());
         }
         let existing = sqlx::query(
-            "SELECT status FROM execution_tool_receipts WHERE project_id=$1 AND job_id=$2 AND task_id=$3 AND action_id=$4 FOR UPDATE"
+            "SELECT tool_id,tool_version,action_sha256,idempotency_key,status FROM execution_tool_receipts WHERE project_id=$1 AND job_id=$2 AND task_id=$3 AND action_id=$4 FOR UPDATE"
         )
         .bind(&identity.project_id)
         .bind(identity.job_id)
@@ -361,8 +369,17 @@ impl ToolReceiptStore {
         .await
         .map_err(|_| ToolReceiptError::Database)?;
         if let Some(row) = existing {
+            let tool: String = row.try_get("tool_id").map_err(|_| ToolReceiptError::Database)?;
+            let version: i32 = row.try_get("tool_version").map_err(|_| ToolReceiptError::Database)?;
+            let digest: String = row.try_get("action_sha256").map_err(|_| ToolReceiptError::Database)?;
+            let key: String = row.try_get("idempotency_key").map_err(|_| ToolReceiptError::Database)?;
             let status: String = row.try_get("status").map_err(|_| ToolReceiptError::Database)?;
-            if status == "uncertain" {
+            if tool == identity.tool_id
+                && version == i32::from(identity.tool_version)
+                && digest == identity.action_sha256
+                && key == identity.idempotency_key
+                && status == "uncertain"
+            {
                 tx.commit().await.map_err(|_| ToolReceiptError::Database)?;
                 return Ok(());
             }
@@ -490,6 +507,7 @@ mod tests {
             Err(ToolReceiptError::IntegrityMismatch)
         );
         store.complete(&first, lease, artifact, &result_sha).await.unwrap();
+        store.complete(&first, lease, artifact, &result_sha).await.unwrap();
         assert_eq!(
             store.reserve(&first, lease).await.unwrap(),
             ToolReceiptReservation::Completed {
@@ -506,6 +524,10 @@ mod tests {
             store.reserve(&changed, lease).await,
             Err(ToolReceiptError::Conflict)
         );
+        assert_eq!(
+            store.complete(&changed, lease, artifact, &result_sha).await,
+            Err(ToolReceiptError::Conflict)
+        );
 
         let uncertain = identity(&project, job, task, Uuid::new_v4());
         assert_eq!(
@@ -516,6 +538,14 @@ mod tests {
         assert_eq!(
             store.reserve(&uncertain, lease).await.unwrap(),
             ToolReceiptReservation::Uncertain
+        );
+        let changed_uncertain = ToolReceiptIdentity::new(
+            project.clone(), job, task, uncertain.action_id, uncertain.tool_id.clone(),
+            uncertain.tool_version, "c".repeat(64),
+        ).unwrap();
+        assert_eq!(
+            store.mark_uncertain(&changed_uncertain, lease).await,
+            Err(ToolReceiptError::Conflict)
         );
 
         let stale = identity(&project, job, task, Uuid::new_v4());
