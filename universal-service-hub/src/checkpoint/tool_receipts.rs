@@ -247,6 +247,20 @@ impl ToolReceiptStore {
         if lease.is_none() {
             return Err(ToolReceiptError::LeaseLost);
         }
+        let registered_artifact = sqlx::query(
+            "SELECT 1 FROM execution_artifacts WHERE project_id=$1 AND job_id=$2 AND task_id=$3 AND id=$4 AND content_sha256=$5"
+        )
+        .bind(&identity.project_id)
+        .bind(identity.job_id)
+        .bind(identity.task_id)
+        .bind(artifact_id)
+        .bind(result_sha256)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| ToolReceiptError::Database)?;
+        if registered_artifact.is_none() {
+            return Err(ToolReceiptError::IntegrityMismatch);
+        }
         let updated = sqlx::query(
             "UPDATE execution_tool_receipts SET status='completed',result_artifact_id=$9,result_sha256=$10,updated_at=NOW() WHERE project_id=$1 AND job_id=$2 AND task_id=$3 AND action_id=$4 AND tool_id=$5 AND tool_version=$6 AND action_sha256=$7 AND idempotency_key=$8 AND status='reserved'"
         )
@@ -455,6 +469,26 @@ mod tests {
         );
         let artifact = Uuid::new_v4();
         let result_sha = "b".repeat(64);
+        let missing_artifact = Uuid::new_v4();
+        assert_eq!(
+            store.complete(&first, lease, missing_artifact, &result_sha).await,
+            Err(ToolReceiptError::IntegrityMismatch)
+        );
+        sqlx::query(
+            "INSERT INTO execution_artifacts (id,project_id,job_id,task_id,artifact_type,storage_backend,storage_key,content_sha256,size_bytes,content_type) VALUES ($1,$2,$3,$4,'agent_tool_output','test','receipt-test-object',$5,1,'application/json')"
+        )
+        .bind(artifact)
+        .bind(&project)
+        .bind(job)
+        .bind(task)
+        .bind(&result_sha)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            store.complete(&first, lease, artifact, &"c".repeat(64)).await,
+            Err(ToolReceiptError::IntegrityMismatch)
+        );
         store.complete(&first, lease, artifact, &result_sha).await.unwrap();
         assert_eq!(
             store.reserve(&first, lease).await.unwrap(),
