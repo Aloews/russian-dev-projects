@@ -59,6 +59,51 @@ class CandidateBaseCheckoutTests(unittest.TestCase):
             self.assertNotIn("extraheader", git("config", "--local", "--list", cwd=target))
             self.assertIn(candidate_sha, result.stdout + result.stderr)
 
+    def test_reuses_base_commit_already_present_in_shallow_checkout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            remote = root / "remote.git"
+            source = root / "source"
+            target = root / "target"
+            wrapper_bin = root / "bin"
+            wrapper_bin.mkdir()
+            git("init", "--bare", "--initial-branch=main", str(remote))
+            git("init", "--initial-branch=main", str(source))
+            git("config", "user.name", "CI Test", cwd=source)
+            git("config", "user.email", "ci-test@example.invalid", cwd=source)
+            (source / "base.txt").write_text("base\\n", encoding="utf-8")
+            git("add", "base.txt", cwd=source)
+            git("commit", "-m", "base", cwd=source)
+            git("remote", "add", "origin", str(remote), cwd=source)
+            git("push", "origin", "main", cwd=source)
+            base_sha = git("rev-parse", "HEAD", cwd=source)
+            git("clone", "--depth=1", "--single-branch", "--branch", "main", f"file://{remote}", str(target))
+
+            real_git = subprocess.check_output(["which", "git"], text=True).strip()
+            git_wrapper = wrapper_bin / "git"
+            git_wrapper.write_text(
+                "#!/usr/bin/env bash\\n"
+                "for arg in \"$@\"; do\\n"
+                "  if [[ \"$arg\" == \"" + base_sha + "\" ]]; then\\n"
+                "    echo 'unexpected redundant fetch-by-SHA' >&2\\n"
+                "    exit 97\\n"
+                "  fi\\n"
+                "done\\n"
+                "exec \"" + real_git + "\" \"$@\"\\n",
+                encoding="utf-8",
+            )
+            git_wrapper.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = str(wrapper_bin) + os.pathsep + env["PATH"]
+            result = subprocess.run(
+                ["bash", str(SCRIPT), str(target), base_sha],
+                check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=env,
+            )
+            self.assertEqual(git("rev-parse", "HEAD", cwd=target), base_sha)
+            self.assertIn(base_sha, result.stdout + result.stderr)
+            self.assertNotIn("unexpected redundant fetch-by-SHA", result.stderr)
+
     def test_rejects_malformed_sha_without_changing_checkout(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
