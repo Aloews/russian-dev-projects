@@ -410,17 +410,17 @@ def validate_javascript_test_edit(path, source):
     if suffix in {".tsx", ".jsx"} and not ({"jest", "vitest"} & runners):
         raise ValueError("React component regression tests require a declared Jest or Vitest runner")
 
-    if re.search(r"\\bSome\\s*\\(|\\bVerificationState\\s*::|\\b[A-Za-z_][A-Za-z0-9_]*\\s*::\\s*[A-Za-z_]", source):
+    if re.search(r"\bSome\s*\(|\bVerificationState\s*::|\b[A-Za-z_][A-Za-z0-9_]*\s*::\s*[A-Za-z_]", source):
         raise ValueError("JavaScript/TypeScript regression test contains Rust syntax")
-    if re.search(r"""['"][^'"]+\\.rs['"]""", source):
+    if re.search(r"""['"][^'"]+\.rs['"]""", source):
         raise ValueError("JavaScript/TypeScript regression test imports a Rust source file")
-    if re.search(r"\\bjest\\s*\\.", source) and "jest" not in runners:
+    if re.search(r"\bjest\s*\.", source) and "jest" not in runners:
         raise ValueError("Regression test uses Jest globals but Jest is not declared")
-    if re.search(r"\\bvi\\s*\\.", source) and "vitest" not in runners:
+    if re.search(r"\bvi\s*\.", source) and "vitest" not in runners:
         raise ValueError("Regression test uses Vitest globals but Vitest is not declared")
 
     imported = re.findall(
-        r"""(?:\\bfrom\\s*|\\bimport\\s*|\\brequire\\s*\\(\\s*)['"]([^'"]+)['"]""",
+        r"""(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]""",
         source,
     )
     builtins = {
