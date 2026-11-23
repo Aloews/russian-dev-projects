@@ -83,13 +83,11 @@ class CandidateBaseCheckoutTests(unittest.TestCase):
             git_wrapper = wrapper_bin / "git"
             git_wrapper.write_text(
                 "#!/usr/bin/env bash\\n"
-                "for arg in \"$@\"; do\\n"
-                "  if [[ \"$arg\" == \"" + base_sha + "\" ]]; then\\n"
-                "    echo 'unexpected redundant fetch-by-SHA' >&2\\n"
-                "    exit 97\\n"
-                "  fi\\n"
-                "done\\n"
-                "exec \"" + real_git + "\" \"$@\"\\n",
+                "if [[ \\" $* \\" == *\\" fetch \\"* && \\" $* \\" == *\\"" + base_sha + "\\"* ]]; then\\n"
+                "  echo 'unexpected redundant fetch-by-SHA' >&2\\n"
+                "  exit 97\\n"
+                "fi\\n"
+                "exec \\"" + real_git + "\\" \\"$@\\"\\n",
                 encoding="utf-8",
             )
             git_wrapper.chmod(0o755)
