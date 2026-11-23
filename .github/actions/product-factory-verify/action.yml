@@ -24,6 +24,17 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Validate target repository inputs
+      shell: bash
+      env:
+        TARGET_REPO: ${{ inputs.target_repo }}
+        BASE_BRANCH: ${{ inputs.base_branch }}
+      run: |
+        set -Eeuo pipefail
+        [[ "$TARGET_REPO" =~ ^Aloews/[A-Za-z0-9._-]+$ ]] || { echo "Invalid or missing target_repo input." >&2; exit 2; }
+        [[ "$BASE_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "Invalid or missing base_branch input." >&2; exit 2; }
+        git check-ref-format --branch "$BASE_BRANCH"
+
     - name: Check out target repository
       uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
       with:
@@ -33,6 +44,28 @@ runs:
         path: target
         fetch-depth: 1
         persist-credentials: false
+
+    - name: Verify target checkout identity and base ref
+      shell: bash
+      env:
+        TARGET_REPO: ${{ inputs.target_repo }}
+        BASE_BRANCH: ${{ inputs.base_branch }}
+        PRODUCT_FACTORY_GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        set -Eeuo pipefail
+        EXPECTED_ORIGIN="https://github.com/$TARGET_REPO"
+        ACTUAL_ORIGIN="$(git -C target remote get-url origin)"
+        [[ "$ACTUAL_ORIGIN" == "$EXPECTED_ORIGIN" || "$ACTUAL_ORIGIN" == "$EXPECTED_ORIGIN.git" ]] || {
+          echo "Verifier checked out an unexpected repository: $ACTUAL_ORIGIN" >&2
+          exit 2
+        }
+        AUTH="$(printf 'x-access-token:%s' "$PRODUCT_FACTORY_GITHUB_TOKEN" | base64 -w0)"
+        REMOTE_BASE_SHA="$(git -C target -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" ls-remote origin "refs/heads/$BASE_BRANCH" | cut -f1)"
+        CHECKED_OUT_SHA="$(git -C target rev-parse HEAD)"
+        [[ -n "$REMOTE_BASE_SHA" && "$CHECKED_OUT_SHA" == "$REMOTE_BASE_SHA" ]] || {
+          echo "Verifier checkout does not match the current target base branch tip." >&2
+          exit 2
+        }
 
     - name: Download candidate patch
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
