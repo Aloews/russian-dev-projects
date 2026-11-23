@@ -178,6 +178,18 @@ EDIT_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Each Qwen inference is limited to one file: one source implementation, then one test recovery.
+SINGLE_EDIT_SCHEMA = {
+    **EDIT_SCHEMA,
+    "properties": {
+        **EDIT_SCHEMA["properties"],
+        "edits": {
+            **EDIT_SCHEMA["properties"]["edits"],
+            "maxItems": 1,
+        },
+    },
+}
+
 def rejected_existing_file_context(answer):
     """Return bounded current-file evidence for every rejected existing-file edit."""
     try:
@@ -289,9 +301,9 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
     instruction = (
         "Your previous response failed validation: " + str(validation_error)[:300] + ". "
         "Discard that response and produce a fresh, complete JSON object matching the schema. "
-        "Fix the specific validation error above; do not assume a source/test error when a different field failed. "
-        "The review must be 80-1000 characters. Still include one non-test source edit and one regression-test edit "
-        "in two files from the provided context; do not choose documentation. "
+        "Fix the specific validation error above. This is still the implementation pass: edits must contain exactly one non-test source-file edit and no test edit, documentation edit, or second file. "
+        "The review must be 80-1000 characters. choose exactly one non-test source edit only; do not include tests "
+        "in one existing source file from the provided context; do not choose documentation. "
         "For an existing file, old must be an exact unique snippet from the evidence. For a new file, old must be empty. "
         "Never include markdown fences or unescaped newlines inside JSON strings. Do not claim tests were run.\n"
         + existing_file_evidence[:5000]
@@ -428,7 +440,7 @@ def main():
         "Never return a unified diff, markdown fence or explanation. "
         "Never invent live data, credentials, legal approvals, customers, property inventory or tests. "
         "Do not edit workflows, action definitions, dependency manifests, lockfiles, credentials, deployment files, "
-        "production secrets, infrastructure definitions or database migrations. Every final candidate MUST include one non-test source edit and one regression-test edit; if the implementation pass omits the test, a separate bounded test-recovery pass will generate it. The final edit limit is two files. "
+        "production secrets, infrastructure definitions or database migrations. This implementation pass must return exactly one non-test source edit and no test edit. A separate bounded recovery pass generates exactly one regression-test edit; the final candidate combines those two independently validated edits. "
         "Do not weaken or delete tests. Keep changes minimal. No extra keys or explanations."
     )
     reality_path = os.environ.get("REALITY_FIRST_SKILL_PATH", "")
@@ -443,11 +455,12 @@ def main():
         system += "\n\nApply this Caveman skill to reduce prose only. Never compress code, paths, identifiers, errors, contracts, negations or tests:\n" + skill
     system += (
         "\n\nUse a compact engineering workflow appropriate for a 3B coding model: inspect evidence, "
-        "choose exactly one small concrete source/test improvement, implement it, and sanity-review the proposed diff. "
-        "Do not simulate multiple independent agents or write a long role-play council. This is one inference pass, "
-        "not independent verification. The implementation pass should return one non-test source edit; a separate recovery pass generates the regression-test edit if needed. The final combined edits array must contain both. Documentation-only "
-        "changes are rejected. Prefer existing source/test files present in the supplied context and use exact unique "
-        "old snippets. The two-file limit is intentional. The review field should briefly identify the selected file, risk, test needed and unknowns. "
+        "choose exactly one small concrete source improvement and edit exactly one non-test source file. "
+        "Do not include regression tests in this pass; a separate isolated recovery inference will create one test edit. "
+        "Do not simulate multiple independent agents or write a long role-play council. This is one implementation pass, "
+        "not independent verification. Documentation-only changes are rejected. Prefer an existing source file "
+        "present in the supplied context and use an exact unique old snippet. The one-file limit is intentional. "
+        "The review field should briefly identify the selected file, risk, test needed and unknowns. "
         "Do not claim tests were run. Return only JSON matching the schema."
     )
     messages = [
@@ -464,7 +477,7 @@ def main():
         try:
             answer = ask_ollama(
                 messages,
-                format_schema=EDIT_SCHEMA,
+                format_schema=SINGLE_EDIT_SCHEMA,
                 max_predict=generation_budget(attempt),
                 timeout_seconds=600,
             )
@@ -486,7 +499,7 @@ def main():
                 )
                 recovery_answer = ask_ollama(
                     recovery_messages,
-                    format_schema=EDIT_SCHEMA,
+                    format_schema=SINGLE_EDIT_SCHEMA,
                     max_predict=2048,
                     timeout_seconds=600,
                 )
