@@ -71,7 +71,7 @@ class CandidateBaseCheckoutTests(unittest.TestCase):
             git("init", "--initial-branch=main", str(source))
             git("config", "user.name", "CI Test", cwd=source)
             git("config", "user.email", "ci-test@example.invalid", cwd=source)
-            (source / "base.txt").write_text("base\\n", encoding="utf-8")
+            (source / "base.txt").write_text("base", encoding="utf-8")
             git("add", "base.txt", cwd=source)
             git("commit", "-m", "base", cwd=source)
             git("remote", "add", "origin", str(remote), cwd=source)
@@ -82,16 +82,17 @@ class CandidateBaseCheckoutTests(unittest.TestCase):
             real_git = subprocess.check_output(["which", "git"], text=True).strip()
             git_wrapper = wrapper_bin / "git"
             git_wrapper.write_text(
-                "#!/usr/bin/env bash\\n"
-                "if [[ \\"$1\\" == \\"-C\\" && \\"$3\\" == \\"fetch\\" ]]; then\\n"
-                "  for arg in \\"$@\\"; do\\n"
-                f"    if [[ \\"$arg\\" == \\"{base_sha}\\" ]]; then\\n"
-                "      echo 'unexpected redundant fetch-by-SHA' >&2\\n"
-                "      exit 97\\n"
-                "    fi\\n"
-                "  done\\n"
-                "fi\\n"
-                f"exec \\"{real_git}\\" \\"$@\\"\\n",
+                f"""#!/usr/bin/env bash
+if [[ "$1" == "-C" && "$3" == "fetch" ]]; then
+  for arg in "$@"; do
+    if [[ "$arg" == "{base_sha}" ]]; then
+      echo 'unexpected redundant fetch-by-SHA' >&2
+      exit 97
+    fi
+  done
+fi
+exec "{real_git}" "$@"
+""",
                 encoding="utf-8",
             )
             git_wrapper.chmod(0o755)
