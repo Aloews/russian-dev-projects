@@ -84,9 +84,13 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertIn("ONLY one focused regression-test edit", messages[-1]["content"])
         self.assertIn("not merely assert True", messages[-1]["content"])
         self.assertIn("src/api.py", messages[-1]["content"])
-        self.assertIn("RECOVERY-CALL OVERRIDE", messages[0]["content"])
-        self.assertIn("exactly one edit", messages[0]["content"])
-        self.assertIn("Do not return production source edits", messages[0]["content"])
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn("ONLY the regression-test recovery phase", messages[0]["content"])
+        self.assertIn("only permitted output is exactly one regression-test file edit", messages[0]["content"])
+        self.assertNotIn("implementation pass should return", messages[0]["content"])
+        self.assertNotIn("original objective", messages[-1]["content"].lower())
+        self.assertIn("Do not include source-code edits", messages[-1]["content"])
 
     def test_source_and_regression_test_edits_are_accepted(self):
         review = "A" * 100
