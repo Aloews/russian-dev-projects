@@ -11,7 +11,7 @@ VERIFY_ACTION = ROOT / ".github" / "actions" / "product-factory-verify" / "actio
 
 def job_section(workflow: str, name: str) -> str:
     match = re.search(
-        rf"(?ms)^  {re.escape(name)}:\\n(.*?)(?=^  [A-Za-z0-9_-]+:\\n|\\Z)",
+        rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\\Z)",
         workflow,
     )
     if not match:
