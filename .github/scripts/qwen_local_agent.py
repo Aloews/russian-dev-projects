@@ -321,6 +321,22 @@ def build_test_recovery_messages(source_edit, task, context, test_paths):
     """Create an isolated prompt for the bounded regression-test recovery pass."""
     source_json = json.dumps(source_edit, ensure_ascii=False)
     permitted_paths = "\n".join("- " + path for path in test_paths)
+    test_config_paths = (
+        "package.json", "tsconfig.json", "jest.config.js", "jest.config.ts",
+        "vitest.config.js", "vitest.config.ts", "playwright.config.ts",
+        "pytest.ini", "pyproject.toml", "Cargo.toml", "go.mod",
+    )
+    config_chunks = []
+    for config_path in test_config_paths:
+        config_body = read_text(config_path)
+        if config_body:
+            config_chunks.append(
+                "\n--- PROJECT TEST CONFIG: " + config_path + " (read-only evidence) ---\n"
+                + scrub(config_body)
+            )
+    if not config_chunks:
+        config_chunks.append("\n--- PROJECT TEST CONFIG ---\nNo package or test-runner configuration files were found.")
+    test_config = "\n".join(config_chunks)
     system = (
         "You are performing ONLY the regression-test recovery phase of a bounded coding task. "
         "The implementation change has already been produced and validated as a source edit. "
@@ -342,7 +358,8 @@ def build_test_recovery_messages(source_edit, task, context, test_paths):
         "Return JSON matching the supplied schema. Do not include source-code edits.\n\n"
         "PERMITTED TEST PATHS (choose exactly one; no other path):\n" + permitted_paths + "\n\n"
         "OBJECTIVE:\n" + str(task)[:1200] + "\n\nIMPLEMENTATION CHANGE:\n"
-        + source_json[:3500] + "\n\nREPOSITORY EVIDENCE:\n" + str(context)[:5000]
+        + source_json[:3500] + "\n\nPROJECT TEST CONFIGURATION:\n" + test_config[:3500]
+        + "\n\nREPOSITORY EVIDENCE:\n" + str(context)[:5000]
     )
     # Independent from implementation-stage instructions.
     return [
