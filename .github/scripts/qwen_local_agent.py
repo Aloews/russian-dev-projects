@@ -432,7 +432,7 @@ def main():
         "\n\nUse a compact engineering workflow appropriate for a 3B coding model: inspect evidence, "
         "choose exactly one small concrete source/test improvement, implement it, and sanity-review the proposed diff. "
         "Do not simulate multiple independent agents or write a long role-play council. This is one inference pass, "
-        "not independent verification. The final edits array MUST include one non-test source file and one regression-test file; a separate recovery pass may generate the test if needed. Documentation-only "
+        "not independent verification. The implementation pass should return one non-test source edit; a separate recovery pass generates the regression-test edit if needed. The final combined edits array must contain both. Documentation-only "
         "changes are rejected. Prefer existing source/test files present in the supplied context and use exact unique "
         "old snippets. The two-file limit is intentional. The review field should briefly identify the selected file, risk, test needed and unknowns. "
         "Do not claim tests were run. Return only JSON matching the schema."
