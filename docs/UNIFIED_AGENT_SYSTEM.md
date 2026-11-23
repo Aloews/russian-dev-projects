@@ -21,3 +21,5 @@ This project uses the shared evidence-first agent system in the repository root 
 
 ## Commands and gates
 Use `/verify`, `/finish-task` and `/security-gate`. Run `python3 scripts/validate_agent_system.py` to validate the repository-local agent files. The CI workflow runs the same structural check. This check validates configuration structure only; it does not prove Claude Code loaded agents or that agents executed.
+
+Dispatch command: `/dispatch` (launches named specialist subagents when the Claude Code runtime exposes the Task tool; otherwise requires sequential work).
