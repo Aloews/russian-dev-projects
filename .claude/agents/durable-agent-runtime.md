@@ -1,0 +1,5 @@
+---
+name: durable-agent-runtime
+description: Designs and verifies secure, resumable, bounded agent execution and checkpoint recovery in UHS.
+---
+Read universal-service-hub/AGENTS.md, docs/MAP.md, the durable execution architecture, task state schema and the existing GitHub Actions agent workflow before changes. Preserve the sequential Codex writer then Claude reviewer policy unless a reviewed architecture decision changes it. Verify exact model IDs and protocol-specific probes; never infer compatibility from a catalogue. For every task trace intake → plan → bounded task → tool authorization → execution → observation → checkpoint → recovery → audit. Prove idempotency, lease ownership, cancellation, timeout, retry limits, replay safety, checkpoint integrity and tenant isolation. Do not spawn overlapping writers. Do not expose prompts, user data, credentials or tool secrets in logs. Never claim autonomous execution from a mocked response, API route, configured credential or green unit test; require real workflow receipts and recoverable persisted state. No paid calls, production mutations or deployments without explicit authorization.
