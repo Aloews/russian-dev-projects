@@ -190,8 +190,10 @@ def validate(
         return ["unknown verification level"]
     if level != "CODE_VERIFIED" and trusted_receipt_verified is not True:
         return [
-            f"{level} requires a trusted GitHub Actions OIDC receipt verified outside the manifest; "
-            "local files and self-attested booleans cannot promote verification status"
+            (
+                f"{level} requires a trusted GitHub Actions OIDC receipt verified outside the manifest; "
+                "local files and self-attested booleans cannot promote verification status"
+            )
         ]
     return _validate_evidence_structure(manifest, expected_sha, changed_paths, level, workspace)
 

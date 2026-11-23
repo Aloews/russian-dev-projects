@@ -552,3 +552,7 @@ The verification system must reject each of these synthetic agent outputs:
 - **Starimg probe adjustment:** if an explicit `STARIMG_FABLE_MODEL` or `STARIMG_CLAUDE_MODEL` repository variable is configured, the new probe now sends the bounded Anthropic Messages tool-call check directly to that exact model rather than requiring `/v1/models` to be accessible first. HTTP 402 from the actual Messages request remains a hard failure. The probe never logs the API key or raw provider response.
 - **Regression inventory:** 32 completion-evidence tests, 14 test-log parser tests, 16 Qwen workspace/recovery tests and 9 Starimg probe tests (71 total). Latest main/feature CI runs are required to confirm this exact set; earlier passing runs predate some of these changes.
 - **Current limitation:** no trusted receipt service has yet been deployed and independently queried by the Product Factory verifier. Therefore higher verification levels remain blocked by design; no local manifest can promote a candidate beyond `CODE_VERIFIED`.
+
+## Shared engineering agents
+
+The repository-local Claude Code specialists and their validation workflow are documented in [the unified agent system](../../docs/UNIFIED_AGENT_SYSTEM.md). These agents supplement the root and nested AGENTS.md contracts; they do not override UHS security, provider, sequential-writer or production-safety rules. Run `python3 scripts/validate_agent_system.py` for structural validation. This does not prove live agent execution.
