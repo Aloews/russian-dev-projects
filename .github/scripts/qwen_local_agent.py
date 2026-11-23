@@ -253,7 +253,24 @@ def build_test_recovery_messages(base_messages, source_edit, task, context):
         "OBJECTIVE:\n" + str(task)[:1200] + "\n\nSOURCE CHANGE:\n" + source_json[:3500] +
         "\n\nREPOSITORY EVIDENCE:\n" + str(context)[:5000]
     )
-    return [*base_messages, {"role": "user", "content": instruction}]
+    system_content = next(
+        (
+            message.get("content", "")
+            for message in base_messages
+            if isinstance(message, dict) and message.get("role") == "system"
+        ),
+        "",
+    )
+    system_content = str(system_content) + (
+        "\n\nRECOVERY-CALL OVERRIDE: this is an intermediate recovery call, not the final candidate. "
+        "For this response only, return exactly one edit and it MUST target a regression-test file. "
+        "Do not return production source edits. The caller will combine this test edit with the already "
+        "validated source edit and run strict final validation."
+    )
+    return [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": instruction},
+    ]
 
 
 def validate_test_recovery(response_json):
@@ -480,7 +497,9 @@ def main():
                 recovery_json = json.loads(recovery_answer)
                 validate_test_recovery(recovery_json)
                 response_json["edits"] = [source_edits[0], recovery_json["edits"][0]]
-                review_text += "\\n\\nRegression-test recovery: " + recovery_json["review"][:500]
+                response_json["review"] = (
+                    review_text + "\n\nRegression-test recovery: " + recovery_json["review"][:500]
+                )[:1200]
             review_text = validate_response(response_json)
             changed_paths = apply_edits(response_json.get("edits"), tracked_set)
             if not changed_paths:
@@ -521,12 +540,12 @@ def main():
     report_path = ROOT / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
-        "# Qwen2.5-Coder 3B single-pass candidate review\n\n"
+        "# Qwen2.5-Coder 3B bounded candidate review\n\n"
         + "OBJECTIVE: " + task + "\n\n"
         + review_text[:2000] + "\n",
         encoding="utf-8",
     )
-    print("Qwen single-pass candidate generation completed.")
+    print("Qwen bounded candidate generation completed.")
     changed = set(git("diff", "--name-only").stdout.splitlines())
     changed.update(git("ls-files", "--others", "--exclude-standard").stdout.splitlines())
     changed.discard("PRODUCT_FACTORY_VERIFICATION.md")
