@@ -62,31 +62,62 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertEqual(agent.validate_response(response, require_test=False), "A" * 100)
 
     def test_test_recovery_requires_exactly_one_test_file(self):
+        permitted = ["tests/test_api.py"]
         self.assertEqual(agent.validate_test_recovery({
             "review": "R" * 100,
             "edits": [{"path": "tests/test_api.py", "old": "assert old", "new": "assert new"}],
-        }), "R" * 100)
+        }, permitted), "R" * 100)
         with self.assertRaisesRegex(ValueError, "non-test path"):
             agent.validate_test_recovery({
                 "review": "R" * 100,
                 "edits": [{"path": "src/api.py", "old": "x", "new": "y"}],
-            })
+            }, permitted)
 
     def test_test_recovery_prompt_is_separate_and_behavior_focused(self):
+        paths = ["tests/api_regression.test.py"]
         messages = agent.build_test_recovery_messages(
             {"path": "src/api.py", "old": "A", "new": "B"},
             "fix API",
             "source evidence",
+            paths,
         )
         self.assertEqual(len(messages), 2)
         self.assertEqual(messages[0]["role"], "system")
         self.assertIn("ONLY the regression-test recovery phase", messages[0]["content"])
-        self.assertIn("only permitted output is exactly one regression-test file edit", messages[0]["content"])
-        self.assertNotIn("Every final candidate", messages[0]["content"])
+        self.assertIn("exactly one regression-test file edit", messages[0]["content"])
+        self.assertIn("MUST be exactly one of the permitted test paths", messages[0]["content"])
         self.assertIn("Create only one focused regression-test edit", messages[-1]["content"])
+        self.assertIn("tests/api_regression.test.py", messages[-1]["content"])
         self.assertIn("not merely assert True", messages[0]["content"])
         self.assertIn("src/api.py", messages[-1]["content"])
         self.assertIn("Do not include source-code edits", messages[-1]["content"])
+
+    def test_rust_source_gets_new_cargo_integration_test_path_when_none_exist(self):
+        tracked = [
+            "services/platform-api/Cargo.toml",
+            "services/platform-api/src/domains/elite_estate.rs",
+        ]
+        paths = agent.test_recovery_paths(
+            {"path": "services/platform-api/src/domains/elite_estate.rs"},
+            tracked,
+        )
+        self.assertEqual(paths, ["services/platform-api/tests/elite_estate_regression.rs"])
+
+    def test_test_recovery_schema_enforces_only_permitted_paths(self):
+        paths = ["tests/elite_estate_regression.rs"]
+        schema = agent.build_test_recovery_schema(paths)
+        self.assertEqual(schema["properties"]["edits"]["maxItems"], 1)
+        self.assertEqual(
+            schema["properties"]["edits"]["items"]["properties"]["path"]["enum"],
+            paths,
+        )
+
+    def test_test_recovery_rejects_path_outside_allowlist(self):
+        with self.assertRaisesRegex(ValueError, "outside the test allowlist"):
+            agent.validate_test_recovery({
+                "review": "R" * 100,
+                "edits": [{"path": "tests/test_other.py", "old": "A", "new": "B"}],
+            }, ["tests/test_api.py"])
 
     def test_source_and_regression_test_edits_are_accepted(self):
         review = "A" * 100
