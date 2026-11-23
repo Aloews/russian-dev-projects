@@ -207,7 +207,7 @@ def rejected_existing_file_context(answer):
     return "\n".join(sections)
 
 
-def validate_response(response_json):
+def validate_response(response_json, require_test=True):
     if not isinstance(response_json, dict):
         raise ValueError("Qwen response must be a JSON object")
     review_text = response_json.get("review")
@@ -233,9 +233,42 @@ def validate_response(response_json):
     ]
     if not source_edits:
         raise ValueError("Qwen response contains no non-test source edit; choose one relevant source file and make a concrete implementation change")
-    if not test_edits:
+    if require_test and not test_edits:
         raise ValueError("Qwen response lacks a regression test edit; include a test file for the behavior change")
+    if len(source_edits) > 1 or len(test_edits) > 1:
+        raise ValueError("Qwen response must contain at most one source edit and one regression-test edit")
     return review_text
+
+
+def build_test_recovery_messages(base_messages, source_edit, task, context):
+    """Ask a separate bounded inference pass for a regression test of the accepted source change."""
+    source_json = json.dumps(source_edit, ensure_ascii=False)
+    instruction = (
+        "Create ONLY one focused regression-test edit for the implementation change below. "
+        "Do not modify production code. Return JSON matching the supplied schema, with a review of 80-1000 "
+        "characters and exactly one edit whose path is a test file. The test must exercise the changed behavior, "
+        "not merely assert True or duplicate implementation details. Prefer an existing relevant test file from "
+        "the evidence; use an exact unique old snippet, or old empty only for a genuinely new file. "
+        "Do not weaken, delete, skip, or mock away the behavior under test. Do not claim tests were run.\n\n"
+        "OBJECTIVE:\n" + str(task)[:1200] + "\n\nSOURCE CHANGE:\n" + source_json[:3500] +
+        "\n\nREPOSITORY EVIDENCE:\n" + str(context)[:5000]
+    )
+    return [*base_messages, {"role": "user", "content": instruction}]
+
+
+def validate_test_recovery(response_json):
+    review = response_json.get("review") if isinstance(response_json, dict) else None
+    edits = response_json.get("edits") if isinstance(response_json, dict) else None
+    if not isinstance(review, str) or len(review.strip()) < 80 or "timed out" in review.lower():
+        raise ValueError("Qwen test recovery review is missing or invalid")
+    if not isinstance(edits, list) or len(edits) != 1:
+        raise ValueError("Qwen test recovery must return exactly one test edit")
+    edit = edits[0]
+    if not isinstance(edit, dict) or not isinstance(edit.get("path"), str) or not is_test_path(edit["path"]):
+        raise ValueError("Qwen test recovery returned a non-test path")
+    if not all(isinstance(edit.get(key), str) for key in ("old", "new")) or not edit["new"]:
+        raise ValueError("Qwen test recovery edit is malformed")
+    return review
 
 
 def build_retry_messages(base_messages, validation_error, existing_file_evidence=""):
@@ -244,7 +277,7 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
         "Your previous response failed validation: " + str(validation_error)[:300] + ". "
         "Discard that response and produce a fresh, complete JSON object matching the schema. "
         "Fix the specific validation error above; do not assume a source/test error when a different field failed. "
-        "The review must be 80-1000 characters. Still include one non-test source edit and one regression-test edit "
+        "The review must be 80-1000 characters. Include one non-test source edit; if the test is missing, the separate recovery pass will add it. "
         "in two files from the provided context; do not choose documentation. "
         "For an existing file, old must be an exact unique snippet from the evidence. For a new file, old must be empty. "
         "Never include markdown fences or unescaped newlines inside JSON strings. Do not claim tests were run.\n"
@@ -382,7 +415,7 @@ def main():
         "Never return a unified diff, markdown fence or explanation. "
         "Never invent live data, credentials, legal approvals, customers, property inventory or tests. "
         "Do not edit workflows, action definitions, dependency manifests, lockfiles, credentials, deployment files, "
-        "production secrets, infrastructure definitions or database migrations. Every candidate MUST include one non-test source edit and one regression-test edit; the edit limit is two files. "
+        "production secrets, infrastructure definitions or database migrations. Every final candidate MUST include one non-test source edit and one regression-test edit; if the implementation pass omits the test, a separate bounded test-recovery pass will generate it. The final edit limit is two files. "
         "Do not weaken or delete tests. Keep changes minimal. No extra keys or explanations."
     )
     reality_path = os.environ.get("REALITY_FIRST_SKILL_PATH", "")
@@ -399,7 +432,7 @@ def main():
         "\n\nUse a compact engineering workflow appropriate for a 3B coding model: inspect evidence, "
         "choose exactly one small concrete source/test improvement, implement it, and sanity-review the proposed diff. "
         "Do not simulate multiple independent agents or write a long role-play council. This is one inference pass, "
-        "not independent verification. The edits array MUST include one non-test source file and one regression-test file; documentation-only "
+        "not independent verification. The final edits array MUST include one non-test source file and one regression-test file; a separate recovery pass may generate the test if needed. Documentation-only "
         "changes are rejected. Prefer existing source/test files present in the supplied context and use exact unique "
         "old snippets. The two-file limit is intentional. The review field should briefly identify the selected file, risk, test needed and unknowns. "
         "Do not claim tests were run. Return only JSON matching the schema."
@@ -423,6 +456,31 @@ def main():
                 timeout_seconds=600,
             )
             response_json = json.loads(answer)
+            review_text = validate_response(response_json, require_test=False)
+            source_edits = [
+                edit for edit in response_json["edits"]
+                if isinstance(edit, dict) and isinstance(edit.get("path"), str)
+                and not is_test_path(edit["path"])
+            ]
+            test_edits = [
+                edit for edit in response_json["edits"]
+                if isinstance(edit, dict) and isinstance(edit.get("path"), str)
+                and is_test_path(edit["path"])
+            ]
+            if not test_edits:
+                recovery_messages = build_test_recovery_messages(
+                    base_messages, source_edits[0], task, context
+                )
+                recovery_answer = ask_ollama(
+                    recovery_messages,
+                    format_schema=EDIT_SCHEMA,
+                    max_predict=2048,
+                    timeout_seconds=600,
+                )
+                recovery_json = json.loads(recovery_answer)
+                validate_test_recovery(recovery_json)
+                response_json["edits"] = [source_edits[0], recovery_json["edits"][0]]
+                review_text += "\\n\\nRegression-test recovery: " + recovery_json["review"][:500]
             review_text = validate_response(response_json)
             changed_paths = apply_edits(response_json.get("edits"), tracked_set)
             if not changed_paths:
