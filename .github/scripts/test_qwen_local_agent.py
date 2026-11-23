@@ -84,6 +84,9 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertIn("ONLY one focused regression-test edit", messages[-1]["content"])
         self.assertIn("not merely assert True", messages[-1]["content"])
         self.assertIn("src/api.py", messages[-1]["content"])
+        self.assertIn("RECOVERY-CALL OVERRIDE", messages[0]["content"])
+        self.assertIn("exactly one edit", messages[0]["content"])
+        self.assertIn("Do not return production source edits", messages[0]["content"])
 
     def test_source_and_regression_test_edits_are_accepted(self):
         review = "A" * 100
@@ -379,6 +382,69 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
                 self.assertEqual(ask.call_count, agent.MAX_GENERATION_ATTEMPTS)
                 self.assertFalse((Path(directory) / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md").exists())
                 return result
+            finally:
+                agent.ROOT = previous_root
+
+    def test_main_runs_separate_test_recovery_and_preserves_both_reviews(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            source_path = root / "src" / "main.py"
+            test_path = root / "tests" / "test_main.py"
+            source_path.parent.mkdir(parents=True)
+            test_path.parent.mkdir(parents=True)
+            source_path.write_text("VALUE = 1\n", encoding="utf-8")
+            test_path.write_text("assert VALUE == 1\n", encoding="utf-8")
+
+            implementation_review = "Implementation review: a minimal behavior change is required and the exact source replacement is bounded. " + "I"
+            recovery_review = "Regression test review: this assertion exercises the new behavior and fails against the previous implementation. " + "R"
+            implementation = json.dumps({
+                "review": implementation_review,
+                "edits": [{
+                    "path": "src/main.py",
+                    "old": "VALUE = 1",
+                    "new": "VALUE = 2",
+                }],
+            })
+            recovery = json.dumps({
+                "review": recovery_review,
+                "edits": [{
+                    "path": "tests/test_main.py",
+                    "old": "assert VALUE == 1",
+                    "new": "assert VALUE == 2",
+                }],
+            })
+            git_result = SimpleNamespace(
+                stdout="src/main.py\ntests/test_main.py\n",
+                stderr="",
+                returncode=0,
+            )
+
+            previous_root = agent.ROOT
+            agent.ROOT = root
+            try:
+                with (
+                    patch.object(agent, "git", return_value=git_result),
+                    patch.object(agent, "make_context", return_value="bounded source and test context"),
+                    patch.object(agent, "ask_ollama", side_effect=[implementation, recovery]) as ask,
+                    patch.dict(os.environ, {
+                        "OBJECTIVE": "test two-pass Qwen recovery",
+                        "CAVEMAN_SKILL_PATH": "",
+                        "REALITY_FIRST_SKILL_PATH": "",
+                    }),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    result = agent.main()
+
+                self.assertEqual(result, 0)
+                self.assertEqual(ask.call_count, 2)
+                self.assertIn("max_predict", ask.call_args_list[1].kwargs)
+                self.assertEqual(source_path.read_text(encoding="utf-8"), "VALUE = 2\n")
+                self.assertEqual(test_path.read_text(encoding="utf-8"), "assert VALUE == 2\n")
+                review_report = (root / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md").read_text(encoding="utf-8")
+                self.assertIn("Regression-test recovery:", review_report)
+                self.assertIn(recovery_review, review_report)
+                self.assertIn("bounded candidate review", review_report)
             finally:
                 agent.ROOT = previous_root
 
