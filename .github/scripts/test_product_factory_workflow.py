@@ -41,6 +41,16 @@ class ProductFactoryVerificationWiringTests(unittest.TestCase):
         self.assertIn("ref: ${{ inputs.base_branch }}", action)
         self.assertIn("path: target", action)
 
+    def test_verifier_rejects_missing_inputs_and_wrong_repository_checkout(self):
+        action = VERIFY_ACTION.read_text(encoding="utf-8")
+        self.assertIn("Validate target repository inputs", action)
+        self.assertIn("Invalid or missing target_repo input", action)
+        self.assertIn("Invalid or missing base_branch input", action)
+        self.assertIn("Verify target checkout identity and base ref", action)
+        self.assertIn("unexpected repository", action)
+        self.assertIn("CHECKED_OUT_SHA", action)
+        self.assertIn("REMOTE_BASE_SHA", action)
+
 
 if __name__ == "__main__":
     unittest.main()
