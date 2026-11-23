@@ -281,6 +281,17 @@ class QwenEditSafetyTests(unittest.TestCase):
         retry = agent.build_retry_messages(base, "old text mismatch", evidence)
         self.assertIn("VALUE = 1", retry[-1]["content"])
 
+    def test_retry_prompt_requests_one_source_edit_only(self):
+        retry = agent.build_retry_messages(
+            [{"role": "user", "content": "objective"}],
+            "too many source edits",
+        )
+        prompt = retry[-1]["content"]
+        self.assertIn("exactly one", prompt)
+        self.assertIn("non-test source-file edit", prompt)
+        self.assertIn("no test edit", prompt)
+        self.assertIn("no documentation edit", prompt)
+
     def test_retry_prompt_caps_error_and_existing_file_context(self):
         retry = agent.build_retry_messages(
             [{"role": "user", "content": "objective"}],
@@ -311,6 +322,7 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertEqual(agent.MAX_CAVEMAN_SKILL_CHARS, 2000)
         self.assertEqual(agent.MAX_REALITY_FIRST_SKILL_CHARS, 4000)
         self.assertEqual(agent.EDIT_SCHEMA["properties"]["edits"]["maxItems"], 2)
+        self.assertEqual(agent.SINGLE_EDIT_SCHEMA["properties"]["edits"]["maxItems"], 1)
         self.assertEqual(agent.generation_budget(0), 1536)
         self.assertEqual(agent.generation_budget(1), 4096)
         self.assertEqual(agent.generation_budget(2), 4096)
@@ -384,6 +396,74 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
                 self.assertEqual(ask.call_count, agent.MAX_GENERATION_ATTEMPTS)
                 self.assertFalse((Path(directory) / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md").exists())
                 return result
+            finally:
+                agent.ROOT = previous_root
+
+    def test_main_retries_overbroad_source_output_with_single_edit_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            source_path = root / "src" / "main.py"
+            extra_path = root / "src" / "extra.py"
+            test_path = root / "tests" / "test_main.py"
+            for path in (source_path, extra_path, test_path):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_text("VALUE = 1\n", encoding="utf-8")
+            extra_path.write_text("EXTRA = 1\n", encoding="utf-8")
+            test_path.write_text("assert VALUE == 1\n", encoding="utf-8")
+
+            review = "Implementation review: one narrowly scoped source replacement is bounded and has a focused regression test. "
+            recovery_review = "Regression test review: this assertion verifies the behavior change and fails before the implementation. "
+            overbroad = json.dumps({
+                "review": review,
+                "edits": [
+                    {"path": "src/main.py", "old": "VALUE = 1", "new": "VALUE = 2"},
+                    {"path": "src/extra.py", "old": "EXTRA = 1", "new": "EXTRA = 2"},
+                ],
+            })
+            implementation = json.dumps({
+                "review": review,
+                "edits": [{"path": "src/main.py", "old": "VALUE = 1", "new": "VALUE = 2"}],
+            })
+            recovery = json.dumps({
+                "review": recovery_review,
+                "edits": [{"path": "tests/test_main.py", "old": "assert VALUE == 1", "new": "assert VALUE == 2"}],
+            })
+
+            def fake_git(*args, **kwargs):
+                if args == ("ls-files",):
+                    return SimpleNamespace(stdout="src/main.py\nsrc/extra.py\ntests/test_main.py\n", stderr="", returncode=0)
+                if args == ("diff", "--name-only"):
+                    return SimpleNamespace(stdout="src/main.py\ntests/test_main.py\n", stderr="", returncode=0)
+                if args == ("ls-files", "--others", "--exclude-standard"):
+                    return SimpleNamespace(stdout="", stderr="", returncode=0)
+                if args == ("diff", "--check"):
+                    return SimpleNamespace(stdout="", stderr="", returncode=0)
+                raise AssertionError("Unexpected git command: " + repr(args))
+
+            previous_root = agent.ROOT
+            agent.ROOT = root
+            try:
+                with (
+                    patch.object(agent, "git", side_effect=fake_git),
+                    patch.object(agent, "make_context", return_value="bounded source and test context"),
+                    patch.object(agent, "ask_ollama", side_effect=[overbroad, implementation, recovery]) as ask,
+                    patch.dict(os.environ, {
+                        "OBJECTIVE": "retry one source edit after overbroad output",
+                        "CAVEMAN_SKILL_PATH": "",
+                        "REALITY_FIRST_SKILL_PATH": "",
+                    }),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    result = agent.main()
+
+                self.assertEqual(result, 0)
+                self.assertEqual(ask.call_count, 3)
+                for call in ask.call_args_list:
+                    self.assertEqual(call.kwargs["format_schema"]["properties"]["edits"]["maxItems"], 1)
+                self.assertEqual(source_path.read_text(encoding="utf-8"), "VALUE = 2\n")
+                self.assertEqual(extra_path.read_text(encoding="utf-8"), "EXTRA = 1\n")
+                self.assertEqual(test_path.read_text(encoding="utf-8"), "assert VALUE == 2\n")
             finally:
                 agent.ROOT = previous_root
 
