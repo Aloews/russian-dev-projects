@@ -76,20 +76,18 @@ class QwenEditSafetyTests(unittest.TestCase):
 
     def test_test_recovery_prompt_is_separate_and_behavior_focused(self):
         messages = agent.build_test_recovery_messages(
-            [{"role": "system", "content": "system"}],
             {"path": "src/api.py", "old": "A", "new": "B"},
             "fix API",
             "source evidence",
         )
-        self.assertIn("ONLY one focused regression-test edit", messages[-1]["content"])
-        self.assertIn("not merely assert True", messages[-1]["content"])
-        self.assertIn("src/api.py", messages[-1]["content"])
         self.assertEqual(len(messages), 2)
         self.assertEqual(messages[0]["role"], "system")
         self.assertIn("ONLY the regression-test recovery phase", messages[0]["content"])
         self.assertIn("only permitted output is exactly one regression-test file edit", messages[0]["content"])
-        self.assertNotIn("implementation pass should return", messages[0]["content"])
-        self.assertNotIn("original objective", messages[-1]["content"].lower())
+        self.assertNotIn("Every final candidate", messages[0]["content"])
+        self.assertIn("Create only one focused regression-test edit", messages[-1]["content"])
+        self.assertIn("not merely assert True", messages[0]["content"])
+        self.assertIn("src/api.py", messages[-1]["content"])
         self.assertIn("Do not include source-code edits", messages[-1]["content"])
 
     def test_source_and_regression_test_edits_are_accepted(self):
