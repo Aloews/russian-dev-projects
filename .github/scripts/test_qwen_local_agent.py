@@ -159,6 +159,27 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertIn("src/api.py", messages[-1]["content"])
         self.assertIn("Do not include source-code edits", messages[-1]["content"])
 
+    def test_test_recovery_prompt_includes_actual_package_test_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "package.json").write_text(json.dumps({
+                    "scripts": {"lint": "eslint .", "build": "next build"},
+                    "dependencies": {"next": "15.5.29", "react": "19.1.10"},
+                }), encoding="utf-8")
+                messages = agent.build_test_recovery_messages(
+                    {"path": "app/form.tsx", "old": "A", "new": "B"},
+                    "fix form submission",
+                    "repository evidence",
+                    ["tests/form.test.tsx"],
+                )
+                self.assertIn("PROJECT TEST CONFIGURATION", messages[-1]["content"])
+                self.assertIn('"lint": "eslint ."', messages[-1]["content"])
+                self.assertIn('"build": "next build"', messages[-1]["content"])
+            finally:
+                agent.ROOT = previous_root
+
     def test_rust_source_gets_new_cargo_integration_test_path_when_none_exist(self):
         tracked = [
             "services/platform-api/Cargo.toml",
