@@ -317,7 +317,7 @@ def validate_response(response_json, require_test=True):
 def build_test_recovery_messages(source_edit, task, context, test_paths):
     """Create an isolated prompt for the bounded regression-test recovery pass."""
     source_json = json.dumps(source_edit, ensure_ascii=False)
-    permitted_paths = "\\n".join("- " + path for path in test_paths)
+    permitted_paths = "\n".join("- " + path for path in test_paths)
     system = (
         "You are performing ONLY the regression-test recovery phase of a bounded coding task. "
         "The implementation change has already been produced and validated as a source edit. "
@@ -333,10 +333,10 @@ def build_test_recovery_messages(source_edit, task, context, test_paths):
     )
     instruction = (
         "Create only one focused regression-test edit for the implementation change below. "
-        "Return JSON matching the supplied schema. Do not include source-code edits.\\n\\n"
-        "PERMITTED TEST PATHS (choose exactly one; no other path):\\n" + permitted_paths + "\\n\\n"
-        "OBJECTIVE:\\n" + str(task)[:1200] + "\\n\\nIMPLEMENTATION CHANGE:\\n"
-        + source_json[:3500] + "\\n\\nREPOSITORY EVIDENCE:\\n" + str(context)[:5000]
+        "Return JSON matching the supplied schema. Do not include source-code edits.\n\n"
+        "PERMITTED TEST PATHS (choose exactly one; no other path):\n" + permitted_paths + "\n\n"
+        "OBJECTIVE:\n" + str(task)[:1200] + "\n\nIMPLEMENTATION CHANGE:\n"
+        + source_json[:3500] + "\n\nREPOSITORY EVIDENCE:\n" + str(context)[:5000]
     )
     # Independent from implementation-stage instructions.
     return [
@@ -347,15 +347,15 @@ def build_test_recovery_messages(source_edit, task, context, test_paths):
 
 def build_test_recovery_retry_messages(base_messages, validation_error, test_paths):
     """Retry only the failed test-recovery inference with its path allowlist intact."""
-    permitted_paths = "\\n".join("- " + path for path in test_paths)
+    permitted_paths = "\n".join("- " + path for path in test_paths)
     return [
         *base_messages,
         {
             "role": "user",
             "content": (
                 "Your previous test-recovery response was rejected: " + str(validation_error)[:300] + ". "
-                "Discard it. Return exactly one regression-test edit and choose its path ONLY from this allowlist:\\n"
-                + permitted_paths + "\\n"
+                "Discard it. Return exactly one regression-test edit and choose its path ONLY from this allowlist:\n"
+                + permitted_paths + "\n"
                 "For a new file, old must be empty and new must be the full test file. "
                 "Do not return any production source path. Do not claim tests were run."
             ),
