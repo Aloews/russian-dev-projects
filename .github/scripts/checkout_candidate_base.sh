@@ -15,15 +15,15 @@ ORIGIN_URL="$(git -C "$REPOSITORY_PATH" remote get-url origin)"
 # exact object when available: GitHub may reject a redundant fetch-by-SHA even
 # when the commit is the current branch tip.
 if ! git -C "$REPOSITORY_PATH" cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
-  if [[ "$ORIGIN_URL" =~ ^https://github\\.com/[^/]+/[^/]+(\\.git)?$ ]]; then
+  if [[ "$ORIGIN_URL" =~ ^https://github\.com/[^/]+/[^/]+(\.git)?$ ]]; then
     TOKEN="${PRODUCT_FACTORY_GITHUB_TOKEN:-}"
     if [[ -z "$TOKEN" ]]; then
       echo "A GitHub token is required to fetch the candidate base commit." >&2
       exit 2
     fi
     AUTH="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
-    git -C "$REPOSITORY_PATH" \\
-      -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" \\
+    git -C "$REPOSITORY_PATH" \
+      -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" \
       fetch --no-tags --depth=1 origin "$BASE_SHA"
   elif [[ "$ORIGIN_URL" =~ ^file:// ]]; then
     git -C "$REPOSITORY_PATH" fetch --no-tags --depth=1 origin "$BASE_SHA"
