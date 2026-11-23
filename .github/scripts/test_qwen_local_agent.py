@@ -273,13 +273,13 @@ class QwenEditSafetyTests(unittest.TestCase):
     def test_qwen_generation_budget_is_bounded_for_small_model(self):
         self.assertEqual(agent.MAX_FILES, 2)
         self.assertEqual(agent.MAX_CONTEXT_CHARS, 6000)
-        self.assertEqual(agent.MAX_OUTPUT_TOKENS, 2048)
+        self.assertEqual(agent.MAX_OUTPUT_TOKENS, 4096)
         self.assertEqual(agent.MAX_CAVEMAN_SKILL_CHARS, 2000)
         self.assertEqual(agent.MAX_REALITY_FIRST_SKILL_CHARS, 4000)
         self.assertEqual(agent.EDIT_SCHEMA["properties"]["edits"]["maxItems"], 2)
         self.assertEqual(agent.generation_budget(0), 1536)
-        self.assertEqual(agent.generation_budget(1), 2048)
-        self.assertEqual(agent.generation_budget(2), 2048)
+        self.assertEqual(agent.generation_budget(1), 4096)
+        self.assertEqual(agent.generation_budget(2), 4096)
 
     def test_test_context_is_reserved_when_many_source_files_rank_higher(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -378,7 +378,7 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
 
     def test_retry_generation_budget_increases_instead_of_shrinking(self):
         self.assertEqual(agent.generation_budget(0), 1536)
-        self.assertEqual(agent.generation_budget(1), 2048)
+        self.assertEqual(agent.generation_budget(1), 4096)
         self.assertGreater(agent.generation_budget(1), agent.generation_budget(0))
 
     def test_review_schema_minimum_matches_validator(self):
