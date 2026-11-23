@@ -16,7 +16,7 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 MAX_FILES = 2
 MAX_CONTEXT_CHARS = 6000
 MAX_FILE_CHARS = 1800
-MAX_OUTPUT_TOKENS = 4096
+MAX_OUTPUT_TOKENS = 3072
 MAX_GENERATION_ATTEMPTS = 2
 MAX_CAVEMAN_SKILL_CHARS = 2000
 MAX_REALITY_FIRST_SKILL_CHARS = 4000
@@ -160,7 +160,7 @@ def make_context(task, tracked):
 EDIT_SCHEMA = {
     "type": "object",
     "properties": {
-        "review": {"type": "string", "minLength": 80, "maxLength": 1200},
+        "review": {"type": "string", "minLength": 80, "maxLength": 500},
         "edits": {
             "type": "array",
             "minItems": 1,
@@ -169,8 +169,8 @@ EDIT_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "old": {"type": "string", "maxLength": 1200},
-                    "new": {"type": "string", "minLength": 1, "maxLength": 3000},
+                    "old": {"type": "string", "maxLength": 600},
+                    "new": {"type": "string", "minLength": 1, "maxLength": 1800},
                 },
                 "required": ["path", "old", "new"],
                 "additionalProperties": False,
@@ -458,7 +458,7 @@ def validate_javascript_test_edit(path, source):
 def validate_test_recovery(response_json, permitted_paths):
     review = response_json.get("review") if isinstance(response_json, dict) else None
     edits = response_json.get("edits") if isinstance(response_json, dict) else None
-    if not isinstance(review, str) or len(review.strip()) < 80 or "timed out" in review.lower():
+    if not isinstance(review, str) or not 80 <= len(review.strip()) <= 500 or "timed out" in review.lower():
         raise ValueError("Qwen test recovery review is missing or invalid")
     if not isinstance(edits, list) or len(edits) != 1:
         raise ValueError("Qwen test recovery must return exactly one test edit")
@@ -480,7 +480,7 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
         "Discard that response and produce a fresh, complete JSON object matching the schema. "
         "Fix the specific validation error above. This implementation pass must contain exactly one "
         "non-test source-file edit and no test edit, documentation edit, or second file. "
-        "The review must be 80-1000 characters. Choose one highest-priority bounded source change. Do not choose documentation. "
+        "Keep the review between 80 and 400 characters. Keep the exact old snippet under 600 characters and the replacement under 1800 characters. Choose one highest-priority bounded source change; do not return a full-file rewrite when a small replacement is sufficient. Do not choose documentation. "
         "For an existing file, old must be an exact unique snippet from the evidence. "
         "For a new file, old must be empty. Never include markdown fences or unescaped newlines "
         "inside JSON strings. Do not claim tests were run.\n"
