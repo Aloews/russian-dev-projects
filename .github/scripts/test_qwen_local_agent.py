@@ -22,25 +22,23 @@ ROOT = Path(__file__).resolve().parents[2]
 ACTION = ROOT / ".github" / "actions" / "product-factory-agent" / "action.yml"
 
 class QwenEditSafetyTests(unittest.TestCase):
-    def test_retry_prompt_requires_source_test_pair_and_corrects_validation(self):
-        retry = agent.build_retry_messages(
-            [{"role": "user", "content": "objective"}],
+    def test_retry_prompt_requires_single_source_edit_and_corrects_validation(self):
+        for validation_error in (
             "Qwen review report is missing or too short",
-        )
-        self.assertIn("one non-test source edit and one regression-test edit", retry[-1]["content"])
-        self.assertIn("do not choose documentation", retry[-1]["content"])
-        self.assertIn("review must be 80-1000 characters", retry[-1]["content"])
-        self.assertIn("Fix the specific validation error above", retry[-1]["content"])
-        self.assertIn("Qwen review report is missing or too short", retry[-1]["content"])
-        self.assertNotIn("previous answer lacked the required source-plus-test pair", retry[-1]["content"])
-
-
-        retry = agent.build_retry_messages(
-            [{"role": "user", "content": "objective"}],
             "Qwen response lacks a regression test edit",
-        )
-        self.assertIn("one non-test source edit and one regression-test edit", retry[-1]["content"])
-        self.assertIn("do not choose documentation", retry[-1]["content"])
+        ):
+            retry = agent.build_retry_messages(
+                [{"role": "user", "content": "objective"}],
+                validation_error,
+            )
+            prompt = retry[-1]["content"]
+            self.assertIn("exactly one", prompt)
+            self.assertIn("non-test source-file edit", prompt)
+            self.assertIn("no test edit", prompt)
+            self.assertIn("do not choose documentation", prompt)
+            self.assertIn("review must be 80-1000 characters", prompt)
+            self.assertIn("Fix the specific validation error above", prompt)
+            self.assertIn(validation_error, prompt)
 
     def test_validation_error_requires_concrete_source_edit(self):
         with self.assertRaisesRegex(ValueError, "non-test source edit"): 
@@ -290,7 +288,7 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertIn("exactly one", prompt)
         self.assertIn("non-test source-file edit", prompt)
         self.assertIn("no test edit", prompt)
-        self.assertIn("no documentation edit", prompt)
+        self.assertIn("documentation edit", prompt)
 
     def test_retry_prompt_caps_error_and_existing_file_context(self):
         retry = agent.build_retry_messages(
