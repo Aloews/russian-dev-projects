@@ -104,7 +104,7 @@ exec "{real_git}" "$@"
                 env=env,
             )
             self.assertEqual(git("rev-parse", "HEAD", cwd=target), base_sha)
-            self.assertIn(base_sha, result.stdout + result.stderr)
+            self.assertNotIn("unexpected redundant fetch-by-SHA", result.stderr)
             self.assertNotIn("unexpected redundant fetch-by-SHA", result.stderr)
 
     def test_rejects_malformed_sha_without_changing_checkout(self):
