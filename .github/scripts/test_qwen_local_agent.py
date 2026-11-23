@@ -669,8 +669,8 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
             test_path = root / "tests" / "test_main.py"
             source_path.parent.mkdir(parents=True)
             test_path.parent.mkdir(parents=True)
-            source_path.write_text("VALUE = 1\\n", encoding="utf-8")
-            test_path.write_text("def test_regression():\\n    assert True\\n", encoding="utf-8")
+            source_path.write_text("VALUE = 1\n", encoding="utf-8")
+            test_path.write_text("def test_regression():\n    assert True\n", encoding="utf-8")
 
             bad_source = json.dumps({
                 "review": "Implementation review: the proposed source anchor is intentionally stale and must be rejected before test recovery runs.",
@@ -687,9 +687,9 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
 
             def fake_git(*args, **kwargs):
                 if args == ("ls-files",):
-                    return SimpleNamespace(stdout="src/main.py\\ntests/test_main.py\\n", stderr="", returncode=0)
+                    return SimpleNamespace(stdout="src/main.py\ntests/test_main.py\n", stderr="", returncode=0)
                 if args == ("diff", "--name-only"):
-                    return SimpleNamespace(stdout="src/main.py\\ntests/test_main.py\\n", stderr="", returncode=0)
+                    return SimpleNamespace(stdout="src/main.py\ntests/test_main.py\n", stderr="", returncode=0)
                 if args == ("ls-files", "--others", "--exclude-standard"):
                     return SimpleNamespace(stdout="", stderr="", returncode=0)
                 if args == ("diff", "--check"):
@@ -717,10 +717,10 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
                 retry_prompt = ask.call_args_list[1].args[0][-1]["content"]
                 self.assertIn("EXISTING FILE (NOT A NEW FILE): src/main.py", retry_prompt)
                 self.assertIn("VALUE = 1", retry_prompt)
-                self.assertEqual(source_path.read_text(encoding="utf-8"), "VALUE = 2\\n")
+                self.assertEqual(source_path.read_text(encoding="utf-8"), "VALUE = 2\n")
                 self.assertEqual(
                     test_path.read_text(encoding="utf-8"),
-                    "def test_regression():\\n    assert VALUE == 2\\n",
+                    "def test_regression():\n    assert VALUE == 2\n",
                 )
             finally:
                 agent.ROOT = previous_root
