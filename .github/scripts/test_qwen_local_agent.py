@@ -35,7 +35,7 @@ class QwenEditSafetyTests(unittest.TestCase):
             self.assertIn("exactly one", prompt)
             self.assertIn("non-test source-file edit", prompt)
             self.assertIn("no test edit", prompt)
-            self.assertIn("do not choose documentation", prompt)
+            self.assertIn("do not choose documentation", prompt.lower())
             self.assertIn("review must be 80-1000 characters", prompt)
             self.assertIn("Fix the specific validation error above", prompt)
             self.assertIn(validation_error, prompt)
