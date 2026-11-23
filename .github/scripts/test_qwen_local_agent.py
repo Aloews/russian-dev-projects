@@ -660,6 +660,71 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+
+    def test_edit_preflight_rejects_stale_anchor_before_test_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            source_path = root / "src" / "main.py"
+            test_path = root / "tests" / "test_main.py"
+            source_path.parent.mkdir(parents=True)
+            test_path.parent.mkdir(parents=True)
+            source_path.write_text("VALUE = 1\\n", encoding="utf-8")
+            test_path.write_text("def test_regression():\\n    assert True\\n", encoding="utf-8")
+
+            bad_source = json.dumps({
+                "review": "Implementation review: the proposed source anchor is intentionally stale and must be rejected before test recovery runs.",
+                "edits": [{"path": "src/main.py", "old": "VALUE = 2", "new": "VALUE = 3"}],
+            })
+            good_source = json.dumps({
+                "review": "Implementation review: update the exact existing value using a unique source anchor and preserve the surrounding module.",
+                "edits": [{"path": "src/main.py", "old": "VALUE = 1", "new": "VALUE = 2"}],
+            })
+            recovery = json.dumps({
+                "review": "Regression test review: this focused test asserts the changed behavior and fails against the previous value.",
+                "edits": [{"path": "tests/test_main.py", "old": "assert True", "new": "assert VALUE == 2"}],
+            })
+
+            def fake_git(*args, **kwargs):
+                if args == ("ls-files",):
+                    return SimpleNamespace(stdout="src/main.py\\ntests/test_main.py\\n", stderr="", returncode=0)
+                if args == ("diff", "--name-only"):
+                    return SimpleNamespace(stdout="src/main.py\\ntests/test_main.py\\n", stderr="", returncode=0)
+                if args == ("ls-files", "--others", "--exclude-standard"):
+                    return SimpleNamespace(stdout="", stderr="", returncode=0)
+                if args == ("diff", "--check"):
+                    return SimpleNamespace(stdout="", stderr="", returncode=0)
+                raise AssertionError("Unexpected git command: " + repr(args))
+
+            previous_root = agent.ROOT
+            agent.ROOT = root
+            try:
+                with (
+                    patch.object(agent, "git", side_effect=fake_git),
+                    patch.object(agent, "make_context", return_value="bounded source and test context"),
+                    patch.object(agent, "ask_ollama", side_effect=[bad_source, good_source, recovery]) as ask,
+                    patch.dict(os.environ, {
+                        "OBJECTIVE": "preflight exact source anchors before test recovery",
+                        "CAVEMAN_SKILL_PATH": "",
+                        "REALITY_FIRST_SKILL_PATH": "",
+                    }),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    result = agent.main()
+
+                self.assertEqual(result, 0)
+                self.assertEqual(ask.call_count, 3)
+                retry_prompt = ask.call_args_list[1].args[0][-1]["content"]
+                self.assertIn("EXISTING FILE (NOT A NEW FILE): src/main.py", retry_prompt)
+                self.assertIn("VALUE = 1", retry_prompt)
+                self.assertEqual(source_path.read_text(encoding="utf-8"), "VALUE = 2\\n")
+                self.assertEqual(
+                    test_path.read_text(encoding="utf-8"),
+                    "def test_regression():\\n    assert VALUE == 2\\n",
+                )
+            finally:
+                agent.ROOT = previous_root
+
     def test_main_returns_after_final_invalid_json_without_unbound_review(self):
         self.assertEqual(self._run_main_with_responses(["not-json", "not-json"]), 4)
 

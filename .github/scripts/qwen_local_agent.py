@@ -491,6 +491,45 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
         {"role": "user", "content": instruction + existing_file_evidence[:evidence_budget]},
     ]
 
+def validate_edit_preconditions(edit, tracked):
+    """Validate an edit's exact source anchor before spending a separate test-recovery inference."""
+    if not isinstance(edit, dict):
+        raise ValueError("edit item is not an object")
+    path, old, new = edit.get("path"), edit.get("old"), edit.get("new")
+    if not isinstance(path, str) or not isinstance(old, str) or not isinstance(new, str) or not new:
+        raise ValueError("edit is missing path, old or new text")
+    if not allowed(path, tracked):
+        raise ValueError("edit path is outside the source allowlist")
+    target = ROOT / path
+    resolved_target = target.resolve()
+    if not resolved_target.is_relative_to(ROOT.resolve()):
+        raise ValueError("edit path resolves outside the target repository")
+    if target.is_symlink():
+        raise ValueError("symbolic-link edits are not permitted")
+    if not target.exists():
+        if old:
+            raise ValueError("update edit targets a missing file")
+        if path in tracked:
+            raise ValueError("new-file edit targets a tracked file that is missing")
+        return
+    if not target.is_file() or target.stat().st_size > 100000:
+        raise ValueError("existing file is not a bounded regular text file")
+    current = target.read_text(encoding="utf-8")
+    if old:
+        if current.count(old) != 1:
+            raise ValueError("old text must match exactly once in " + path)
+        return
+    # An empty old string can replace an existing file only when the model returned
+    # a plausible whole-file replacement. Short fragments are never accepted.
+    minimum_replacement = max(1, int(len(current) * 0.75))
+    similarity = SequenceMatcher(None, current, new, autojunk=False).ratio()
+    if len(new) < minimum_replacement or (current not in new and similarity < 0.92):
+        raise ValueError(
+            "new-file edit targets an existing file: " + path +
+            "; provide an exact old snippet or a complete replacement that is substantially similar"
+        )
+
+
 def apply_edits(edits, tracked):
     if not isinstance(edits, list) or not edits or len(edits) > MAX_FILES:
         raise ValueError("model returned no edits or exceeded the edit limit")
@@ -673,6 +712,12 @@ def main():
                 if isinstance(edit, dict) and isinstance(edit.get("path"), str)
                 and is_test_path(edit["path"])
             ]
+            if len(source_edits) != 1:
+                raise ValueError("Qwen implementation pass must contain exactly one source edit")
+            # Reject stale or hallucinated anchors before the expensive, independent
+            # regression-test inference. A failure triggers a source-only retry with
+            # the exact current file content attached as evidence.
+            validate_edit_preconditions(source_edits[0], tracked_set)
             if not test_edits:
                 permitted_test_paths = test_recovery_paths(source_edits[0], tracked)
                 test_schema = build_test_recovery_schema(permitted_test_paths)
