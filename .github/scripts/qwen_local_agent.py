@@ -303,10 +303,10 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
         "Discard that response and produce a fresh, complete JSON object matching the schema. "
         "Fix the specific validation error above. This implementation pass must contain exactly one "
         "non-test source-file edit and no test edit, documentation edit, or second file. "
-        "The review must be 80-1000 characters. Choose one highest-priority bounded source change. "
+        "The review must be 80-1000 characters. Choose one highest-priority bounded source change. Do not choose documentation. "
         "For an existing file, old must be an exact unique snippet from the evidence. "
         "For a new file, old must be empty. Never include markdown fences or unescaped newlines "
-        "inside JSON strings. Do not claim tests were run.\\n"
+        "inside JSON strings. Do not claim tests were run.\n"
     )
     evidence_budget = max(0, 5800 - len(instruction))
     return [
