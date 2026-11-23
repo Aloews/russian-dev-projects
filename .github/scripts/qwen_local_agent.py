@@ -240,7 +240,7 @@ def validate_response(response_json, require_test=True):
     return review_text
 
 
-def build_test_recovery_messages(base_messages, source_edit, task, context):
+def build_test_recovery_messages(source_edit, task, context):
     """Create an isolated prompt for the bounded regression-test recovery pass."""
     source_json = json.dumps(source_edit, ensure_ascii=False)
     system = (
@@ -482,7 +482,7 @@ def main():
             ]
             if not test_edits:
                 recovery_messages = build_test_recovery_messages(
-                    base_messages, source_edits[0], task, context
+                    source_edits[0], task, context
                 )
                 recovery_answer = ask_ollama(
                     recovery_messages,
