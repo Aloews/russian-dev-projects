@@ -277,7 +277,7 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
         "Your previous response failed validation: " + str(validation_error)[:300] + ". "
         "Discard that response and produce a fresh, complete JSON object matching the schema. "
         "Fix the specific validation error above; do not assume a source/test error when a different field failed. "
-        "The review must be 80-1000 characters. Include one non-test source edit; if the test is missing, the separate recovery pass will add it. "
+        "The review must be 80-1000 characters. Still include one non-test source edit and one regression-test edit "
         "in two files from the provided context; do not choose documentation. "
         "For an existing file, old must be an exact unique snippet from the evidence. For a new file, old must be empty. "
         "Never include markdown fences or unescaped newlines inside JSON strings. Do not claim tests were run.\n"
