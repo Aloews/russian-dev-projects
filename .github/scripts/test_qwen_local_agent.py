@@ -73,6 +73,73 @@ class QwenEditSafetyTests(unittest.TestCase):
                 "edits": [{"path": "src/api.py", "old": "x", "new": "y"}],
             }, permitted)
 
+    def test_jsx_recovery_is_rejected_when_project_has_no_test_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "package.json").write_text(json.dumps({
+                    "scripts": {"build": "next build", "lint": "eslint ."},
+                    "dependencies": {"next": "15.5.29", "react": "19.1.10"},
+                }), encoding="utf-8")
+                response = {
+                    "review": "R" * 100,
+                    "edits": [{
+                        "path": "tests/enquiry_form.test.tsx",
+                        "old": "",
+                        "new": "import { render } from '@testing-library/react'; jest.mock('next/navigation');",
+                    }],
+                }
+                with self.assertRaisesRegex(ValueError, "does not declare a runnable"):
+                    agent.validate_test_recovery(response, ["tests/enquiry_form.test.tsx"])
+            finally:
+                agent.ROOT = previous_root
+
+    def test_jsx_recovery_rejects_undeclared_test_libraries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "package.json").write_text(json.dumps({
+                    "scripts": {"test": "jest"},
+                    "devDependencies": {"jest": "30.0.0"},
+                    "dependencies": {"react": "19.1.10"},
+                }), encoding="utf-8")
+                response = {
+                    "review": "R" * 100,
+                    "edits": [{
+                        "path": "tests/enquiry_form.test.tsx",
+                        "old": "",
+                        "new": "import { render } from '@testing-library/react'; jest.mock('next/navigation');",
+                    }],
+                }
+                with self.assertRaisesRegex(ValueError, "undeclared package"):
+                    agent.validate_test_recovery(response, ["tests/enquiry_form.test.tsx"])
+            finally:
+                agent.ROOT = previous_root
+
+    def test_typescript_recovery_rejects_rust_syntax_and_rs_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "package.json").write_text(json.dumps({
+                    "scripts": {"test": "vitest run"},
+                    "devDependencies": {"vitest": "3.0.0"},
+                }), encoding="utf-8")
+                response = {
+                    "review": "R" * 100,
+                    "edits": [{
+                        "path": "tests/enquiry_form.test.ts",
+                        "old": "",
+                        "new": "import { Property } from '../services/platform-api/src/domains/elite_estate.rs';\\nconst state = VerificationState::Verified;",
+                    }],
+                }
+                with self.assertRaisesRegex(ValueError, "Rust syntax|Rust source file"):
+                    agent.validate_test_recovery(response, ["tests/enquiry_form.test.ts"])
+            finally:
+                agent.ROOT = previous_root
+
     def test_test_recovery_prompt_is_separate_and_behavior_focused(self):
         paths = ["tests/api_regression.test.py"]
         messages = agent.build_test_recovery_messages(
