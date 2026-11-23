@@ -56,6 +56,35 @@ class QwenEditSafetyTests(unittest.TestCase):
                 "edits": [{"path": "src/api.py", "old": "VALUE = 1", "new": "VALUE = 2"}],
             })
 
+    def test_source_only_implementation_is_accepted_for_test_recovery(self):
+        response = {
+            "review": "A" * 100,
+            "edits": [{"path": "src/api.py", "old": "VALUE = 1", "new": "VALUE = 2"}],
+        }
+        self.assertEqual(agent.validate_response(response, require_test=False), "A" * 100)
+
+    def test_test_recovery_requires_exactly_one_test_file(self):
+        self.assertEqual(agent.validate_test_recovery({
+            "review": "R" * 100,
+            "edits": [{"path": "tests/test_api.py", "old": "assert old", "new": "assert new"}],
+        }), "R" * 100)
+        with self.assertRaisesRegex(ValueError, "non-test path"):
+            agent.validate_test_recovery({
+                "review": "R" * 100,
+                "edits": [{"path": "src/api.py", "old": "x", "new": "y"}],
+            })
+
+    def test_test_recovery_prompt_is_separate_and_behavior_focused(self):
+        messages = agent.build_test_recovery_messages(
+            [{"role": "system", "content": "system"}],
+            {"path": "src/api.py", "old": "A", "new": "B"},
+            "fix API",
+            "source evidence",
+        )
+        self.assertIn("ONLY one focused regression-test edit", messages[-1]["content"])
+        self.assertIn("not merely assert True", messages[-1]["content"])
+        self.assertIn("src/api.py", messages[-1]["content"])
+
     def test_source_and_regression_test_edits_are_accepted(self):
         review = "A" * 100
         self.assertEqual(
