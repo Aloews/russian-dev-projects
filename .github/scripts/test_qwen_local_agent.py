@@ -517,6 +517,14 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
                     "new": "VALUE = 2",
                 }],
             })
+            rejected_recovery = json.dumps({
+                "review": recovery_review,
+                "edits": [{
+                    "path": "src/main.py",
+                    "old": "VALUE = 1",
+                    "new": "VALUE = 2",
+                }],
+            })
             recovery = json.dumps({
                 "review": recovery_review,
                 "edits": [{
@@ -537,7 +545,7 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
                 with (
                     patch.object(agent, "git", return_value=git_result),
                     patch.object(agent, "make_context", return_value="bounded source and test context"),
-                    patch.object(agent, "ask_ollama", side_effect=[implementation, recovery]) as ask,
+                    patch.object(agent, "ask_ollama", side_effect=[implementation, rejected_recovery, recovery]) as ask,
                     patch.dict(os.environ, {
                         "OBJECTIVE": "test two-pass Qwen recovery",
                         "CAVEMAN_SKILL_PATH": "",
@@ -548,8 +556,13 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
                     result = agent.main()
 
                 self.assertEqual(result, 0)
-                self.assertEqual(ask.call_count, 2)
+                self.assertEqual(ask.call_count, 3)
                 self.assertIn("max_predict", ask.call_args_list[1].kwargs)
+                self.assertEqual(
+                    ask.call_args_list[1].kwargs["format_schema"]["properties"]["edits"]["items"]["properties"]["path"]["enum"],
+                    ["tests/test_main.py"],
+                )
+                self.assertIn("tests/test_main.py", ask.call_args_list[2].args[0][-1]["content"])
                 self.assertEqual(source_path.read_text(encoding="utf-8"), "VALUE = 2\n")
                 self.assertEqual(test_path.read_text(encoding="utf-8"), "assert VALUE == 2\n")
                 review_report = (root / "docs" / "PRODUCT_FACTORY_QWEN_REVIEW.md").read_text(encoding="utf-8")
