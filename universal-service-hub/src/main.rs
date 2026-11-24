@@ -1646,11 +1646,12 @@ async fn download_worker_execution_artifact(
     let store = state.artifact_store.as_ref()
         .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "artifact_storage_unconfigured"))?;
     let row = sqlx::query(
-        "SELECT a.storage_key, a.content_sha256, a.size_bytes, a.content_type FROM execution_jobs j \
-         JOIN execution_artifacts a ON a.project_id=j.project_id AND a.job_id=j.id \
-         AND a.task_id IS NOT DISTINCT FROM j.task_id \
-         WHERE j.project_id=$1 AND j.id=$2 AND j.status='leased' AND j.lease_owner=$3 \
-         AND j.lease_token=$4 AND j.lease_expires_at>clock_timestamp() AND a.id=$5"
+        r#"SELECT a.storage_key, a.content_sha256, a.size_bytes, a.content_type
+           FROM execution_jobs j
+           JOIN execution_artifacts a ON a.project_id=j.project_id AND a.job_id=j.id
+             AND a.task_id IS NOT DISTINCT FROM j.task_id
+           WHERE j.project_id=$1 AND j.id=$2 AND j.status='leased' AND j.lease_owner=$3
+             AND j.lease_token=$4 AND j.lease_expires_at>clock_timestamp() AND a.id=$5"#
     )
         .bind(&project_id).bind(job_id).bind(&worker_id).bind(lease_token).bind(artifact_id)
         .fetch_optional(&state.db).await
@@ -1677,8 +1678,10 @@ async fn download_worker_execution_artifact(
     let mut tx = state.db.begin().await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
     let lease = sqlx::query(
-        "SELECT 1 FROM execution_jobs WHERE project_id=$1 AND id=$2 AND status='leased' \
-         AND lease_owner=$3 AND lease_token=$4 AND lease_expires_at>clock_timestamp() FOR SHARE"
+        r#"SELECT 1 FROM execution_jobs
+           WHERE project_id=$1 AND id=$2 AND status='leased'
+             AND lease_owner=$3 AND lease_token=$4
+             AND lease_expires_at>clock_timestamp() FOR SHARE"#
     )
         .bind(&project_id).bind(job_id).bind(&worker_id).bind(lease_token)
         .fetch_optional(&mut *tx).await
