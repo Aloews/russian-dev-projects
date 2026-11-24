@@ -370,21 +370,21 @@ class QwenEditSafetyTests(unittest.TestCase):
             (root / ".git").mkdir()
             protected = root / ".github"
             protected.mkdir()
-            source = protected / "secret.py"
+            source = protected / "guard.py"
             original = "VALUE = 1\n"
             source.write_text(original, encoding="utf-8")
             (root / "src").symlink_to(protected, target_is_directory=True)
-            edit = {"path": "src/secret.py", "old": "VALUE = 1", "new": "VALUE = 2"}
+            edit = {"path": "src/guard.py", "old": "VALUE = 1", "new": "VALUE = 2"}
             previous_root = agent.ROOT
             agent.ROOT = root
             try:
                 with self.assertRaisesRegex(ValueError, "symbolic-link parent"):
-                    agent.validate_edit_preconditions(edit, {"src/secret.py"})
+                    agent.validate_edit_preconditions(edit, {"src/guard.py"})
                 with self.assertRaisesRegex(ValueError, "symbolic-link parent"):
-                    agent.apply_edits([edit], {"src/secret.py"})
-                answer = json.dumps({"edits": [{"path": "src/secret.py", "old": "", "new": "VALUE = 2\n"}]})
+                    agent.apply_edits([edit], {"src/guard.py"})
+                answer = json.dumps({"edits": [{"path": "src/guard.py", "old": "", "new": "VALUE = 2\n"}]})
                 self.assertEqual(agent.rejected_existing_file_context(answer), "")
-                self.assertEqual(agent.read_text("src/secret.py"), "")
+                self.assertEqual(agent.read_text("src/guard.py"), "")
                 self.assertEqual(source.read_text(encoding="utf-8"), original)
             finally:
                 agent.ROOT = previous_root
