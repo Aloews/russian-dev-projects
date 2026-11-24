@@ -17,7 +17,7 @@ MAX_FILES = 2
 MAX_CONTEXT_CHARS = 6000
 MAX_FILE_CHARS = 1800
 MAX_OUTPUT_TOKENS = 3072
-MAX_GENERATION_ATTEMPTS = 2
+MAX_GENERATION_ATTEMPTS = 3
 MAX_CAVEMAN_SKILL_CHARS = 2000
 MAX_REALITY_FIRST_SKILL_CHARS = 4000
 SOURCE_SUFFIXES = (
@@ -74,10 +74,26 @@ def is_test_path(path):
 )
 
 
+def has_symlink_parent(path):
+    """Reject writes/reads routed through symlinked parent directories."""
+    try:
+        normalized = path.replace("\\", "/")
+        parts = Path(normalized).parts
+        if normalized.startswith("/") or any(part in (".", "..") for part in parts):
+            return True
+        current = ROOT
+        for part in parts[:-1]:
+            current = current / part
+            if current.is_symlink():
+                return True
+        return False
+    except (OSError, RuntimeError):
+        return True
+
 def read_text(path):
     try:
         p = ROOT / path
-        if p.is_symlink() or not p.is_file() or p.stat().st_size > 100000:
+        if has_symlink_parent(path) or p.is_symlink() or not p.is_file() or p.stat().st_size > 100000:
             return ""
         return p.read_text(encoding="utf-8")[:MAX_FILE_CHARS]
     except (OSError, UnicodeError):
@@ -271,7 +287,7 @@ def rejected_existing_file_context(answer):
         target = ROOT / path
         try:
             resolved = target.resolve()
-            if not resolved.is_relative_to(ROOT.resolve()) or target.is_symlink() or not target.is_file():
+            if not resolved.is_relative_to(ROOT.resolve()) or has_symlink_parent(path) or target.is_symlink() or not target.is_file():
                 continue
             current = target.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
@@ -485,6 +501,15 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
         "For a new file, old must be empty. Never include markdown fences or unescaped newlines "
         "inside JSON strings. Do not claim tests were run.\n"
     )
+    if "new-file edit targets an existing file" in str(validation_error).lower():
+        instruction += (
+            "CRITICAL EXISTING-FILE ANCHOR RECOVERY: The rejected path already exists; treat it only as an update. "
+            "For that existing path, old MUST be a non-empty exact unique snippet copied byte-for-byte from the "
+            "EXISTING FILE evidence. old=\"\" is forbidden for an existing path. Use a short anchor (one to four "
+            "lines) and replace only that anchor; do not attempt a whole-file replacement. If you cannot identify "
+            "a unique exact anchor, choose another existing source candidate whose contents are included in the "
+            "repository evidence and use its exact anchor. Do not invent a new path or claim validation succeeded.\n"
+        )
     evidence_budget = max(0, 5800 - len(instruction))
     return [
         *base_messages,
@@ -504,6 +529,8 @@ def validate_edit_preconditions(edit, tracked):
     resolved_target = target.resolve()
     if not resolved_target.is_relative_to(ROOT.resolve()):
         raise ValueError("edit path resolves outside the target repository")
+    if has_symlink_parent(path):
+        raise ValueError("symbolic-link parent directories are not permitted")
     if target.is_symlink():
         raise ValueError("symbolic-link edits are not permitted")
     if not target.exists():
@@ -546,6 +573,8 @@ def apply_edits(edits, tracked):
         resolved_target = target.resolve()
         if not resolved_target.is_relative_to(ROOT.resolve()):
             raise ValueError("edit path resolves outside the target repository")
+        if has_symlink_parent(path):
+            raise ValueError("symbolic-link parent directories are not permitted")
         if target.is_symlink():
             raise ValueError("symbolic-link edits are not permitted")
         if path in staged:
