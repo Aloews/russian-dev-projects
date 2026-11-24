@@ -23,6 +23,16 @@ struct ArtifactClient {
     http: reqwest::Client,
 }
 
+struct ArtifactDownloadRequest<'a> {
+    project_id: &'a str,
+    job_id: Uuid,
+    artifact_id: Uuid,
+    worker_id: &'a str,
+    lease_token: Uuid,
+    expected_sha256: &'a str,
+    expected_size: usize,
+}
+
 impl ArtifactClient {
     fn from_env() -> anyhow::Result<Option<Self>> {
         let Ok(raw) = env::var("USH_WORKER_API_BASE_URL") else { return Ok(None); };
@@ -80,16 +90,17 @@ impl ArtifactClient {
             .ok_or_else(|| anyhow::anyhow!("worker artifact response omitted artifact_id"))?;
         Uuid::parse_str(artifact_id).context("worker artifact response contained invalid artifact_id")
     }
-    async fn download(
-        &self,
-        project_id: &str,
-        job_id: Uuid,
-        artifact_id: Uuid,
-        worker_id: &str,
-        lease_token: Uuid,
-        expected_sha256: &str,
-        expected_size: usize,
-    ) -> anyhow::Result<Vec<u8>> {
+    #[allow(dead_code)]
+    async fn download(&self, request: ArtifactDownloadRequest<'_>) -> anyhow::Result<Vec<u8>> {
+        let ArtifactDownloadRequest {
+            project_id,
+            job_id,
+            artifact_id,
+            worker_id,
+            lease_token,
+            expected_sha256,
+            expected_size,
+        } = request;
         const MAX_DOWNLOAD_BYTES: usize = 2 * 1024 * 1024;
         if expected_size == 0 || expected_size > MAX_DOWNLOAD_BYTES {
             bail!("worker artifact download exceeds the size bound");
@@ -324,6 +335,103 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn worker_artifact_download_checks_lease_and_hash() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let project_id = "project-a";
+        let job_id = Uuid::from_u128(1);
+        let artifact_id = Uuid::from_u128(2);
+        let worker_id = "worker-a";
+        let lease_token = Uuid::from_u128(3);
+        let payload = b"verified observation bytes".to_vec();
+        let expected_sha = hex::encode(Sha256::digest(&payload));
+        let expected_path = format!(
+            "/v1/worker/projects/{project_id}/jobs/{job_id}/artifacts/{artifact_id}"
+        );
+        Mock::given(method("GET"))
+            .and(path(&expected_path))
+            .and(header("x-ush-worker-id", worker_id))
+            .and(header("x-ush-lease-token", lease_token.to_string()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/octet-stream")
+                    .insert_header("x-artifact-sha256", expected_sha.clone())
+                    .set_body_bytes(payload.clone()),
+            )
+            .mount(&server)
+            .await;
+        let client = ArtifactClient {
+            base_url: url::Url::parse(&server.uri()).unwrap(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+        };
+        let bytes = client.download(ArtifactDownloadRequest {
+            project_id,
+            job_id,
+            artifact_id,
+            worker_id,
+            lease_token,
+            expected_sha256: &expected_sha,
+            expected_size: payload.len(),
+        }).await.unwrap();
+        assert_eq!(bytes, payload);
+    }
+
+    #[tokio::test]
+    async fn worker_artifact_download_rejects_expected_hash_mismatch() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let project_id = "project-a";
+        let job_id = Uuid::from_u128(4);
+        let artifact_id = Uuid::from_u128(5);
+        let worker_id = "worker-a";
+        let lease_token = Uuid::from_u128(6);
+        let payload = b"verified observation bytes".to_vec();
+        let actual_sha = hex::encode(Sha256::digest(&payload));
+        let wrong_sha = "0".repeat(64);
+        let expected_path = format!(
+            "/v1/worker/projects/{project_id}/jobs/{job_id}/artifacts/{artifact_id}"
+        );
+        Mock::given(method("GET"))
+            .and(path(&expected_path))
+            .and(header("x-ush-worker-id", worker_id))
+            .and(header("x-ush-lease-token", lease_token.to_string()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/octet-stream")
+                    .insert_header("x-artifact-sha256", actual_sha)
+                    .set_body_bytes(payload.clone()),
+            )
+            .mount(&server)
+            .await;
+        let client = ArtifactClient {
+            base_url: url::Url::parse(&server.uri()).unwrap(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+        };
+        let result = client.download(ArtifactDownloadRequest {
+            project_id,
+            job_id,
+            artifact_id,
+            worker_id,
+            lease_token,
+            expected_sha256: &wrong_sha,
+            expected_size: payload.len(),
+        }).await;
+        assert!(result.is_err());
+    }
 
     #[test]
     fn worker_capability_allowlist_is_nonempty_and_non_billable() {
