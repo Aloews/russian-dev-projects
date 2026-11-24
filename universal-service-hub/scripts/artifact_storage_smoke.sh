@@ -165,7 +165,7 @@ grep -qi '^x-content-type-options: nosniff' "$tmp/headers"
 grep -qi '^cache-control: private, no-store' "$tmp/headers"
 grep -qi '^content-type: application/octet-stream' "$tmp/headers"
 
-worker_id="artifact-smoke-worker-\${suffix}"
+worker_id="artifact-smoke-worker-${suffix}"
 worker_claim_response="$(curl -fsS -X POST "$base_url/v1/projects/$project_id/workers/claim" \
   -H "Authorization: Bearer $project_token" -H "Content-Type: application/json" \
   -d "$(jq -n --arg id "$worker_id" '{worker_id:$id,lease_seconds:300}')")"
@@ -179,7 +179,7 @@ worker_expected_sha="$(sha256sum "$tmp/worker-payload" | awk '{print $1}')"
 worker_upload_response="$(curl -fsS -X POST "$base_url/v1/worker/projects/$project_id/jobs/$job_id/artifacts" \
   -H "X-USH-Worker-ID: $worker_id" -H "X-USH-Lease-Token: $worker_lease_token" \
   -H "Content-Type: application/octet-stream" -H "X-Artifact-Type: worker_result" \
-  -H "X-Artifact-Idempotency-Key: worker-download-\${suffix}" \
+  -H "X-Artifact-Idempotency-Key: worker-download-${suffix}" \
   --data-binary "@$tmp/worker-payload")"
 worker_artifact_id="$(jq -er '.artifact_id' <<<"$worker_upload_response")"
 worker_actual_sha="$(jq -er '.sha256' <<<"$worker_upload_response")"
