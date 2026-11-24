@@ -165,6 +165,51 @@ grep -qi '^x-content-type-options: nosniff' "$tmp/headers"
 grep -qi '^cache-control: private, no-store' "$tmp/headers"
 grep -qi '^content-type: application/octet-stream' "$tmp/headers"
 
+worker_id="artifact-smoke-worker-\${suffix}"
+worker_claim_response="$(curl -fsS -X POST "$base_url/v1/projects/$project_id/workers/claim" \
+  -H "Authorization: Bearer $project_token" -H "Content-Type: application/json" \
+  -d "$(jq -n --arg id "$worker_id" '{worker_id:$id,lease_seconds:300}')")"
+worker_claimed_job_id="$(jq -er '.job.id' <<<"$worker_claim_response")"
+worker_lease_token="$(jq -er '.job.lease_token' <<<"$worker_claim_response")"
+test "$worker_claimed_job_id" = "$job_id"
+
+worker_payload="USH worker artifact read-back; bytes and lease must be verified."
+printf '%s' "$worker_payload" > "$tmp/worker-payload"
+worker_expected_sha="$(sha256sum "$tmp/worker-payload" | awk '{print $1}')"
+worker_upload_response="$(curl -fsS -X POST "$base_url/v1/worker/projects/$project_id/jobs/$job_id/artifacts" \
+  -H "X-USH-Worker-ID: $worker_id" -H "X-USH-Lease-Token: $worker_lease_token" \
+  -H "Content-Type: application/octet-stream" -H "X-Artifact-Type: worker_result" \
+  -H "X-Artifact-Idempotency-Key: worker-download-\${suffix}" \
+  --data-binary "@$tmp/worker-payload")"
+worker_artifact_id="$(jq -er '.artifact_id' <<<"$worker_upload_response")"
+worker_actual_sha="$(jq -er '.sha256' <<<"$worker_upload_response")"
+worker_actual_size="$(jq -er '.size_bytes' <<<"$worker_upload_response")"
+test "$worker_actual_sha" = "$worker_expected_sha"
+test "$worker_actual_size" = "$(wc -c < "$tmp/worker-payload" | tr -d ' ')"
+
+worker_download_status="$(curl -sS -o "$tmp/worker-download" -D "$tmp/worker-headers" -w '%{http_code}' \
+  -H "X-USH-Worker-ID: $worker_id" -H "X-USH-Lease-Token: $worker_lease_token" \
+  "$base_url/v1/worker/projects/$project_id/jobs/$job_id/artifacts/$worker_artifact_id")"
+test "$worker_download_status" = "200"
+cmp -s "$tmp/worker-payload" "$tmp/worker-download"
+grep -qi "^x-artifact-sha256: $worker_expected_sha" "$tmp/worker-headers"
+grep -qi '^content-disposition: attachment' "$tmp/worker-headers"
+grep -qi '^x-content-type-options: nosniff' "$tmp/worker-headers"
+grep -qi '^cache-control: private, no-store' "$tmp/worker-headers"
+grep -qi '^content-type: application/octet-stream' "$tmp/worker-headers"
+
+worker_unauthorized_status="$(curl -sS -o "$tmp/worker-unauthorized" -w '%{http_code}' \
+  "$base_url/v1/worker/projects/$project_id/jobs/$job_id/artifacts/$worker_artifact_id")"
+test "$worker_unauthorized_status" = "401"
+worker_wrong_lease_status="$(curl -sS -o "$tmp/worker-wrong-lease" -w '%{http_code}' \
+  -H "X-USH-Worker-ID: $worker_id" -H "X-USH-Lease-Token: 00000000-0000-4000-8000-000000000000" \
+  "$base_url/v1/worker/projects/$project_id/jobs/$job_id/artifacts/$worker_artifact_id")"
+test "$worker_wrong_lease_status" = "404"
+worker_cross_project_status="$(curl -sS -o "$tmp/worker-cross-project" -w '%{http_code}' \
+  -H "X-USH-Worker-ID: $worker_id" -H "X-USH-Lease-Token: $worker_lease_token" \
+  "$base_url/v1/worker/projects/$other_project_id/jobs/$job_id/artifacts/$worker_artifact_id")"
+test "$worker_cross_project_status" = "404"
+
 unauthorized_status="$(curl -sS -o "$tmp/unauthorized" -w '%{http_code}' "$base_url/v1/projects/$project_id/artifacts/$artifact_id")"
 test "$unauthorized_status" = "401"
 viewer_status="$(curl -sS -o "$tmp/viewer" -w '%{http_code}' \
@@ -208,4 +253,14 @@ integrity_status="$(curl -sS -o "$tmp/integrity" -w '%{http_code}' \
 test "$integrity_status" = "500"
 test "$(jq -er '.error' "$tmp/integrity")" = "artifact_integrity_check_failed"
 
-echo "S3-compatible artifact API smoke passed: upload/download SHA-256, private headers, project isolation, validation, size bounds and integrity mismatch."
+worker_object_key="$prefix/$project_id/jobs/$job_id/$worker_artifact_id"
+printf 'corrupted worker artifact bytes' > "$tmp/corrupt-worker"
+docker cp "$tmp/corrupt-worker" "$silo_name:/tmp/corrupt-worker" >/dev/null
+docker exec "$silo_name" mcli cp /tmp/corrupt-worker "local/$bucket/$worker_object_key" >/dev/null
+worker_integrity_status="$(curl -sS -o "$tmp/worker-integrity" -w '%{http_code}' \
+  -H "X-USH-Worker-ID: $worker_id" -H "X-USH-Lease-Token: $worker_lease_token" \
+  "$base_url/v1/worker/projects/$project_id/jobs/$job_id/artifacts/$worker_artifact_id")"
+test "$worker_integrity_status" = "500"
+test "$(jq -er '.error' "$tmp/worker-integrity")" = "artifact_integrity_check_failed"
+
+echo "S3-compatible artifact API smoke passed: project/worker upload-download SHA-256, lease/project isolation, private headers, validation, size bounds and integrity mismatch."
