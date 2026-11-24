@@ -9,6 +9,7 @@ use std::{env, str::FromStr, time::Duration};
 
 use anyhow::{Context, bail};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use tokio::{task::JoinSet, time::sleep, signal, sync::watch};
 use tracing::{error, info, warn};
@@ -79,6 +80,66 @@ impl ArtifactClient {
             .ok_or_else(|| anyhow::anyhow!("worker artifact response omitted artifact_id"))?;
         Uuid::parse_str(artifact_id).context("worker artifact response contained invalid artifact_id")
     }
+    async fn download(
+        &self,
+        project_id: &str,
+        job_id: Uuid,
+        artifact_id: Uuid,
+        worker_id: &str,
+        lease_token: Uuid,
+        expected_sha256: &str,
+        expected_size: usize,
+    ) -> anyhow::Result<Vec<u8>> {
+        const MAX_DOWNLOAD_BYTES: usize = 2 * 1024 * 1024;
+        if expected_size == 0 || expected_size > MAX_DOWNLOAD_BYTES {
+            bail!("worker artifact download exceeds the size bound");
+        }
+        if expected_sha256.len() != 64
+            || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            bail!("worker artifact expected SHA-256 is invalid");
+        }
+        let mut url = self.base_url.clone();
+        {
+            let mut segments = url.path_segments_mut()
+                .map_err(|_| anyhow::anyhow!("worker API URL cannot accept path segments"))?;
+            segments.pop_if_empty()
+                .push("v1").push("worker").push("projects").push(project_id)
+                .push("jobs").push(&job_id.to_string()).push("artifacts").push(&artifact_id.to_string());
+        }
+        let response = self.http.get(url)
+            .header("x-ush-worker-id", worker_id)
+            .header("x-ush-lease-token", lease_token.to_string())
+            .send().await.context("worker artifact download request failed")?;
+        if !response.status().is_success() {
+            bail!("worker artifact download rejected with HTTP {}", response.status());
+        }
+        if response.content_length().is_some_and(|size| size != expected_size as u64 || size > MAX_DOWNLOAD_BYTES as u64) {
+            bail!("worker artifact download content length mismatch");
+        }
+        let response_sha = response.headers().get("x-artifact-sha256")
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| anyhow::anyhow!("worker artifact download omitted SHA-256 header"))?;
+        if response_sha != expected_sha256 {
+            bail!("worker artifact download SHA-256 header mismatch");
+        }
+        let content_type = response.headers().get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| anyhow::anyhow!("worker artifact download omitted content type"))?;
+        if !artifact_store::valid_content_type(content_type) {
+            bail!("worker artifact download content type is invalid");
+        }
+        let bytes = response.bytes().await.context("worker artifact download body failed")?;
+        if bytes.len() != expected_size || bytes.len() > MAX_DOWNLOAD_BYTES {
+            bail!("worker artifact download body size mismatch");
+        }
+        let actual_sha = hex::encode(Sha256::digest(&bytes));
+        if actual_sha != expected_sha256 {
+            bail!("worker artifact download content SHA-256 mismatch");
+        }
+        Ok(bytes.to_vec())
+    }
+
 }
 
 fn parse_job_types(raw: &str) -> anyhow::Result<Vec<String>> {
