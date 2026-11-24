@@ -1536,8 +1536,7 @@ async fn upload_worker_execution_artifact(
     // The row lock prevents lease replacement; re-check wall-clock expiry after
     // the remote write so a slow upload cannot register output after lease expiry.
     let lease_recheck = sqlx::query(
-        "SELECT 1 FROM execution_jobs WHERE project_id=$1 AND id=$2 AND status='leased' \\
-         AND lease_owner=$3 AND lease_token=$4 AND lease_expires_at > clock_timestamp()"
+        "SELECT 1 FROM execution_jobs WHERE project_id=$1 AND id=$2 AND status='leased' AND lease_owner=$3 AND lease_token=$4 AND lease_expires_at > clock_timestamp()"
     )
         .bind(&project_id).bind(job_id).bind(&worker_id).bind(lease_token)
         .fetch_optional(&mut *tx).await;
