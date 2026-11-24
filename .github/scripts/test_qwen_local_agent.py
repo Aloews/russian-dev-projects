@@ -388,8 +388,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                 self.assertEqual(source.read_text(encoding="utf-8"), original)
             finally:
                 agent.ROOT = previous_root
-
-    def test_non_unique_replacement_is_rejected(self),symlink test insertion
+    def test_non_unique_replacement_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT
             try:
@@ -447,8 +446,7 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertIn('old="" is forbidden', prompt)
         self.assertIn("app/form.tsx", prompt)
         self.assertIn("const oldValue = true;", prompt)
-
-    def test_retry_prompt_caps_error_and_existing_file_context(self),prompt regression insertion
+    def test_retry_prompt_caps_error_and_existing_file_context(self):
         retry = agent.build_retry_messages(
             [{"role": "user", "content": "objective"}],
             "E" * 1000,
