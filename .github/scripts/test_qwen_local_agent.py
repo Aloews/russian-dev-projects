@@ -364,6 +364,30 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+    def test_symlink_parent_cannot_redirect_to_protected_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            protected = root / ".github"
+            protected.mkdir()
+            source = protected / "guard.py"
+            original = "VALUE = 1\n"
+            source.write_text(original, encoding="utf-8")
+            (root / "src").symlink_to(protected, target_is_directory=True)
+            edit = {"path": "src/guard.py", "old": "VALUE = 1", "new": "VALUE = 2"}
+            previous_root = agent.ROOT
+            agent.ROOT = root
+            try:
+                with self.assertRaisesRegex(ValueError, "symbolic-link parent"):
+                    agent.validate_edit_preconditions(edit, {"src/guard.py"})
+                with self.assertRaisesRegex(ValueError, "symbolic-link parent"):
+                    agent.apply_edits([edit], {"src/guard.py"})
+                answer = json.dumps({"edits": [{"path": "src/guard.py", "old": "", "new": "VALUE = 2\n"}]})
+                self.assertEqual(agent.rejected_existing_file_context(answer), "")
+                self.assertEqual(agent.read_text("src/guard.py"), "")
+                self.assertEqual(source.read_text(encoding="utf-8"), original)
+            finally:
+                agent.ROOT = previous_root
     def test_non_unique_replacement_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT
@@ -409,6 +433,19 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertIn("no test edit", prompt)
         self.assertIn("documentation edit", prompt)
 
+    def test_retry_prompt_requires_nonempty_exact_anchor_for_existing_file_conflict(self):
+        evidence = "--- EXISTING FILE (NOT A NEW FILE): app/form.tsx ---\nconst oldValue = true;\n"
+        retry = agent.build_retry_messages(
+            [{"role": "user", "content": "objective"}],
+            "new-file edit targets an existing file: app/form.tsx; provide an exact old snippet",
+            evidence,
+        )
+        prompt = retry[-1]["content"]
+        self.assertIn("CRITICAL EXISTING-FILE ANCHOR RECOVERY", prompt)
+        self.assertIn("old MUST be a non-empty exact unique snippet", prompt)
+        self.assertIn('old="" is forbidden', prompt)
+        self.assertIn("app/form.tsx", prompt)
+        self.assertIn("const oldValue = true;", prompt)
     def test_retry_prompt_caps_error_and_existing_file_context(self):
         retry = agent.build_retry_messages(
             [{"role": "user", "content": "objective"}],
@@ -726,11 +763,11 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
                 agent.ROOT = previous_root
 
     def test_main_returns_after_final_invalid_json_without_unbound_review(self):
-        self.assertEqual(self._run_main_with_responses(["not-json", "not-json"]), 4)
+        self.assertEqual(self._run_main_with_responses(["not-json"] * agent.MAX_GENERATION_ATTEMPTS), 4)
 
     def test_main_returns_after_final_validation_error_without_unbound_review(self):
         invalid = json.dumps({"review": "short", "edits": []})
-        self.assertEqual(self._run_main_with_responses([invalid, invalid]), 4)
+        self.assertEqual(self._run_main_with_responses([invalid] * agent.MAX_GENERATION_ATTEMPTS), 4)
 
     def test_ollama_length_termination_is_reported_as_incomplete(self):
         with self.assertRaisesRegex(agent.IncompleteOllamaResponse, "num_predict limit"):
@@ -751,6 +788,8 @@ class ProductFactoryRecoveryTests(unittest.TestCase):
     def test_retry_generation_budget_increases_instead_of_shrinking(self):
         self.assertEqual(agent.generation_budget(0), 1536)
         self.assertEqual(agent.generation_budget(1), 3072)
+        self.assertEqual(agent.generation_budget(2), 3072)
+        self.assertEqual(agent.MAX_GENERATION_ATTEMPTS, 3)
         self.assertGreater(agent.generation_budget(1), agent.generation_budget(0))
 
     def test_review_schema_minimum_matches_validator(self):
