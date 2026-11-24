@@ -30,6 +30,7 @@ struct ArtifactDownloadRequest<'a> {
     worker_id: &'a str,
     lease_token: Uuid,
     expected_sha256: &'a str,
+    expected_content_type: &'a str,
     expected_size: usize,
 }
 
@@ -99,6 +100,7 @@ impl ArtifactClient {
             worker_id,
             lease_token,
             expected_sha256,
+            expected_content_type,
             expected_size,
         } = request;
         const MAX_DOWNLOAD_BYTES: usize = 2 * 1024 * 1024;
@@ -109,6 +111,9 @@ impl ArtifactClient {
             || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
         {
             bail!("worker artifact expected SHA-256 is invalid");
+        }
+        if !artifact_store::valid_content_type(expected_content_type) {
+            bail!("worker artifact expected content type is invalid");
         }
         let mut url = self.base_url.clone();
         {
@@ -137,8 +142,8 @@ impl ArtifactClient {
         let content_type = response.headers().get("content-type")
             .and_then(|value| value.to_str().ok())
             .ok_or_else(|| anyhow::anyhow!("worker artifact download omitted content type"))?;
-        if !artifact_store::valid_content_type(content_type) {
-            bail!("worker artifact download content type is invalid");
+        if !artifact_store::valid_content_type(content_type) || content_type != expected_content_type {
+            bail!("worker artifact download content type mismatch");
         }
         let bytes = response.bytes().await.context("worker artifact download body failed")?;
         if bytes.len() != expected_size || bytes.len() > MAX_DOWNLOAD_BYTES {
@@ -379,6 +384,7 @@ mod tests {
             worker_id,
             lease_token,
             expected_sha256: &expected_sha,
+            expected_content_type: "application/octet-stream",
             expected_size: payload.len(),
         }).await.unwrap();
         assert_eq!(bytes, payload);
@@ -428,6 +434,56 @@ mod tests {
             worker_id,
             lease_token,
             expected_sha256: &wrong_sha,
+            expected_content_type: "application/octet-stream",
+            expected_size: payload.len(),
+        }).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn worker_artifact_download_rejects_content_type_mismatch() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let project_id = "project-a";
+        let job_id = Uuid::from_u128(7);
+        let artifact_id = Uuid::from_u128(8);
+        let worker_id = "worker-a";
+        let lease_token = Uuid::from_u128(9);
+        let payload = b"verified observation bytes".to_vec();
+        let expected_sha = hex::encode(Sha256::digest(&payload));
+        let expected_path = format!(
+            "/v1/worker/projects/{project_id}/jobs/{job_id}/artifacts/{artifact_id}"
+        );
+        Mock::given(method("GET"))
+            .and(path(&expected_path))
+            .and(header("x-ush-worker-id", worker_id))
+            .and(header("x-ush-lease-token", lease_token.to_string()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/plain")
+                    .insert_header("x-artifact-sha256", expected_sha.clone())
+                    .set_body_bytes(payload.clone()),
+            )
+            .mount(&server)
+            .await;
+        let client = ArtifactClient {
+            base_url: url::Url::parse(&server.uri()).unwrap(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+        };
+        let result = client.download(ArtifactDownloadRequest {
+            project_id,
+            job_id,
+            artifact_id,
+            worker_id,
+            lease_token,
+            expected_sha256: &expected_sha,
+            expected_content_type: "application/octet-stream",
             expected_size: payload.len(),
         }).await;
         assert!(result.is_err());
