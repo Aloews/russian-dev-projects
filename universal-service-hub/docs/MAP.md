@@ -785,15 +785,14 @@ Current implementation is in `src/checkpoint.rs`; it is a durable storage primit
 - This verifies the current PR head against the repository workflow. It does not establish that the live agent loop uses checkpoint save/restore or that arbitrary external tool side effects are exactly-once.
 - PR #100 remains Draft and unmerged. No production migration or deployment was performed.
 
-### AR-05 worker artifact download transport — PR #107 (exact-head verification pending)
+### AR-05 worker artifact download transport — PR #107 (CI failure under diagnosis)
 
 - Added a lease-scoped worker GET path for artifacts under the current project/job/task; it uses the worker ID and lease token, not project bearer tokens or S3 credentials.
-- The API bounds the response to 2 MiB, checks object SHA-256 and size, rechecks the active lease after object-store access, and sends private/no-store, nosniff and attachment headers.
-- The worker client validates expected SHA-256, size and content type; S3-compatible smoke coverage checks round-trip bytes, missing/wrong lease, cross-project denial and integrity mismatch.
-- Previous exact head `37a094de4994adb82a00e5ef73b0e3da5b3ad9b3` was checked by run [#2001 / 45379624560](https://github.com/Aloews/russian-dev-projects/actions/runs/45379624560) and failed specifically at **S3-compatible artifact API integration smoke**. The full job log shows PostgreSQL syntax error near a literal backslash in the worker upload lease recheck SQL; it is not a runner-allocation failure.
-- Current pre-documentation head `9ffa7df4666c3ee0ad61d154d5b374fdc4cd1094` removes the escaped backslash from that SQL string. This correction is present in the diff but not yet verified by CI. The current PR head will change with this documentation commit and must be verified anew.
-- Artifact transport is not yet wired into checkpoint observation persistence or a live agent executor.
-
+- The API bounds the response to 2 MiB, checks object SHA-256 and size, rechecks the active lease after object-store access, and sends private/no-store, nosniff and attachment headers. The worker client verifies expected SHA-256, size and content type.
+- Exact head `54bb04db370f59300ddc7d71e448ad009b3d8eee` failed run [#2006 / 45599731318](https://github.com/Aloews/russian-dev-projects/actions/runs/45599731318), with runner allocated. Rust format, Clippy, tests, Python/Ruff, migrations, Docker build and worker-image smoke passed before the **S3-compatible artifact API integration smoke** failure. Compose startup and container smoke were skipped after that failure.
+- Full log evidence includes `curl: (56) Recv failure: Connection reset by peer` and `curl: (7) Failed to connect to 127.0.0.1 port 18001`; the API container remained running and logged startup on port 18001 at 11:03:01.078 UTC. The exact failing smoke phase is not yet identified, so no code root cause is asserted.
+- Added non-secret phase markers and failure-phase output to `scripts/artifact_storage_smoke.sh`; the next exact-head CI run will pinpoint the failing phase without enabling shell tracing or exposing tokens.
+- Worker artifact downloads are not yet wired into checkpoint observation persistence or a live agent executor.
 ## AR-05 tool receipt store — implementation in progress
 
 - Next bounded increment: PostgreSQL durable tool-action receipts with deterministic, scope-bound idempotency keys, reservation/completion/uncertain states, lease-token fencing and duplicate/collision regression tests.
