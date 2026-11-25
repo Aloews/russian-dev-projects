@@ -1536,8 +1536,7 @@ async fn upload_worker_execution_artifact(
     // The row lock prevents lease replacement; re-check wall-clock expiry after
     // the remote write so a slow upload cannot register output after lease expiry.
     let lease_recheck = sqlx::query(
-        "SELECT 1 FROM execution_jobs WHERE project_id=$1 AND id=$2 AND status='leased' \\
-         AND lease_owner=$3 AND lease_token=$4 AND lease_expires_at > clock_timestamp()"
+        "SELECT 1 FROM execution_jobs WHERE project_id=$1 AND id=$2 AND status='leased' AND lease_owner=$3 AND lease_token=$4 AND lease_expires_at > clock_timestamp()"
     )
         .bind(&project_id).bind(job_id).bind(&worker_id).bind(lease_token)
         .fetch_optional(&mut *tx).await;
@@ -1623,6 +1622,79 @@ async fn download_execution_artifact(
     let content_type_header = HeaderValue::from_str(&response_content_type)
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_content_type"))?;
     audit(&state, &principal.actor, "execution.artifact.download", "execution_artifact", &artifact_id.to_string(),
+        json!({"project_id":project_id,"job_id":job_id,"size_bytes":expected_size,"sha256":expected_sha})).await;
+    let mut response = Response::new(axum::body::Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert("content-type", content_type_header);
+    response.headers_mut().insert("x-artifact-sha256", HeaderValue::from_str(&expected_sha)
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_hash"))?);
+    response.headers_mut().insert("content-length", HeaderValue::from_str(&expected_size.to_string())
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_size"))?);
+    response.headers_mut().insert("content-disposition", HeaderValue::from_static("attachment; filename=artifact"));
+    response.headers_mut().insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    response.headers_mut().insert("cache-control", HeaderValue::from_static("private, no-store"));
+    Ok(response)
+}
+
+async fn download_worker_execution_artifact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, job_id, artifact_id)): Path<(String, Uuid, Uuid)>,
+) -> ApiResult<Response> {
+    let (worker_id, lease_token) = worker_artifact_lease(&headers)?;
+    let store = state.artifact_store.as_ref()
+        .ok_or(ApiError(StatusCode::SERVICE_UNAVAILABLE, "artifact_storage_unconfigured"))?;
+    let row = sqlx::query(
+        r#"SELECT a.storage_key, a.content_sha256, a.size_bytes, a.content_type
+           FROM execution_jobs j
+           JOIN execution_artifacts a ON a.project_id=j.project_id AND a.job_id=j.id
+             AND a.task_id IS NOT DISTINCT FROM j.task_id
+           WHERE j.project_id=$1 AND j.id=$2 AND j.status='leased' AND j.lease_owner=$3
+             AND j.lease_token=$4 AND j.lease_expires_at>clock_timestamp() AND a.id=$5"#
+    )
+        .bind(&project_id).bind(job_id).bind(&worker_id).bind(lease_token).bind(artifact_id)
+        .fetch_optional(&state.db).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "worker_artifact_lookup_failed"))?
+        .ok_or(ApiError(StatusCode::NOT_FOUND, "artifact_not_found"))?;
+    let key: String = row.get("storage_key");
+    let expected_sha: String = row.get("content_sha256");
+    let expected_size: i64 = row.get("size_bytes");
+    let content_type: String = row.get("content_type");
+    if expected_size <= 0 || expected_size > 2 * 1024 * 1024 {
+        return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "artifact_size_limit"));
+    }
+    let (bytes, stored_content_type) = store.get(&key).await.map_err(|error| {
+        tracing::error!(artifact_id = %artifact_id, error = ?error, "worker artifact download failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "worker_artifact_download_failed")
+    })?;
+    let actual_sha = hex::encode(Sha256::digest(&bytes));
+    if bytes.len() as i64 != expected_size || actual_sha != expected_sha {
+        return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "artifact_integrity_check_failed"));
+    }
+
+    // Recheck and briefly fence the lease after the object-store read. A stale
+    // worker cannot finish a download after its lease has been superseded.
+    let mut tx = state.db.begin().await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+    let lease = sqlx::query(
+        r#"SELECT 1 FROM execution_jobs
+           WHERE project_id=$1 AND id=$2 AND status='leased'
+             AND lease_owner=$3 AND lease_token=$4
+             AND lease_expires_at>clock_timestamp() FOR SHARE"#
+    )
+        .bind(&project_id).bind(job_id).bind(&worker_id).bind(lease_token)
+        .fetch_optional(&mut *tx).await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "worker_lease_recheck_failed"))?;
+    if lease.is_none() {
+        return Err(ApiError(StatusCode::CONFLICT, "execution_lease_lost"));
+    }
+    tx.commit().await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "execution_transaction_failed"))?;
+
+    let response_content_type = stored_content_type.unwrap_or(content_type);
+    let content_type_header = HeaderValue::from_str(&response_content_type)
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "invalid_artifact_content_type"))?;
+    audit(&state, &format!("worker:{worker_id}"), "execution.artifact.worker_download", "execution_artifact", &artifact_id.to_string(),
         json!({"project_id":project_id,"job_id":job_id,"size_bytes":expected_size,"sha256":expected_sha})).await;
     let mut response = Response::new(axum::body::Body::from(bytes));
     *response.status_mut() = StatusCode::OK;
@@ -2046,6 +2118,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/projects/{project_id}/jobs", post(enqueue_execution_job))
         .route("/v1/projects/{project_id}/jobs/{job_id}/artifacts", post(upload_execution_artifact))
         .route("/v1/worker/projects/{project_id}/jobs/{job_id}/artifacts", post(upload_worker_execution_artifact))
+        .route("/v1/worker/projects/{project_id}/jobs/{job_id}/artifacts/{artifact_id}", get(download_worker_execution_artifact))
         .route("/v1/projects/{project_id}/artifacts/{artifact_id}", get(download_execution_artifact))
         .route("/v1/projects/{project_id}/workers/claim", post(claim_execution_job))
         .route("/v1/projects/{project_id}/jobs/{job_id}/heartbeat", post(heartbeat_execution_job))
