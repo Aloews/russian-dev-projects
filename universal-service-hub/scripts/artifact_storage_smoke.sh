@@ -21,6 +21,7 @@ job_key="artifact-smoke-${suffix}"
 tmp="$(mktemp -d)"
 api_started=0
 silo_started=0
+phase="initialization"
 
 redact_docker_logs() {
   local container="$1"
@@ -47,7 +48,8 @@ sys.stdout.write(text[-30000:])
 cleanup() {
   status=$?
   if [[ "$status" -ne 0 ]]; then
-    echo "Artifact storage smoke failed; sanitized service logs follow." >&2
+    echo "Artifact storage smoke failed during phase: $phase" >&2
+    echo "Sanitized service logs follow." >&2
     if [[ "$api_started" == "1" ]]; then
       echo "Artifact API container state:" >&2
       docker inspect --format 'status={{.State.Status}} exit={{.State.ExitCode}}' "$api_name" >&2 || true
@@ -65,6 +67,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
+phase="start S3-compatible test store"
+echo "Artifact smoke phase: $phase"
 docker run -d --rm --name "$silo_name" \
   -p 127.0.0.1:19000:9000 \
   -e MINIO_ROOT_USER="$access_key" \
@@ -73,6 +77,8 @@ docker run -d --rm --name "$silo_name" \
   "$silo_image" server /data >/dev/null
 silo_started=1
 
+phase="wait for S3-compatible test store readiness"
+echo "Artifact smoke phase: $phase"
 ready=0
 for _ in $(seq 1 60); do
   if curl -fsS --max-time 2 "$silo_endpoint/minio/health/ready" >/dev/null; then
@@ -86,9 +92,13 @@ if [[ "$ready" != "1" ]]; then
   exit 1
 fi
 
+phase="prepare S3-compatible bucket"
+echo "Artifact smoke phase: $phase"
 docker exec "$silo_name" mcli alias set local http://127.0.0.1:9000 "$access_key" "$secret_key" >/dev/null
 docker exec "$silo_name" mcli mb "local/$bucket" >/dev/null
 
+phase="start artifact API container"
+echo "Artifact smoke phase: $phase"
 api_started=1
 docker run -d --name "$api_name" --network host \
   -e USH_DATABASE_URL="$USH_ARTIFACT_SMOKE_DATABASE_URL" \
@@ -108,6 +118,8 @@ docker run -d --name "$api_name" --network host \
   "$image" >/dev/null
 api_started=1
 
+phase="wait for artifact API readiness"
+echo "Artifact smoke phase: $phase"
 ready=0
 for _ in $(seq 1 60); do
   if curl -fsS --max-time 2 "$base_url/readyz" >/dev/null; then
@@ -121,6 +133,8 @@ if [[ "$ready" != "1" ]]; then
   exit 1
 fi
 
+phase="create tenant and token fixtures"
+echo "Artifact smoke phase: $phase"
 admin_headers=(-H "Authorization: Bearer $USH_ARTIFACT_SMOKE_API_TOKEN" -H "Content-Type: application/json")
 project_body="$(jq -n --arg id "$project_id" '{id:$id,name:"Artifact integration smoke",allowed_capabilities:["ai.chat"],allowed_provider_ids:[]}')"
 other_project_body="$(jq -n --arg id "$other_project_id" '{id:$id,name:"Artifact tenant isolation smoke",allowed_capabilities:["ai.chat"],allowed_provider_ids:[]}')"
@@ -134,6 +148,8 @@ viewer_token="$(jq -er '.token' <<<"$viewer_token_response")"
 other_token_response="$(curl -fsS -X POST "$base_url/v1/projects/$other_project_id/tokens" "${admin_headers[@]}" -d '{"name":"artifact-smoke-other-operator","role":"operator"}')"
 other_token="$(jq -er '.token' <<<"$other_token_response")"
 
+phase="create job and upload project artifact"
+echo "Artifact smoke phase: $phase"
 job_response="$(curl -fsS -X POST "$base_url/v1/projects/$project_id/jobs" \
   -H "Authorization: Bearer $project_token" -H "Content-Type: application/json" \
   -d "$(jq -n --arg key "$job_key" '{idempotency_key:$key,job_type:"system_noop",agent_role:"integrator"}')")"
@@ -154,6 +170,8 @@ test "$actual_sha" = "$expected_sha"
 test "$actual_size" = "$(wc -c < "$tmp/payload" | tr -d ' ')"
 test "$(jq -er '.content_type' <<<"$upload_response")" = "application/octet-stream"
 
+phase="download project artifact and verify headers"
+echo "Artifact smoke phase: $phase"
 download_status="$(curl -sS -o "$tmp/download" -D "$tmp/headers" -w '%{http_code}' \
   -H "Authorization: Bearer $project_token" \
   "$base_url/v1/projects/$project_id/artifacts/$artifact_id")"
@@ -165,6 +183,8 @@ grep -qi '^x-content-type-options: nosniff' "$tmp/headers"
 grep -qi '^cache-control: private, no-store' "$tmp/headers"
 grep -qi '^content-type: application/octet-stream' "$tmp/headers"
 
+phase="claim worker and upload worker artifact"
+echo "Artifact smoke phase: $phase"
 worker_id="artifact-smoke-worker-${suffix}"
 worker_claim_response="$(curl -fsS -X POST "$base_url/v1/projects/$project_id/workers/claim" \
   -H "Authorization: Bearer $project_token" -H "Content-Type: application/json" \
@@ -187,6 +207,8 @@ worker_actual_size="$(jq -er '.size_bytes' <<<"$worker_upload_response")"
 test "$worker_actual_sha" = "$worker_expected_sha"
 test "$worker_actual_size" = "$(wc -c < "$tmp/worker-payload" | tr -d ' ')"
 
+phase="download worker artifact and verify lease headers"
+echo "Artifact smoke phase: $phase"
 worker_download_status="$(curl -sS -o "$tmp/worker-download" -D "$tmp/worker-headers" -w '%{http_code}' \
   -H "X-USH-Worker-ID: $worker_id" -H "X-USH-Lease-Token: $worker_lease_token" \
   "$base_url/v1/worker/projects/$project_id/jobs/$job_id/artifacts/$worker_artifact_id")"
@@ -198,6 +220,8 @@ grep -qi '^x-content-type-options: nosniff' "$tmp/worker-headers"
 grep -qi '^cache-control: private, no-store' "$tmp/worker-headers"
 grep -qi '^content-type: application/octet-stream' "$tmp/worker-headers"
 
+phase="authorization and tenant isolation assertions"
+echo "Artifact smoke phase: $phase"
 worker_unauthorized_status="$(curl -sS -o "$tmp/worker-unauthorized" -w '%{http_code}' \
   "$base_url/v1/worker/projects/$project_id/jobs/$job_id/artifacts/$worker_artifact_id")"
 test "$worker_unauthorized_status" = "401"
@@ -219,6 +243,8 @@ cross_project_status="$(curl -sS -o "$tmp/cross-project" -w '%{http_code}' \
   -H "Authorization: Bearer $other_token" "$base_url/v1/projects/$project_id/artifacts/$artifact_id")"
 test "$cross_project_status" = "403"
 
+phase="invalid metadata and content-type assertions"
+echo "Artifact smoke phase: $phase"
 invalid_type_status="$(curl -sS -o "$tmp/invalid-type" -w '%{http_code}' -X POST \
   "$base_url/v1/projects/$project_id/jobs/$job_id/artifacts" \
   -H "Authorization: Bearer $project_token" -H "Content-Type: application/octet-stream" \
@@ -236,6 +262,8 @@ task_mismatch_status="$(curl -sS -o "$tmp/task-mismatch" -w '%{http_code}' -X PO
   --data-binary "@$tmp/payload")"
 test "$task_mismatch_status" = "409"
 
+phase="upload-size-bound assertion"
+echo "Artifact smoke phase: $phase"
 head -c 2097153 /dev/zero > "$tmp/oversize"
 oversize_status="$(curl -sS -o "$tmp/oversize-response" -w '%{http_code}' -X POST \
   "$base_url/v1/projects/$project_id/jobs/$job_id/artifacts" \
@@ -243,6 +271,8 @@ oversize_status="$(curl -sS -o "$tmp/oversize-response" -w '%{http_code}' -X POS
   -H "X-Artifact-Type: test-result" --data-binary "@$tmp/oversize")"
 test "$oversize_status" = "413"
 
+phase="project artifact integrity mismatch assertion"
+echo "Artifact smoke phase: $phase"
 object_key="$prefix/$project_id/jobs/$job_id/$artifact_id"
 printf 'corrupted artifact bytes' > "$tmp/corrupt"
 docker cp "$tmp/corrupt" "$silo_name:/tmp/corrupt" >/dev/null
@@ -253,6 +283,8 @@ integrity_status="$(curl -sS -o "$tmp/integrity" -w '%{http_code}' \
 test "$integrity_status" = "500"
 test "$(jq -er '.error' "$tmp/integrity")" = "artifact_integrity_check_failed"
 
+phase="worker artifact integrity mismatch assertion"
+echo "Artifact smoke phase: $phase"
 worker_object_key="$prefix/$project_id/jobs/$job_id/$worker_artifact_id"
 printf 'corrupted worker artifact bytes' > "$tmp/corrupt-worker"
 docker cp "$tmp/corrupt-worker" "$silo_name:/tmp/corrupt-worker" >/dev/null
