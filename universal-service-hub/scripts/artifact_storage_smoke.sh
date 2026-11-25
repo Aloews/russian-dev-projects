@@ -212,6 +212,7 @@ echo "Artifact smoke phase: $phase"
 worker_download_status="$(curl -sS -o "$tmp/worker-download" -D "$tmp/worker-headers" -w '%{http_code}' \
   -H "X-USH-Worker-ID: $worker_id" -H "X-USH-Lease-Token: $worker_lease_token" \
   "$base_url/v1/worker/projects/$project_id/jobs/$job_id/artifacts/$worker_artifact_id")"
+echo "Worker artifact download HTTP status: $worker_download_status"
 test "$worker_download_status" = "200"
 cmp -s "$tmp/worker-payload" "$tmp/worker-download"
 grep -qi "^x-artifact-sha256: $worker_expected_sha" "$tmp/worker-headers"
