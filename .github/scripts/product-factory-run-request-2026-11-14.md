@@ -18,3 +18,8 @@ Expected route on the feature branch:
 5. Preserve the base-branch SHA guard. No PR merge, production deployment, production migration, secret/permission change or paid resource provisioning.
 
 Acceptance evidence: workflow run and job/step logs; redacted Starimg diagnostic (including HTTP status/key slot only); Qwen model selection and inference result if fallback is used; candidate patch and exact base SHA; full verifier report; target-product PR and exact head SHA; Vercel Preview URL tied to that SHA; browser/API evidence for OTP, tenant isolation, property/evidence submission, independent approval, verified-only listing and enquiry persistence. CI success alone is not a staging MVP.
+
+
+## Execution retry — 2026-11-25
+
+Trigger this checkpoint through a meaningful push to `fix/factory-starimg-primary`, which runs the workflow definition on this branch. Do **not** use `/factory run` on a PR comment: that event loads the default-branch workflow and its older provider routing. Keep the exact target (`Aloews/full`, `factory/elite-estate-rc4`, base `foundation/luxury-estate-platform`) and the staging MVP objective above. The Starimg forced-tool probe must be attempted first; HTTP 402/any failed probe or implementation must immediately route to bounded local Qwen 2.5 Coder 3B. Do not use Fable or OpenRouter. Record the exact run/runner, diagnostics, Qwen inference, candidate, verifier and target PR/Preview evidence; if Actions run listing is unavailable, record that limitation and do not claim the run's result.
