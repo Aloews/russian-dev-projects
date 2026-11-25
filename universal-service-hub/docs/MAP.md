@@ -785,12 +785,14 @@ Current implementation is in `src/checkpoint.rs`; it is a durable storage primit
 - This verifies the current PR head against the repository workflow. It does not establish that the live agent loop uses checkpoint save/restore or that arbitrary external tool side effects are exactly-once.
 - PR #100 remains Draft and unmerged. No production migration or deployment was performed.
 
-### AR-05 worker artifact download transport — PR #107 (pending verification)
+### AR-05 worker artifact download transport — PR #107 (exact-head verification pending)
 
 - Added a lease-scoped worker GET path for artifacts under the current project/job/task; it uses the worker ID and lease token, not project bearer tokens or S3 credentials.
 - The API bounds the response to 2 MiB, checks object SHA-256 and size, rechecks the active lease after object-store access, and sends private/no-store, nosniff and attachment headers.
-- The worker client validates the expected SHA-256, size and content type; S3-compatible smoke coverage now checks round-trip bytes, missing/wrong lease, cross-project denial and integrity mismatch.
-- CI has not yet verified the exact PR head. This transport is not yet wired into checkpoint observation persistence or a live agent executor.
+- The worker client validates expected SHA-256, size and content type; S3-compatible smoke coverage checks round-trip bytes, missing/wrong lease, cross-project denial and integrity mismatch.
+- Previous exact head `37a094de4994adb82a00e5ef73b0e3da5b3ad9b3` was checked by run [#2001 / 45379624560](https://github.com/Aloews/russian-dev-projects/actions/runs/45379624560) and failed specifically at **S3-compatible artifact API integration smoke**. The full job log shows PostgreSQL syntax error near a literal backslash in the worker upload lease recheck SQL; it is not a runner-allocation failure.
+- Current pre-documentation head `9ffa7df4666c3ee0ad61d154d5b374fdc4cd1094` removes the escaped backslash from that SQL string. This correction is present in the diff but not yet verified by CI. The current PR head will change with this documentation commit and must be verified anew.
+- Artifact transport is not yet wired into checkpoint observation persistence or a live agent executor.
 
 ## AR-05 tool receipt store — implementation in progress
 
