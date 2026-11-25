@@ -785,14 +785,13 @@ Current implementation is in `src/checkpoint.rs`; it is a durable storage primit
 - This verifies the current PR head against the repository workflow. It does not establish that the live agent loop uses checkpoint save/restore or that arbitrary external tool side effects are exactly-once.
 - PR #100 remains Draft and unmerged. No production migration or deployment was performed.
 
-### AR-05 worker artifact download transport — PR #107 (CI failure under diagnosis)
+### AR-05 worker artifact download transport — PR #107 (route mismatch fixed; CI pending)
 
-- Added a lease-scoped worker GET path for artifacts under the current project/job/task; it uses the worker ID and lease token, not project bearer tokens or S3 credentials.
-- The API bounds the response to 2 MiB, checks object SHA-256 and size, rechecks the active lease after object-store access, and sends private/no-store, nosniff and attachment headers. The worker client verifies expected SHA-256, size and content type.
-- Exact head `54bb04db370f59300ddc7d71e448ad009b3d8eee` failed run [#2006 / 45599731318](https://github.com/Aloews/russian-dev-projects/actions/runs/45599731318), with runner allocated. Rust format, Clippy, tests, Python/Ruff, migrations, Docker build and worker-image smoke passed before the **S3-compatible artifact API integration smoke** failure. Compose startup and container smoke were skipped after that failure.
-- Full log evidence includes `curl: (56) Recv failure: Connection reset by peer` and `curl: (7) Failed to connect to 127.0.0.1 port 18001`; the API container remained running and logged startup on port 18001 at 11:03:01.078 UTC. The exact failing smoke phase is not yet identified, so no code root cause is asserted.
-- Added non-secret phase markers and failure-phase output to `scripts/artifact_storage_smoke.sh`; the next exact-head CI run will pinpoint the failing phase without enabling shell tracing or exposing tokens.
-- Worker artifact downloads are not yet wired into checkpoint observation persistence or a live agent executor.
+- Added a lease-scoped worker GET path for artifacts under the current project/job/task; it uses the worker ID and lease token, not project bearer tokens or S3 credentials. The API bounds the response to 2 MiB, checks object SHA-256 and size, rechecks the active lease after object-store access, and sends private/no-store, nosniff and attachment headers.
+- Exact head `6fb594b4e6795f3cde42456fbff08a89d8edf584` failed run [#2007 / 45604473003](https://github.com/Aloews/russian-dev-projects/actions/runs/45604473003). The phase markers pinpointed failure at **download worker artifact and verify lease headers**; preceding API/project upload, project download, worker claim and worker upload phases reached their assertions.
+- Root cause confirmed by source: the GET handler required `(project_id, job_id, artifact_id)`, but the router attached GET to the two-parameter upload path. The worker download URL includes `artifact_id`, so the GET route was not matched. The smoke did not print the response status before failing, so a 404 is not directly observed.
+- Split the route: POST remains on `/v1/worker/projects/{project_id}/jobs/{job_id}/artifacts`; GET now uses `/v1/worker/projects/{project_id}/jobs/{job_id}/artifacts/{artifact_id}`. The smoke also prints the download HTTP status (no credentials) before asserting 200.
+- Re-run CI on the exact current head. Worker download remains not verified until the S3-compatible smoke passes; agent observation persistence/handoff is still not wired.
 ## AR-05 tool receipt store — implementation in progress
 
 - Next bounded increment: PostgreSQL durable tool-action receipts with deterministic, scope-bound idempotency keys, reservation/completion/uncertain states, lease-token fencing and duplicate/collision regression tests.
