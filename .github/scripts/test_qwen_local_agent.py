@@ -73,6 +73,125 @@ class QwenEditSafetyTests(unittest.TestCase):
                 "edits": [{"path": "src/api.py", "old": "x", "new": "y"}],
             }, permitted)
 
+    def test_node_builtin_test_recovery_is_allowed_without_package_test_script(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "package.json").write_text(json.dumps({
+                    "scripts": {"build": "next build", "lint": "eslint ."},
+                    "dependencies": {"next": "15.5.29", "react": "19.1.10"},
+                }), encoding="utf-8")
+                response = {
+                    "review": "R" * 100,
+                    "edits": [{
+                        "path": "tests/enquiry_form_regression.test.js",
+                        "old": "",
+                        "new": (
+                            'import { test } from "node:test";\n'
+                            'import assert from "node:assert/strict";\n'
+                            'import { readFileSync } from "node:fs";\n'
+                            'test("form keeps the expected validation guard", () => { '
+                            'const source = readFileSync("app/form.tsx", "utf8"); '
+                            'assert.match(source, /validation/); });\n'
+                        ),
+                    }],
+                }
+                review = agent.validate_test_recovery(
+                    response, ["tests/enquiry_form_regression.test.js"]
+                )
+                self.assertEqual(review, "R" * 100)
+            finally:
+                agent.ROOT = previous_root
+
+    def test_node_builtin_test_recovery_requires_node_assert(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "package.json").write_text(json.dumps({
+                    "scripts": {"build": "next build"},
+                    "dependencies": {"next": "15.5.29"},
+                }), encoding="utf-8")
+                response = {
+                    "review": "R" * 100,
+                    "edits": [{
+                        "path": "tests/form_regression.test.js",
+                        "old": "",
+                        "new": 'import { test } from "node:test"; test("guard", () => {});',
+                    }],
+                }
+                with self.assertRaisesRegex(ValueError, "must import node:assert"):
+                    agent.validate_test_recovery(response, ["tests/form_regression.test.js"])
+            finally:
+                agent.ROOT = previous_root
+
+    def test_node_builtin_test_recovery_rejects_external_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "package.json").write_text(json.dumps({
+                    "scripts": {"build": "next build"},
+                    "dependencies": {"next": "15.5.29", "react": "19.1.10},
+                }), encoding="utf-8")
+                response = {
+                    "review": "R" * 100,
+                    "edits": [{
+                        "path": "tests/form_regression.test.js",
+                        "old": "",
+                        "new": (
+                            'import { test } from "node:test";\n'
+                            'import assert from "node:assert/strict";\n'
+                            'import { render } from "react";\n'
+                            'test("guard", () => { assert.ok(render); });\n'
+                        ),
+                    }],
+                }
+                with self.assertRaisesRegex(ValueError, "must not import project or external modules"):
+                    agent.validate_test_recovery(response, ["tests/form_regression.test.js"])
+            finally:
+                agent.ROOT = previous_root
+
+    def test_recovery_paths_selects_builtin_js_tests_for_tsx_without_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "package.json").write_text(json.dumps({
+                    "scripts": {"build": "next build", "lint": "eslint ."},
+                    "dependencies": {"next": "15.5.29", "react": "19.1.10},
+                }), encoding="utf-8")
+                paths = agent.test_recovery_paths(
+                    {"path": "app/enquiry-form.tsx"},
+                    ["package.json", "app/enquiry-form.tsx"],
+                )
+                self.assertEqual(paths, ["tests/enquiry_form_regression.test.js"])
+            finally:
+                agent.ROOT = previous_root
+
+    def test_test_recovery_prompt_includes_builtin_node_static_test_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "package.json").write_text(json.dumps({
+                    "scripts": {"lint": "eslint .", "build": "next build"},
+                    "dependencies": {"next": "15.5.29", "react": "19.1.10},
+                }), encoding="utf-8")
+                messages = agent.build_test_recovery_messages(
+                    {"path": "app/enquiry-form.tsx", "old": "A", "new": "B"},
+                    "fix enquiry validation",
+                    "source evidence",
+                    ["tests/enquiry_form_regression.test.js"],
+                )
+                self.assertIn("NODE BUILT-IN TEST MODE", messages[0]["content"])
+                self.assertIn("source-level regression test", messages[0]["content"])
+                self.assertIn("node:assert/strict", messages[1]["content"])
+                self.assertIn("do not import .ts/.tsx", messages[1]["content"])
+            finally:
+                agent.ROOT = previous_root
+
     def test_jsx_recovery_is_rejected_when_project_has_no_test_runner(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_root = agent.ROOT
@@ -90,7 +209,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                         "new": "import { render } from '@testing-library/react'; jest.mock('next/navigation');",
                     }],
                 }
-                with self.assertRaisesRegex(ValueError, "does not declare a runnable"):
+                with self.assertRaisesRegex(ValueError, "requires a package test script"):
                     agent.validate_test_recovery(response, ["tests/enquiry_form.test.tsx"])
             finally:
                 agent.ROOT = previous_root

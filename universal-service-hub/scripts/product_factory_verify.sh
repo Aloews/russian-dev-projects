@@ -93,6 +93,26 @@ if [[ -f "$ROOT/package-lock.json" && -f "$ROOT/package.json" ]]; then
   fi
 fi
 
+# Run dependency-free Node regression files when the target has no test script
+# (or when its test script does not invoke Node's built-in runner).
+builtin_node_tests=()
+if [[ -d "$ROOT/tests" ]]; then
+  while IFS= read -r -d '' test_file; do
+    if grep -q 'node:test' "$test_file"; then
+      builtin_node_tests+=("$test_file")
+    fi
+  done < <(find "$ROOT/tests" -maxdepth 1 -type f -name '*.test.js' -print0)
+fi
+if ((${#builtin_node_tests[@]})); then
+  node_test_script=""
+  if [[ -f "$ROOT/package.json" ]]; then
+    node_test_script=$(node -e 'const p=require(process.argv[1]); const t=p.scripts?.test; process.stdout.write(typeof t === "string" ? t : "")' "$ROOT/package.json" 2>/dev/null || true)
+  fi
+  if [[ ! -f "$ROOT/package-lock.json" || "$node_test_script" != *"node --test"* ]]; then
+    run_gate "Node built-in regression tests" node --test ${builtin_node_tests[@]}
+  fi
+fi
+
 if [[ -f "$ROOT/services/platform-api/Dockerfile" ]]; then
   run_gate "Production API Docker build" docker build --tag product-factory-api:verification --file "$ROOT/services/platform-api/Dockerfile" "$ROOT"
 fi
