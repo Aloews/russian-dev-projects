@@ -117,7 +117,9 @@ def make_context(task, tracked):
     doc_suffixes = {".md", ".mdx", ".yaml", ".yml", ".toml"}
     source_paths = [
         p for p in tracked
-        if allowed(p, tracked_set) and Path(p).suffix.lower() not in doc_suffixes
+        if allowed(p, tracked_set)
+        and Path(p).suffix.lower() not in doc_suffixes
+        and test_runner_supports_path(p)
     ]
     ranked = []
     for path in source_paths:
@@ -144,7 +146,7 @@ def make_context(task, tracked):
     source_candidates = list(dict.fromkeys(prioritized))[:8]
     doc_candidates = [p for p in docs if p in tracked]
     source_listing = (
-        "\n--- SOURCE/TEST FILE CANDIDATES (choose code edits only from these paths) ---\n"
+        "\n--- SOURCE/TEST FILE CANDIDATES (only paths with compatible test conventions; choose code edits only from these paths) ---\n"
         + "\n".join(source_candidates) + "\n"
     )
     chunks = []
@@ -172,6 +174,35 @@ def make_context(task, tracked):
         evidence = "\n--- FAILED VERIFICATION EVIDENCE ---\n" + scrub(verification)
         chunks.append(evidence[:MAX_CONTEXT_CHARS - total])
     return source_listing + "\n".join(chunks)
+
+def context_source_candidates(context):
+    """Extract implementation paths from the bounded, testable candidate listing."""
+    marker = "SOURCE/TEST FILE CANDIDATES"
+    marker_index = context.find(marker)
+    if marker_index < 0:
+        return []
+    start = context.find("\n", marker_index)
+    if start < 0:
+        return []
+    end = len(context)
+    for boundary in ("\n--- SOURCE/TEST FILE:", "\n--- PROJECT DOC:", "\n--- FAILED VERIFICATION"):
+        position = context.find(boundary, start + 1)
+        if position >= 0:
+            end = min(end, position)
+    listing = context[start + 1:end]
+    return [
+        line.strip() for line in listing.splitlines()
+        if line.strip() and not line.startswith("---") and not is_test_path(line.strip())
+    ]
+
+
+def validate_source_candidate(path, candidates):
+    if path not in candidates:
+        raise ValueError(
+            "Qwen source path is outside the testable candidate context; "
+            "choose a listed source path with compatible tests"
+        )
+
 
 EDIT_SCHEMA = {
     "type": "object",
@@ -471,6 +502,26 @@ def validate_javascript_test_edit(path, source):
         raise ValueError("Regression test uses @testing-library/react but it is not declared")
 
 
+def test_runner_supports_path(path):
+    """Only expose JavaScript/TypeScript files when the declared runner can test them."""
+    suffix = Path(path).suffix.lower()
+    if suffix not in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}:
+        return True
+    if is_test_path(path):
+        test_path = path
+    else:
+        test_suffix = {
+            ".js": ".test.js", ".jsx": ".test.jsx", ".mjs": ".test.mjs",
+            ".cjs": ".test.cjs", ".ts": ".test.ts", ".tsx": ".test.tsx",
+        }[suffix]
+        test_path = "tests/" + Path(path).stem + "_runner_probe" + test_suffix
+    try:
+        validate_javascript_test_edit(test_path, "")
+    except ValueError:
+        return False
+    return True
+
+
 def validate_test_recovery(response_json, permitted_paths):
     review = response_json.get("review") if isinstance(response_json, dict) else None
     edits = response_json.get("edits") if isinstance(response_json, dict) else None
@@ -510,7 +561,21 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
             "a unique exact anchor, choose another existing source candidate whose contents are included in the "
             "repository evidence and use its exact anchor. Do not invent a new path or claim validation succeeded.\n"
         )
-    evidence_budget = max(0, 5800 - len(instruction))
+    validation_error_lower = str(validation_error).lower()
+    if (
+        "test script and runner" in validation_error_lower
+        or "react component regression tests require" in validation_error_lower
+        or "outside the testable candidate context" in validation_error_lower
+    ):
+        instruction += (
+            "CRITICAL TEST RUNNER COMPATIBILITY: The previous candidate used a JavaScript/TypeScript path "
+            "that the repository cannot test with its declared tools. Choose only a source path from the "
+            "testable SOURCE/TEST FILE CANDIDATES list in the original context. Do not select .js, .jsx, "
+            ".ts or .tsx when no compatible runner is declared. Prefer a Rust source with Cargo test coverage "
+            "or a Python source with an existing test convention. If no listed source can be tested safely, "
+            "stop rather than inventing a runner, dependency or test command.\n"
+        )
+    evidence_budget = max(0, 5800 - len(instruction)
     return [
         *base_messages,
         {"role": "user", "content": instruction + existing_file_evidence[:evidence_budget]},
@@ -679,6 +744,10 @@ def main():
     if not context.strip():
         print("::error::No safe source context found for Qwen.")
         return 2
+    candidate_source_paths = context_source_candidates(context)
+    if "SOURCE/TEST FILE CANDIDATES" in context and not candidate_source_paths:
+        print("::error::No testable source candidates are available; project test-runner support is required.")
+        return 2
     system = (
         "You are a cautious, product-agnostic local coding fallback for any software product. "
         "Inspect the provided project evidence and project map; infer the actual stack and product domain from files, then choose one small, complete, testable increment. "
@@ -706,7 +775,8 @@ def main():
         "choose exactly one small concrete source improvement and edit exactly one non-test source file. "
         "Do not include regression tests in this pass; a separate isolated recovery inference will create one test edit. "
         "Do not simulate multiple independent agents or write a long role-play council. This is one implementation pass, "
-        "not independent verification. Documentation-only changes are rejected. Prefer an existing source file "
+        "not independent verification. Documentation-only changes are rejected. Choose the implementation path exclusively from the testable SOURCE/TEST FILE CANDIDATES list. "
+        "Unsupported JavaScript/TypeScript files are omitted when no compatible runner is declared. Prefer an existing source file "
         "present in the supplied context and use an exact unique old snippet. The one-file limit is intentional. "
         "The review field should briefly identify the selected file, risk, test needed and unknowns. "
         "Do not claim tests were run. Return only JSON matching the schema."
@@ -743,6 +813,8 @@ def main():
             ]
             if len(source_edits) != 1:
                 raise ValueError("Qwen implementation pass must contain exactly one source edit")
+            if candidate_source_paths:
+                validate_source_candidate(source_edits[0]["path"], candidate_source_paths)
             # Reject stale or hallucinated anchors before the expensive, independent
             # regression-test inference. A failure triggers a source-only retry with
             # the exact current file content attached as evidence.

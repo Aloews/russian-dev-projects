@@ -446,6 +446,15 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertIn('old="" is forbidden', prompt)
         self.assertIn("app/form.tsx", prompt)
         self.assertIn("const oldValue = true;", prompt)
+    def test_retry_prompt_steers_unsupported_js_tests_to_testable_sources(self):
+        retry = agent.build_retry_messages(
+            [{"role": "user", "content": "objective"}],
+            "Project package.json does not declare a runnable JavaScript/TypeScript test script and runner",
+        )
+        prompt = retry[-1]["content"]
+        self.assertIn("CRITICAL TEST RUNNER COMPATIBILITY", prompt)
+        self.assertIn("testable SOURCE/TEST FILE CANDIDATES", prompt)
+        self.assertIn("Do not select .js, .jsx, .ts or .tsx", prompt)
     def test_retry_prompt_caps_error_and_existing_file_context(self):
         retry = agent.build_retry_messages(
             [{"role": "user", "content": "objective"}],
@@ -526,6 +535,52 @@ class QwenEditSafetyTests(unittest.TestCase):
                 self.assertLess(context.index("SOURCE/TEST FILE: src/api.py"), context.index("PROJECT DOC: docs/MAP.md"))
             finally:
                 agent.ROOT = previous_root
+
+    def test_context_omits_jsx_without_runner_and_keeps_rust_candidates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous_root = agent.ROOT
+            try:
+                agent.ROOT = Path(directory)
+                (agent.ROOT / "package.json").write_text(json.dumps({
+                    "scripts": {"build": "next build", "lint": "eslint ."},
+                    "dependencies": {"next": "15.5.29", "react": "19.1.10"},
+                }), encoding="utf-8")
+                for path, content in (
+                    ("app/enquiry-form.tsx", "export default function Form() { return null; }\n"),
+                    ("tests/enquiry-form.test.tsx", "export const test = true;\n"),
+                    ("services/platform-api/src/elite.rs", "pub fn submit_enquiry() {}\n"),
+                    ("services/platform-api/tests/elite_regression.rs", "#[test] fn submit_enquiry() {}\n"),
+                ):
+                    file_path = agent.ROOT / path
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_text(content, encoding="utf-8")
+                tracked = [
+                    "package.json", "app/enquiry-form.tsx", "tests/enquiry-form.test.tsx",
+                    "services/platform-api/src/elite.rs", "services/platform-api/tests/elite_regression.rs",
+                ]
+                context = agent.make_context("enquiry form and API", tracked)
+                candidate_listing = context.split("SOURCE/TEST FILE CANDIDATES", 1)[1].split("--- SOURCE/TEST FILE:", 1)[0]
+                self.assertNotIn("app/enquiry-form.tsx", candidate_listing)
+                self.assertNotIn("tests/enquiry-form.test.tsx", candidate_listing)
+                self.assertIn("services/platform-api/src/elite.rs", candidate_listing)
+                self.assertIn("services/platform-api/tests/elite_regression.rs", candidate_listing)
+                self.assertEqual(agent.context_source_candidates(context), ["services/platform-api/src/elite.rs"])
+                self.assertFalse(agent.test_runner_supports_path("app/enquiry-form.tsx"))
+                self.assertTrue(agent.test_runner_supports_path("services/platform-api/src/elite.rs"))
+            finally:
+                agent.ROOT = previous_root
+
+    def test_context_source_candidates_excludes_test_paths_and_validator_requires_listing(self):
+        context = (
+            "--- SOURCE/TEST FILE CANDIDATES (testable) ---\n"
+            "src/main.py\n"
+            "tests/test_main.py\n"
+            "\n--- SOURCE/TEST FILE: src/main.py ---\n"
+            "source\n"
+        )
+        self.assertEqual(agent.context_source_candidates(context), ["src/main.py"])
+        with self.assertRaisesRegex(ValueError, "outside the testable candidate context"):
+            agent.validate_source_candidate("src/other.py", ["src/main.py"])
 
 class ProductFactoryRecoveryTests(unittest.TestCase):
     def _run_main_with_responses(self, responses):
