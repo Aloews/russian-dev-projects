@@ -238,7 +238,7 @@ def test_recovery_paths(source_edit, tracked):
     )
     has_react_runner = bool(
         config and config["has_test_script"]
-        and {"jest", "vitest"} & config["runners]
+        and {"jest", "vitest"} & config["runners"]
     )
     use_builtin_node_test = suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"} and (
         not has_declared_runner or suffix in {".jsx", ".tsx"} and not has_react_runner
