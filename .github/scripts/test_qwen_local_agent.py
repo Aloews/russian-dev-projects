@@ -446,6 +446,7 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertIn('old="" is forbidden', prompt)
         self.assertIn("app/form.tsx", prompt)
         self.assertIn("const oldValue = true;", prompt)
+
     def test_retry_prompt_steers_unsupported_js_tests_to_testable_sources(self):
         retry = agent.build_retry_messages(
             [{"role": "user", "content": "objective"}],
@@ -455,6 +456,7 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertIn("CRITICAL TEST RUNNER COMPATIBILITY", prompt)
         self.assertIn("testable SOURCE/TEST FILE CANDIDATES", prompt)
         self.assertIn("Do not select .js, .jsx, .ts or .tsx", prompt)
+
     def test_retry_prompt_caps_error_and_existing_file_context(self):
         retry = agent.build_retry_messages(
             [{"role": "user", "content": "objective"}],
@@ -570,6 +572,7 @@ class QwenEditSafetyTests(unittest.TestCase):
             finally:
                 agent.ROOT = previous_root
 
+
     def test_context_source_candidates_excludes_test_paths_and_validator_requires_listing(self):
         context = (
             "--- SOURCE/TEST FILE CANDIDATES (testable) ---\n"
@@ -581,6 +584,7 @@ class QwenEditSafetyTests(unittest.TestCase):
         self.assertEqual(agent.context_source_candidates(context), ["src/main.py"])
         with self.assertRaisesRegex(ValueError, "outside the testable candidate context"):
             agent.validate_source_candidate("src/other.py", ["src/main.py"])
+
 
 class ProductFactoryRecoveryTests(unittest.TestCase):
     def _run_main_with_responses(self, responses):

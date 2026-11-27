@@ -575,7 +575,7 @@ def build_retry_messages(base_messages, validation_error, existing_file_evidence
             "or a Python source with an existing test convention. If no listed source can be tested safely, "
             "stop rather than inventing a runner, dependency or test command.\n"
         )
-    evidence_budget = max(0, 5800 - len(instruction)
+    evidence_budget = max(0, 5800 - len(instruction))
     return [
         *base_messages,
         {"role": "user", "content": instruction + existing_file_evidence[:evidence_budget]},
