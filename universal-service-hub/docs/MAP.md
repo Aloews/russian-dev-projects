@@ -785,15 +785,26 @@ Current implementation is in `src/checkpoint.rs`; it is a durable storage primit
 - This verifies the current PR head against the repository workflow. It does not establish that the live agent loop uses checkpoint save/restore or that arbitrary external tool side effects are exactly-once.
 - PR #100 remains Draft and unmerged. No production migration or deployment was performed.
 
-### AR-05 worker artifact download transport — PR #107 (route mismatch fixed; CI pending)
+### AR-05 worker artifact download transport — PR #107 (exact-head CI verified)
 
-- Added a lease-scoped worker GET path for artifacts under the current project/job/task; it uses the worker ID and lease token, not project bearer tokens or S3 credentials. The API bounds the response to 2 MiB, checks object SHA-256 and size, rechecks the active lease after object-store access, and sends private/no-store, nosniff and attachment headers.
-- Exact head `6fb594b4e6795f3cde42456fbff08a89d8edf584` failed run [#2007 / 45604473003](https://github.com/Aloews/russian-dev-projects/actions/runs/45604473003). The phase markers pinpointed failure at **download worker artifact and verify lease headers**; preceding API/project upload, project download, worker claim and worker upload phases reached their assertions.
-- Root cause confirmed by source: the GET handler required `(project_id, job_id, artifact_id)`, but the router attached GET to the two-parameter upload path. The worker download URL includes `artifact_id`, so the GET route was not matched. The smoke did not print the response status before failing, so a 404 is not directly observed.
-- Split the route: POST remains on `/v1/worker/projects/{project_id}/jobs/{job_id}/artifacts`; GET now uses `/v1/worker/projects/{project_id}/jobs/{job_id}/artifacts/{artifact_id}`. The smoke also prints the download HTTP status (no credentials) before asserting 200.
-- Re-run CI on the exact current head. Worker download remains not verified until the S3-compatible smoke passes; agent observation persistence/handoff is still not wired.
+- Added the lease-scoped worker GET path and bounded artifact client: current worker lease identity/token, project/job/task scope, 2 MiB limit, SHA-256/size/content-type checks, lease recheck, and private/no-store, nosniff, attachment headers.
+- Exact PR #107 head 7d7ae259f70bd072a0ede7dc7333f92afc168769 passed UHS CI run #2009 (45606255431). Job steps confirmed Rust format, Clippy, Rust tests, Python compile/Ruff/tests, migration smoke, Docker build, worker binary smoke, S3-compatible artifact API integration smoke, Compose startup and container smoke all succeeded.
+- Previous exact head 6fb594b4e6795f3cde42456fbff08a89d8edf584 failed run #2007 (45604473003) at worker artifact download. Root cause was the GET route being attached to the two-parameter upload route instead of including artifact_id; that mismatch is fixed on the current head.
+- This verifies the worker artifact-download transport and integration smoke only. It does not prove provider execution, live agent observation handoff, checkpoint recovery or production S3 certification.
+
 ## AR-05 tool receipt store — implementation in progress
 
 - Next bounded increment: PostgreSQL durable tool-action receipts with deterministic, scope-bound idempotency keys, reservation/completion/uncertain states, lease-token fencing and duplicate/collision regression tests.
 - This receipt store is a prerequisite only until the live agent loop uses it and stores tool observations in S3-backed artifacts. It does not claim exactly-once external effects; downstream executors must accept and honor the same idempotency key.
 - New code and migration are not yet verified. No live agent provider/executor is wired and no production migration is authorized.
+
+
+## AR-05 artifact-backed observation restore metadata — Draft PR #109
+
+- Implemented in branch feat/ush-observation-restore-contract-20261127, stacked on the exact green PR #107 head 7d7ae259f70bd072a0ede7dc7333f92afc168769.
+- Adds bounded ObservationArtifactRef metadata to the version-1 checkpoint: action/tool/version/digest, derived idempotency key, artifact ID, SHA-256, byte size and JSON content type. Raw tool output is not stored in checkpoint JSON.
+- Validation rejects invalid or mismatched scope-bound keys, non-JSON content type, oversized references, duplicate action/artifact IDs and artifact IDs not registered in the checkpoint.
+- restore_tool_observations verifies checkpoint scope, exact referenced-artifact set, byte size, SHA-256 and JSON parsing before reconstructing in-memory observations. Regression tests cover round-trip restore and missing/extra/corrupt/size-mismatched/non-JSON artifacts.
+- Empty reference arrays are omitted from serialization to preserve existing checkpoint digests; no migration is included.
+- Status: IMPLEMENTED IN DRAFT BRANCH; exact-head CI pending. This is a restore contract/helper, not persistence or live agent-loop integration. ToolReceiptStore and checkpoint save/load remain unwired to run_agent_loop/worker; no exactly-once external effects are claimed.
+- Next: add the async resumable orchestration layer that binds artifact upload/download, checkpoint CAS and tool receipts around each tool invocation; add PostgreSQL restart/replay/uncertain-state tests and worker/API scope tests.

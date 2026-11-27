@@ -6,6 +6,8 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::agent_runtime::{AgentState, Budget};
+use std::collections::{BTreeMap, BTreeSet};
+use crate::agent_runtime::{ToolObservation, MAX_TOOL_OUTPUT_BYTES};
 
 pub mod tool_receipts;
 
@@ -13,6 +15,60 @@ pub const CHECKPOINT_SCHEMA_VERSION: u16 = 1;
 pub const MAX_CHECKPOINT_BYTES: usize = 16 * 1024;
 const MAX_COMPLETED_STEPS: usize = 250;
 const MAX_ARTIFACT_IDS: usize = 128;
+
+const MAX_OBSERVATION_REFS: usize = 128;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ObservationArtifactRef {
+    pub action_id: Uuid,
+    pub tool_id: String,
+    pub tool_version: u16,
+    pub action_sha256: String,
+    pub idempotency_key: String,
+    pub artifact_id: Uuid,
+    pub sha256: String,
+    pub size_bytes: u32,
+    pub content_type: String,
+}
+
+fn valid_lower_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+fn valid_tool_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+}
+
+impl ObservationArtifactRef {
+    pub fn validate(&self, project_id: &str, job_id: Uuid, task_id: Uuid) -> Result<(), CheckpointError> {
+        let expected_key = tool_receipts::derive_tool_idempotency_key(
+            project_id,
+            job_id,
+            task_id,
+            self.action_id,
+            &self.tool_id,
+            self.tool_version,
+            &self.action_sha256,
+        ).map_err(|_| CheckpointError::Invalid)?;
+        if self.action_id == Uuid::nil()
+            || !valid_tool_identifier(&self.tool_id)
+            || self.tool_version == 0
+            || !valid_lower_sha256(&self.action_sha256)
+            || self.idempotency_key != expected_key
+            || self.idempotency_key.len() > 96
+            || self.artifact_id == Uuid::nil()
+            || !valid_lower_sha256(&self.sha256)
+            || self.size_bytes as usize > MAX_TOOL_OUTPUT_BYTES
+            || self.content_type != "application/json"
+        {
+            return Err(CheckpointError::Invalid);
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +85,9 @@ pub struct AgentCheckpoint {
     pub completed_steps: Vec<String>,
     #[serde(default)]
     pub artifact_ids: Vec<Uuid>,
+    // Raw tool observations remain in artifacts, not in the checkpoint envelope.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observation_refs: Vec<ObservationArtifactRef>,
     #[serde(default)]
     pub last_action_digest: Option<String>,
     pub saved_at: DateTime<Utc>,
@@ -105,6 +164,20 @@ impl AgentCheckpoint {
         {
             return Err(CheckpointError::Invalid);
         }
+        let mut observation_artifacts = BTreeSet::new();
+        let mut observation_actions = BTreeSet::new();
+        for reference in &self.observation_refs {
+            reference.validate(expected_project, expected_job, expected_task)?;
+            if !self.artifact_ids.contains(&reference.artifact_id)
+                || !observation_artifacts.insert(reference.artifact_id)
+                || !observation_actions.insert(reference.action_id)
+            {
+                return Err(CheckpointError::Invalid);
+            }
+        }
+        if self.observation_refs.len() > MAX_OBSERVATION_REFS {
+            return Err(CheckpointError::Invalid);
+        }
         let bytes = serde_json::to_vec(self).map_err(|_| CheckpointError::Invalid)?;
         if bytes.len() > MAX_CHECKPOINT_BYTES {
             return Err(CheckpointError::Invalid);
@@ -132,6 +205,39 @@ impl AgentCheckpoint {
         }
         Ok(checkpoint)
     }
+}
+
+/// Restore JSON observations from artifacts referenced by a checkpoint already verified
+/// by CheckpointStore::load or decode_and_verify. The map must contain exactly the
+/// artifact IDs referenced by the checkpoint.
+pub fn restore_tool_observations(
+    checkpoint: &AgentCheckpoint,
+    expected_project: &str,
+    expected_job: Uuid,
+    expected_task: Uuid,
+    artifacts: &BTreeMap<Uuid, Vec<u8>>,
+) -> Result<Vec<ToolObservation>, CheckpointError> {
+    checkpoint.validate(expected_project, expected_job, expected_task)?;
+    if artifacts.len() != checkpoint.observation_refs.len() {
+        return Err(CheckpointError::Invalid);
+    }
+    let mut observations = Vec::with_capacity(checkpoint.observation_refs.len());
+    for reference in &checkpoint.observation_refs {
+        reference.validate(expected_project, expected_job, expected_task)?;
+        let bytes = artifacts.get(&reference.artifact_id).ok_or(CheckpointError::Invalid)?;
+        if bytes.len() != reference.size_bytes as usize
+            || bytes.len() > MAX_TOOL_OUTPUT_BYTES
+            || hex::encode(Sha256::digest(bytes)) != reference.sha256
+        {
+            return Err(CheckpointError::IntegrityMismatch);
+        }
+        let output: Value = serde_json::from_slice(bytes).map_err(|_| CheckpointError::Invalid)?;
+        observations.push(ToolObservation {
+            tool_id: reference.tool_id.clone(),
+            output,
+        });
+    }
+    Ok(observations)
 }
 
 /// PostgreSQL CAS checkpoint store. The lease token is a fencing token: an expired or
@@ -213,9 +319,147 @@ mod tests {
             },
             completed_steps: vec!["read_input".into()],
             artifact_ids: vec![Uuid::from_u128(9)],
+            observation_refs: vec![],
             last_action_digest: Some("a".repeat(64)),
             saved_at: Utc::now(),
         }
+    }
+
+    fn observation_reference(
+        project_id: &str,
+        job_id: Uuid,
+        task_id: Uuid,
+        action_id: Uuid,
+        artifact_id: Uuid,
+        bytes: &[u8],
+    ) -> ObservationArtifactRef {
+        let action_sha256 = "b".repeat(64);
+        let identity = tool_receipts::ToolReceiptIdentity::new(
+            project_id.to_owned(),
+            job_id,
+            task_id,
+            action_id,
+            "artifact.read".to_owned(),
+            1,
+            action_sha256.clone(),
+        ).unwrap();
+        ObservationArtifactRef {
+            action_id,
+            tool_id: "artifact.read".into(),
+            tool_version: 1,
+            action_sha256,
+            idempotency_key: identity.idempotency_key,
+            artifact_id,
+            sha256: hex::encode(Sha256::digest(bytes)),
+            size_bytes: bytes.len() as u32,
+            content_type: "application/json".into(),
+        }
+    }
+
+    #[test]
+    fn checkpoint_restores_verified_artifact_backed_tool_observations() {
+        let output = serde_json::json!({"answer":"saved observation"});
+        let bytes = serde_json::to_vec(&output).unwrap();
+        let artifact_id = Uuid::from_u128(10);
+        let reference = observation_reference(
+            "project-a", Uuid::from_u128(7), Uuid::from_u128(8),
+            Uuid::from_u128(11), artifact_id, &bytes,
+        );
+        let mut original = checkpoint(3);
+        original.artifact_ids = vec![artifact_id];
+        original.observation_refs = vec![reference];
+        original.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)).unwrap();
+        let json = serde_json::to_value(&original).unwrap();
+        let verified = AgentCheckpoint::decode_and_verify(
+            json, &original.digest().unwrap(), "project-a", Uuid::from_u128(7), Uuid::from_u128(8),
+        ).unwrap();
+        let artifacts = BTreeMap::from([(artifact_id, bytes)]);
+        let restored = restore_tool_observations(
+            &verified, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &artifacts,
+        ).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].tool_id, "artifact.read");
+        assert_eq!(restored[0].output, output);
+    }
+
+    #[test]
+    fn checkpoint_observation_refs_reject_invalid_digest_key_type_duplicates_and_unregistered_ids() {
+        let bytes = serde_json::to_vec(&serde_json::json!({"ok":true})).unwrap();
+        let artifact_id = Uuid::from_u128(12);
+        let reference = observation_reference(
+            "project-a", Uuid::from_u128(7), Uuid::from_u128(8),
+            Uuid::from_u128(13), artifact_id, &bytes,
+        );
+        let mut valid = checkpoint(1);
+        valid.artifact_ids = vec![artifact_id];
+        valid.observation_refs = vec![reference.clone()];
+        assert!(valid.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)).is_ok());
+
+        let mut bad_key = valid.clone();
+        bad_key.observation_refs[0].idempotency_key.push('x');
+        assert_eq!(bad_key.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
+
+        let mut bad_content_type = valid.clone();
+        bad_content_type.observation_refs[0].content_type = "text/plain".into();
+        assert_eq!(bad_content_type.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
+
+        let mut unregistered = valid.clone();
+        unregistered.artifact_ids.clear();
+        assert_eq!(unregistered.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
+
+        let mut duplicate = valid.clone();
+        duplicate.observation_refs.push(reference);
+        assert_eq!(duplicate.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
+    }
+
+    #[test]
+    fn observation_restore_rejects_missing_extra_corrupt_size_and_non_json_artifacts() {
+        let output = serde_json::json!({"value":1});
+        let bytes = serde_json::to_vec(&output).unwrap();
+        let artifact_id = Uuid::from_u128(14);
+        let reference = observation_reference(
+            "project-a", Uuid::from_u128(7), Uuid::from_u128(8),
+            Uuid::from_u128(15), artifact_id, &bytes,
+        );
+        let mut base = checkpoint(1);
+        base.artifact_ids = vec![artifact_id];
+        base.observation_refs = vec![reference];
+
+        assert!(matches!(
+            restore_tool_observations(&base, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &BTreeMap::new()),
+            Err(CheckpointError::Invalid)
+        ));
+        assert!(matches!(
+            restore_tool_observations(&base, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &BTreeMap::from([(artifact_id, bytes.clone()), (Uuid::from_u128(16), vec![])])),
+            Err(CheckpointError::Invalid)
+        ));
+
+        let mut corrupt = bytes.clone();
+        corrupt[0] ^= 1;
+        assert!(matches!(
+            restore_tool_observations(&base, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &BTreeMap::from([(artifact_id, corrupt)])),
+            Err(CheckpointError::IntegrityMismatch)
+        ));
+
+        let mut wrong_size = base.clone();
+        wrong_size.observation_refs[0].size_bytes = (bytes.len() + 1) as u32;
+        assert!(matches!(
+            restore_tool_observations(&wrong_size, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &BTreeMap::from([(artifact_id, bytes.clone())])),
+            Err(CheckpointError::IntegrityMismatch)
+        ));
+
+        let invalid_json = b"not-json".to_vec();
+        let invalid_ref = observation_reference(
+            "project-a", Uuid::from_u128(7), Uuid::from_u128(8),
+            Uuid::from_u128(17), Uuid::from_u128(18), &invalid_json,
+        );
+        let mut invalid_checkpoint = checkpoint(1);
+        invalid_checkpoint.artifact_ids = vec![Uuid::from_u128(18)];
+        invalid_checkpoint.observation_refs = vec![invalid_ref];
+        assert!(matches!(
+            restore_tool_observations(&invalid_checkpoint, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &BTreeMap::from([(Uuid::from_u128(18), invalid_json)])),
+            Err(CheckpointError::Invalid)
+        ));
     }
 
     #[tokio::test]
@@ -264,6 +508,7 @@ mod tests {
             },
             completed_steps: vec!["input_loaded".into()],
             artifact_ids: vec![],
+            observation_refs: vec![],
             last_action_digest: None,
             saved_at: Utc::now(),
         };
