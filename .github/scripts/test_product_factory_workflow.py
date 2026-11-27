@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "product-factory.yml"
 VERIFY_ACTION = ROOT / ".github" / "actions" / "product-factory-verify" / "action.yml"
+VERIFY_SCRIPT = ROOT / "universal-service-hub" / "scripts" / "product_factory_verify.sh"
 
 
 def job_section(workflow: str, name: str) -> str:
@@ -41,6 +42,12 @@ class ProductFactoryVerificationWiringTests(unittest.TestCase):
         self.assertIn("ref: ${{ inputs.base_branch }}", action)
         self.assertIn("path: target", action)
 
+    def test_verifier_runs_builtin_node_tests_without_package_test_script(self):
+        verifier = VERIFY_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("Node built-in regression tests", verifier)
+        self.assertIn("node --test", verifier)
+        self.assertIn("node:test", verifier)
+        self.assertIn('find "$ROOT/tests"', verifier)
     def test_verifier_rejects_missing_inputs_and_wrong_repository_checkout(self):
         action = VERIFY_ACTION.read_text(encoding="utf-8")
         self.assertIn("Validate target repository inputs", action)

@@ -230,6 +230,45 @@ def test_recovery_paths(source_edit, tracked):
     extensions = compatible.get(suffix)
     if extensions is None:
         raise ValueError("No safe regression-test convention is configured for source type " + suffix)
+
+    config = read_javascript_test_configuration()
+    has_declared_runner = bool(
+        config and config["has_test_script"]
+        and (config["runners"] or config["node_test_script"])
+    )
+    has_react_runner = bool(
+        config and config["has_test_script"]
+        and {"jest", "vitest"} & config["runners]
+    )
+    use_builtin_node_test = suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"} and (
+        not has_declared_runner or suffix in {".jsx", ".tsx"} and not has_react_runner
+    )
+    if use_builtin_node_test:
+        node_tests = [
+            path for path in tracked
+            if is_test_path(path)
+            and Path(path).suffix.lower() in {".js", ".mjs", ".cjs"}
+            and allowed(path, tracked_set)
+            and is_builtin_node_test(path, read_text(path))
+        ]
+        source_parts = set(Path(source_path).parts)
+        node_tests.sort(key=lambda path: (len(source_parts ^ set(Path(path).parts)), path))
+        if node_tests:
+            return node_tests[:MAX_TEST_RECOVERY_PATHS]
+
+        stem = re.sub(r"[^a-zA-Z0-9_]+", "_", Path(source_path).stem).strip("_").lower() or "product"
+        candidates = [
+            "tests/" + stem + "_regression.test.js",
+            "tests/" + stem + "_node_regression.test.js",
+            "tests/" + stem + "_node_builtin_regression.test.js",
+        ]
+        candidate = next((path for path in candidates if path not in tracked_set), None)
+        if candidate is None:
+            raise ValueError("Could not derive a collision-free Node built-in regression-test path")
+        if not is_test_path(candidate) or not allowed(candidate, tracked_set):
+            raise ValueError("Could not derive a safe regression-test file path")
+        return [candidate]
+
     existing = [
         path for path in tracked
         if is_test_path(path) and Path(path).suffix.lower() in extensions
@@ -259,6 +298,7 @@ def test_recovery_paths(source_edit, tracked):
     if not is_test_path(candidate) or not allowed(candidate, tracked_set):
         raise ValueError("Could not derive a safe regression-test file path")
     return [candidate]
+
 
 
 def build_test_recovery_schema(test_paths):
@@ -353,6 +393,11 @@ def build_test_recovery_messages(source_edit, task, context, test_paths):
     if not config_chunks:
         config_chunks.append("\n--- PROJECT TEST CONFIG ---\nNo package or test-runner configuration files were found.")
     test_config = "\n".join(config_chunks)
+    config = read_javascript_test_configuration()
+    node_builtin_fallback = bool(
+        any(Path(path).suffix.lower() in {".js", ".mjs", ".cjs"} for path in test_paths)
+        and not (config and config["has_test_script"] and config["runners"])
+    )
     system = (
         "You are performing ONLY the regression-test recovery phase of a bounded coding task. "
         "The implementation change has already been produced and validated as a source edit. "
@@ -377,11 +422,25 @@ def build_test_recovery_messages(source_edit, task, context, test_paths):
         + source_json[:3500] + "\n\nPROJECT TEST CONFIGURATION:\n" + test_config[:3500]
         + "\n\nREPOSITORY EVIDENCE:\n" + str(context)[:5000]
     )
+    if node_builtin_fallback:
+        system += (
+            "\n\nNODE BUILT-IN TEST MODE: The permitted .test.js path will be run directly with Node's built-in test runner. "
+            "Use only imports from node:test, node:assert/strict and other node: built-ins. "
+            "Do not import project files, external packages, TypeScript or TSX. For a TypeScript/React implementation, "
+            "use node:fs to read the exact source file and write concrete source-level regression assertions. "
+            "Name each assertion after the behavior it protects. This is a static source regression test, not a component/runtime test."
+        )
+        instruction += (
+            "\n\nNODE BUILT-IN TEST MODE: Write a dependency-free .test.js file using node:test and node:assert/strict. "
+            "For TypeScript/React source, inspect the implementation through node:fs and assert specific invariants; "
+            "do not import .ts/.tsx modules or claim runtime behavior."
+        )
     # Independent from implementation-stage instructions.
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": instruction},
     ]
+
 
 
 def build_test_recovery_retry_messages(base_messages, validation_error, test_paths):
@@ -402,18 +461,22 @@ def build_test_recovery_retry_messages(base_messages, validation_error, test_pat
     ]
 
 
-def validate_javascript_test_edit(path, source):
-    suffix = Path(path).suffix.lower()
-    if suffix not in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}:
-        return
-
+def read_javascript_test_configuration(required=False):
     manifest_path = ROOT / "package.json"
     if manifest_path.is_symlink() or not manifest_path.is_file() or manifest_path.stat().st_size > 100000:
-        raise ValueError("JavaScript/TypeScript regression test requires a readable package.json")
+        if required:
+            raise ValueError("JavaScript/TypeScript regression test requires a readable package.json")
+        return None
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ValueError("JavaScript/TypeScript regression test requires a valid package.json") from exc
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        if required:
+            raise ValueError("JavaScript/TypeScript regression test requires a valid package.json")
+        return None
+    if not isinstance(manifest, dict):
+        if required:
+            raise ValueError("JavaScript/TypeScript regression test requires a valid package.json")
+        return None
 
     dependencies = {}
     for section in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
@@ -423,7 +486,6 @@ def validate_javascript_test_edit(path, source):
     scripts = manifest.get("scripts", {})
     if not isinstance(scripts, dict):
         scripts = {}
-
     test_scripts = {
         key: value for key, value in scripts.items()
         if isinstance(key, str) and (key == "test" or key.startswith("test:"))
@@ -433,13 +495,70 @@ def validate_javascript_test_edit(path, source):
         name for name in ("jest", "vitest", "mocha", "ava", "tap", "uvu", "@playwright/test", "playwright")
         if name in dependencies
     }
-    scripts_text = " ".join(test_scripts.values()).lower()
-    node_test_runner = "node --test" in scripts_text or "node:test" in source
-    if not test_scripts or (not runners and not node_test_runner):
+    test_script = scripts.get("test")
+    has_test_script = isinstance(test_script, str)
+    node_test_script = has_test_script and "node --test" in test_script.lower()
+    return {
+        "dependencies": dependencies,
+        "test_scripts": test_scripts,
+        "runners": runners,
+        "has_test_script": has_test_script,
+        "node_test_script": node_test_script,
+        "scripts_text": " ".join(test_scripts.values()).lower(),
+    }
+
+
+def is_builtin_node_test(path, source):
+    suffix = Path(path).suffix.lower()
+    executable_js = suffix in {".js", ".mjs", ".cjs"}
+    imports_node_test = re.search(
+        r"""(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)['"]node:test['"]""",
+        source,
+    )
+    imports_node_assert = re.search(
+        r"""(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)['"]node:assert(?:/strict)?['"]""",
+        source,
+    )
+    return executable_js and bool(imports_node_test) and bool(imports_node_assert)
+
+
+def validate_javascript_test_edit(path, source):
+    suffix = Path(path).suffix.lower()
+    if suffix not in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}:
+        return
+
+    config = read_javascript_test_configuration(required=True)
+    dependencies = config["dependencies"]
+    test_scripts = config["test_scripts"]
+    runners = config["runners"]
+    has_test_script = config["has_test_script"]
+    node_test_script = config["node_test_script"]
+    node_test_import = re.search(
+        r"""(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)['"]node:test['"]""",
+        source,
+    )
+    node_assert_import = re.search(
+        r"""(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)['"]node:assert(?:/strict)?['"]""",
+        source,
+    )
+    node_builtin_test = is_builtin_node_test(path, source)
+    if suffix in {".js", ".mjs", ".cjs"} and node_test_import and not node_assert_import:
+        raise ValueError("Node built-in regression test must import node:assert")
+    if not has_test_script and not node_builtin_test:
+        raise ValueError(
+            "JavaScript/TypeScript regression test requires a package test script or dependency-free Node built-in test file"
+        )
+    if has_test_script and not runners and not node_test_script and not node_builtin_test:
         raise ValueError(
             "Project package.json does not declare a runnable JavaScript/TypeScript test script and runner"
         )
-
+    if node_builtin_test:
+        imported = re.findall(
+            r"""(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]""",
+            source,
+        )
+        if any(not module.startswith("node:") for module in imported):
+            raise ValueError("Dependency-free Node built-in regression tests must not import project or external modules")
     if suffix in {".tsx", ".jsx"} and not ({"jest", "vitest"} & runners):
         raise ValueError("React component regression tests require a declared Jest or Vitest runner")
 
@@ -469,6 +588,7 @@ def validate_javascript_test_edit(path, source):
             raise ValueError("Regression test imports undeclared package: " + package_name)
     if "@testing-library/react" in source and "@testing-library/react" not in dependencies:
         raise ValueError("Regression test uses @testing-library/react but it is not declared")
+
 
 
 def validate_test_recovery(response_json, permitted_paths):
