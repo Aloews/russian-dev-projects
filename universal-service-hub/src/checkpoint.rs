@@ -319,9 +319,147 @@ mod tests {
             },
             completed_steps: vec!["read_input".into()],
             artifact_ids: vec![Uuid::from_u128(9)],
+            observation_refs: vec![],
             last_action_digest: Some("a".repeat(64)),
             saved_at: Utc::now(),
         }
+    }
+
+    fn observation_reference(
+        project_id: &str,
+        job_id: Uuid,
+        task_id: Uuid,
+        action_id: Uuid,
+        artifact_id: Uuid,
+        bytes: &[u8],
+    ) -> ObservationArtifactRef {
+        let action_sha256 = "b".repeat(64);
+        let identity = tool_receipts::ToolReceiptIdentity::new(
+            project_id.to_owned(),
+            job_id,
+            task_id,
+            action_id,
+            "artifact.read".to_owned(),
+            1,
+            action_sha256.clone(),
+        ).unwrap();
+        ObservationArtifactRef {
+            action_id,
+            tool_id: "artifact.read".into(),
+            tool_version: 1,
+            action_sha256,
+            idempotency_key: identity.idempotency_key,
+            artifact_id,
+            sha256: hex::encode(Sha256::digest(bytes)),
+            size_bytes: bytes.len() as u32,
+            content_type: "application/json".into(),
+        }
+    }
+
+    #[test]
+    fn checkpoint_restores_verified_artifact_backed_tool_observations() {
+        let output = serde_json::json!({"answer":"saved observation"});
+        let bytes = serde_json::to_vec(&output).unwrap();
+        let artifact_id = Uuid::from_u128(10);
+        let reference = observation_reference(
+            "project-a", Uuid::from_u128(7), Uuid::from_u128(8),
+            Uuid::from_u128(11), artifact_id, &bytes,
+        );
+        let mut original = checkpoint(3);
+        original.artifact_ids = vec![artifact_id];
+        original.observation_refs = vec![reference];
+        original.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)).unwrap();
+        let json = serde_json::to_value(&original).unwrap();
+        let verified = AgentCheckpoint::decode_and_verify(
+            json, &original.digest().unwrap(), "project-a", Uuid::from_u128(7), Uuid::from_u128(8),
+        ).unwrap();
+        let artifacts = BTreeMap::from([(artifact_id, bytes)]);
+        let restored = restore_tool_observations(
+            &verified, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &artifacts,
+        ).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].tool_id, "artifact.read");
+        assert_eq!(restored[0].output, output);
+    }
+
+    #[test]
+    fn checkpoint_observation_refs_reject_invalid_digest_key_type_duplicates_and_unregistered_ids() {
+        let bytes = serde_json::to_vec(&serde_json::json!({"ok":true})).unwrap();
+        let artifact_id = Uuid::from_u128(12);
+        let reference = observation_reference(
+            "project-a", Uuid::from_u128(7), Uuid::from_u128(8),
+            Uuid::from_u128(13), artifact_id, &bytes,
+        );
+        let mut valid = checkpoint(1);
+        valid.artifact_ids = vec![artifact_id];
+        valid.observation_refs = vec![reference.clone()];
+        assert!(valid.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)).is_ok());
+
+        let mut bad_key = valid.clone();
+        bad_key.observation_refs[0].idempotency_key.push('x');
+        assert_eq!(bad_key.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
+
+        let mut bad_content_type = valid.clone();
+        bad_content_type.observation_refs[0].content_type = "text/plain".into();
+        assert_eq!(bad_content_type.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
+
+        let mut unregistered = valid.clone();
+        unregistered.artifact_ids.clear();
+        assert_eq!(unregistered.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
+
+        let mut duplicate = valid.clone();
+        duplicate.observation_refs.push(reference);
+        assert_eq!(duplicate.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
+    }
+
+    #[test]
+    fn observation_restore_rejects_missing_extra_corrupt_size_and_non_json_artifacts() {
+        let output = serde_json::json!({"value":1});
+        let bytes = serde_json::to_vec(&output).unwrap();
+        let artifact_id = Uuid::from_u128(14);
+        let reference = observation_reference(
+            "project-a", Uuid::from_u128(7), Uuid::from_u128(8),
+            Uuid::from_u128(15), artifact_id, &bytes,
+        );
+        let mut base = checkpoint(1);
+        base.artifact_ids = vec![artifact_id];
+        base.observation_refs = vec![reference];
+
+        assert!(matches!(
+            restore_tool_observations(&base, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &BTreeMap::new()),
+            Err(CheckpointError::Invalid)
+        ));
+        assert!(matches!(
+            restore_tool_observations(&base, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &BTreeMap::from([(artifact_id, bytes.clone()), (Uuid::from_u128(16), vec![])])),
+            Err(CheckpointError::Invalid)
+        ));
+
+        let mut corrupt = bytes.clone();
+        corrupt[0] ^= 1;
+        assert!(matches!(
+            restore_tool_observations(&base, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &BTreeMap::from([(artifact_id, corrupt)])),
+            Err(CheckpointError::IntegrityMismatch)
+        ));
+
+        let mut wrong_size = base.clone();
+        wrong_size.observation_refs[0].size_bytes = (bytes.len() + 1) as u32;
+        assert!(matches!(
+            restore_tool_observations(&wrong_size, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &BTreeMap::from([(artifact_id, bytes.clone())])),
+            Err(CheckpointError::IntegrityMismatch)
+        ));
+
+        let invalid_json = b"not-json".to_vec();
+        let invalid_ref = observation_reference(
+            "project-a", Uuid::from_u128(7), Uuid::from_u128(8),
+            Uuid::from_u128(17), Uuid::from_u128(18), &invalid_json,
+        );
+        let mut invalid_checkpoint = checkpoint(1);
+        invalid_checkpoint.artifact_ids = vec![Uuid::from_u128(18)];
+        invalid_checkpoint.observation_refs = vec![invalid_ref];
+        assert!(matches!(
+            restore_tool_observations(&invalid_checkpoint, "project-a", Uuid::from_u128(7), Uuid::from_u128(8), &BTreeMap::from([(Uuid::from_u128(18), invalid_json)])),
+            Err(CheckpointError::Invalid)
+        ));
     }
 
     #[tokio::test]
@@ -370,6 +508,7 @@ mod tests {
             },
             completed_steps: vec!["input_loaded".into()],
             artifact_ids: vec![],
+            observation_refs: vec![],
             last_action_digest: None,
             saved_at: Utc::now(),
         };
