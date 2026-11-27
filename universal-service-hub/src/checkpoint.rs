@@ -88,7 +88,7 @@ pub struct AgentCheckpoint {
     // Raw tool observations remain in artifacts, not in the checkpoint envelope.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observation_refs: Vec<ObservationArtifactRef>,
-    #[serde(default)
+    #[serde(default)]
     pub last_action_digest: Option<String>,
     pub saved_at: DateTime<Utc>,
 }
