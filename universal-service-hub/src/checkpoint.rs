@@ -159,6 +159,7 @@ impl AgentCheckpoint {
             || self.completed_steps.len() > MAX_COMPLETED_STEPS
             || self.completed_steps.iter().any(|v| v.is_empty() || v.len() > 120 || !v.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b)))
             || self.artifact_ids.len() > MAX_ARTIFACT_IDS
+            || self.artifact_ids.iter().copied().collect::<BTreeSet<_>>().len() != self.artifact_ids.len()
             || self.last_action_digest.as_ref().is_some_and(|v| v.len() != 64 || !v.bytes().all(|b| b.is_ascii_hexdigit()))
             || self.state == AgentState::Completed && self.phase != "completed"
         {
@@ -410,6 +411,10 @@ mod tests {
         let mut duplicate = valid.clone();
         duplicate.observation_refs.push(reference);
         assert_eq!(duplicate.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
+
+        let mut duplicate_artifact_id = valid.clone();
+        duplicate_artifact_id.artifact_ids.push(artifact_id);
+        assert_eq!(duplicate_artifact_id.validate("project-a", Uuid::from_u128(7), Uuid::from_u128(8)), Err(CheckpointError::Invalid));
     }
 
     #[test]
