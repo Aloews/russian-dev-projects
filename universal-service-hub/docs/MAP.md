@@ -808,3 +808,10 @@ Current implementation is in `src/checkpoint.rs`; it is a durable storage primit
 - Empty reference arrays are omitted from serialization to preserve existing checkpoint digests; no migration is included.
 - Status: IMPLEMENTED IN DRAFT BRANCH; exact-head CI pending. This is a restore contract/helper, not persistence or live agent-loop integration. ToolReceiptStore and checkpoint save/load remain unwired to run_agent_loop/worker; no exactly-once external effects are claimed.
 - Next: add the async resumable orchestration layer that binds artifact upload/download, checkpoint CAS and tool receipts around each tool invocation; add PostgreSQL restart/replay/uncertain-state tests and worker/API scope tests.
+
+### AR-05 checkpoint observation restore contract — exact-head verified
+
+- PR #109 exact head 0e92effcb1221bd006249d7e0214148de0d2eea2 passed UHS CI run #2017 / 45990946500. All steps succeeded: Rust format, Clippy, tests, Python compile/Ruff/tests, migration smoke, Docker build, worker binary smoke, S3-compatible API integration smoke, Compose startup and container smoke.
+- PR #110 branch test/ush-checkpoint-observation-recovery-20261127 extends the PostgreSQL checkpoint restart/fencing test: typed observation refs are saved and loaded through CheckpointStore, then restored from fixture bytes with scope, exact-reference-set, size and SHA checks. This test proves DB persistence of reference metadata, not storage of artifact payloads in PostgreSQL.
+- No migration. PR #109 remains Draft/unmerged. The actual artifact upload/download is covered separately by PR #107 S3-compatible integration smoke.
+- Status for PR #110: implementation in Draft branch; exact-head CI pending.
