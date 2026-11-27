@@ -6,6 +6,8 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::agent_runtime::{AgentState, Budget};
+use std::collections::{BTreeMap, BTreeSet};
+use crate::agent_runtime::{ToolObservation, MAX_TOOL_OUTPUT_BYTES};
 
 pub mod tool_receipts;
 
@@ -13,6 +15,60 @@ pub const CHECKPOINT_SCHEMA_VERSION: u16 = 1;
 pub const MAX_CHECKPOINT_BYTES: usize = 16 * 1024;
 const MAX_COMPLETED_STEPS: usize = 250;
 const MAX_ARTIFACT_IDS: usize = 128;
+
+const MAX_OBSERVATION_REFS: usize = 128;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ObservationArtifactRef {
+    pub action_id: Uuid,
+    pub tool_id: String,
+    pub tool_version: u16,
+    pub action_sha256: String,
+    pub idempotency_key: String,
+    pub artifact_id: Uuid,
+    pub sha256: String,
+    pub size_bytes: u32,
+    pub content_type: String,
+}
+
+fn valid_lower_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+fn valid_tool_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+}
+
+impl ObservationArtifactRef {
+    pub fn validate(&self, project_id: &str, job_id: Uuid, task_id: Uuid) -> Result<(), CheckpointError> {
+        let expected_key = tool_receipts::derive_tool_idempotency_key(
+            project_id,
+            job_id,
+            task_id,
+            self.action_id,
+            &self.tool_id,
+            self.tool_version,
+            &self.action_sha256,
+        ).map_err(|_| CheckpointError::Invalid)?;
+        if self.action_id == Uuid::nil()
+            || !valid_tool_identifier(&self.tool_id)
+            || self.tool_version == 0
+            || !valid_lower_sha256(&self.action_sha256)
+            || self.idempotency_key != expected_key
+            || self.idempotency_key.len() > 96
+            || self.artifact_id == Uuid::nil()
+            || !valid_lower_sha256(&self.sha256)
+            || self.size_bytes as usize > MAX_TOOL_OUTPUT_BYTES
+            || self.content_type != "application/json"
+        {
+            return Err(CheckpointError::Invalid);
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -29,7 +85,10 @@ pub struct AgentCheckpoint {
     pub completed_steps: Vec<String>,
     #[serde(default)]
     pub artifact_ids: Vec<Uuid>,
-    #[serde(default)]
+    // Raw tool observations remain in artifacts, not in the checkpoint envelope.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observation_refs: Vec<ObservationArtifactRef>,
+    #[serde(default)
     pub last_action_digest: Option<String>,
     pub saved_at: DateTime<Utc>,
 }
@@ -105,6 +164,20 @@ impl AgentCheckpoint {
         {
             return Err(CheckpointError::Invalid);
         }
+        let mut observation_artifacts = BTreeSet::new();
+        let mut observation_actions = BTreeSet::new();
+        for reference in &self.observation_refs {
+            reference.validate(expected_project, expected_job, expected_task)?;
+            if !self.artifact_ids.contains(&reference.artifact_id)
+                || !observation_artifacts.insert(reference.artifact_id)
+                || !observation_actions.insert(reference.action_id)
+            {
+                return Err(CheckpointError::Invalid);
+            }
+        }
+        if self.observation_refs.len() > MAX_OBSERVATION_REFS {
+            return Err(CheckpointError::Invalid);
+        }
         let bytes = serde_json::to_vec(self).map_err(|_| CheckpointError::Invalid)?;
         if bytes.len() > MAX_CHECKPOINT_BYTES {
             return Err(CheckpointError::Invalid);
@@ -132,6 +205,39 @@ impl AgentCheckpoint {
         }
         Ok(checkpoint)
     }
+}
+
+/// Restore JSON observations from artifacts referenced by a checkpoint already verified
+/// by CheckpointStore::load or decode_and_verify. The map must contain exactly the
+/// artifact IDs referenced by the checkpoint.
+pub fn restore_tool_observations(
+    checkpoint: &AgentCheckpoint,
+    expected_project: &str,
+    expected_job: Uuid,
+    expected_task: Uuid,
+    artifacts: &BTreeMap<Uuid, Vec<u8>>,
+) -> Result<Vec<ToolObservation>, CheckpointError> {
+    checkpoint.validate(expected_project, expected_job, expected_task)?;
+    if artifacts.len() != checkpoint.observation_refs.len() {
+        return Err(CheckpointError::Invalid);
+    }
+    let mut observations = Vec::with_capacity(checkpoint.observation_refs.len());
+    for reference in &checkpoint.observation_refs {
+        reference.validate(expected_project, expected_job, expected_task)?;
+        let bytes = artifacts.get(&reference.artifact_id).ok_or(CheckpointError::Invalid)?;
+        if bytes.len() != reference.size_bytes as usize
+            || bytes.len() > MAX_TOOL_OUTPUT_BYTES
+            || hex::encode(Sha256::digest(bytes)) != reference.sha256
+        {
+            return Err(CheckpointError::IntegrityMismatch);
+        }
+        let output: Value = serde_json::from_slice(bytes).map_err(|_| CheckpointError::Invalid)?;
+        observations.push(ToolObservation {
+            tool_id: reference.tool_id.clone(),
+            output,
+        });
+    }
+    Ok(observations)
 }
 
 /// PostgreSQL CAS checkpoint store. The lease token is a fencing token: an expired or
