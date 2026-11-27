@@ -569,6 +569,10 @@ class QwenEditSafetyTests(unittest.TestCase):
                 self.assertEqual(agent.context_source_candidates(context), ["services/platform-api/src/elite.rs"])
                 self.assertFalse(agent.test_runner_supports_path("app/enquiry-form.tsx"))
                 self.assertTrue(agent.test_runner_supports_path("services/platform-api/src/elite.rs"))
+                candidates = agent.context_source_candidates(context)
+                with self.assertRaisesRegex(ValueError, "outside the testable candidate context"):
+                    agent.validate_source_candidate("app/enquiry-form.tsx", candidates)
+                agent.validate_source_candidate("services/platform-api/src/elite.rs", candidates)
             finally:
                 agent.ROOT = previous_root
 
