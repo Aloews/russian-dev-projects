@@ -133,7 +133,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                 agent.ROOT = Path(directory)
                 (agent.ROOT / "package.json").write_text(json.dumps({
                     "scripts": {"build": "next build"},
-                    "dependencies": {"next": "15.5.29", "react": "19.1.10},
+                    "dependencies": {"next": "15.5.29", "react": "19.1.10"},
                 }), encoding="utf-8")
                 response = {
                     "review": "R" * 100,
@@ -160,7 +160,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                 agent.ROOT = Path(directory)
                 (agent.ROOT / "package.json").write_text(json.dumps({
                     "scripts": {"build": "next build", "lint": "eslint ."},
-                    "dependencies": {"next": "15.5.29", "react": "19.1.10},
+                    "dependencies": {"next": "15.5.29", "react": "19.1.10"},
                 }), encoding="utf-8")
                 paths = agent.test_recovery_paths(
                     {"path": "app/enquiry-form.tsx"},
@@ -177,7 +177,7 @@ class QwenEditSafetyTests(unittest.TestCase):
                 agent.ROOT = Path(directory)
                 (agent.ROOT / "package.json").write_text(json.dumps({
                     "scripts": {"lint": "eslint .", "build": "next build"},
-                    "dependencies": {"next": "15.5.29", "react": "19.1.10},
+                    "dependencies": {"next": "15.5.29", "react": "19.1.10"},
                 }), encoding="utf-8")
                 messages = agent.build_test_recovery_messages(
                     {"path": "app/enquiry-form.tsx", "old": "A", "new": "B"},
