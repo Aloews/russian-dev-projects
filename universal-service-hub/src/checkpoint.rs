@@ -492,6 +492,18 @@ mod tests {
         .bind(lease_token).execute(&pool).await.unwrap();
 
         let store = CheckpointStore::new(pool.clone());
+        let observation_payload = serde_json::json!({"state":"after-tool"});
+        let observation_bytes = serde_json::to_vec(&observation_payload).unwrap();
+        let observation_artifact_id = Uuid::new_v4();
+        let observation_action_id = Uuid::new_v4();
+        let observation_ref = observation_reference(
+            &project_id,
+            job_id,
+            task_id,
+            observation_action_id,
+            observation_artifact_id,
+            &observation_bytes,
+        );
         let make = |sequence| AgentCheckpoint {
             schema_version: CHECKPOINT_SCHEMA_VERSION,
             project_id: project_id.clone(),
@@ -507,8 +519,8 @@ mod tests {
                 deadline: Utc::now() + Duration::minutes(4),
             },
             completed_steps: vec!["input_loaded".into()],
-            artifact_ids: vec![],
-            observation_refs: vec![],
+            artifact_ids: vec![observation_artifact_id],
+            observation_refs: vec![observation_ref.clone()],
             last_action_digest: None,
             saved_at: Utc::now(),
         };
@@ -517,6 +529,17 @@ mod tests {
         let restored = store.load(&project_id, job_id, lease_token, task_id).await.unwrap().unwrap();
         assert_eq!(restored.sequence, 1);
         assert_eq!(restored.budget.tokens_remaining, 700);
+        assert_eq!(restored.observation_refs, vec![observation_ref.clone()]);
+        let restored_observations = restore_tool_observations(
+            &restored,
+            &project_id,
+            job_id,
+            task_id,
+            &BTreeMap::from([(observation_artifact_id, observation_bytes.clone())]),
+        ).unwrap();
+        assert_eq!(restored_observations.len(), 1);
+        assert_eq!(restored_observations[0].tool_id, "artifact.read");
+        assert_eq!(restored_observations[0].output, observation_payload);
 
         let left = store.save(make(2), 1, lease_token);
         let right = store.save(make(2), 1, lease_token);
